@@ -1,0 +1,337 @@
+<!doctype html>
+<html lang="fr">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>drl-game-board — plateau de jeu paramétrable</title>
+    <style>
+      body {
+        margin: 0;
+        padding: 2rem;
+        background: #f8fafc;
+        color: #0f172a;
+        font-family: system-ui, sans-serif;
+      }
+
+      main {
+        display: grid;
+        gap: 1.5rem;
+        max-width: 760px;
+        margin: 0 auto;
+      }
+
+      h1 {
+        margin: 0.25rem 0 0.5rem;
+        font-size: 1.4rem;
+      }
+
+      h2 {
+        margin: 0 0 0.5rem;
+        font-size: 1.05rem;
+      }
+
+      p {
+        margin: 0.25rem 0;
+        line-height: 1.5;
+      }
+
+      a {
+        color: #2563eb;
+      }
+
+      code {
+        background: #ffffff;
+        border: 1px solid #e2e8f0;
+        border-radius: 4px;
+        padding: 0 0.3rem;
+      }
+
+      section {
+        background: #ffffff;
+        border: 1px solid #e2e8f0;
+        border-radius: 10px;
+        padding: 1.25rem;
+      }
+
+      .controls {
+        display: flex;
+        flex-wrap: wrap;
+        align-items: center;
+        gap: 0.5rem;
+        margin-bottom: 0.75rem;
+      }
+
+      .controls label {
+        margin-left: 0.5rem;
+      }
+
+      button {
+        font: inherit;
+        padding: 0.25rem 0.6rem;
+        border: 1px solid #e2e8f0;
+        border-radius: 5px;
+        background: #f8fafc;
+        color: #0f172a;
+        cursor: pointer;
+      }
+
+      button[aria-pressed='true'] {
+        border-color: #2563eb;
+        color: #2563eb;
+      }
+
+      .row {
+        display: flex;
+        flex-wrap: wrap;
+        align-items: flex-start;
+        gap: 1.5rem;
+      }
+
+      .mini {
+        display: grid;
+        gap: 0.35rem;
+        justify-items: center;
+      }
+
+      .mini span {
+        font-size: 0.75rem;
+        color: #64748b;
+      }
+    </style>
+  </head>
+  <body>
+    <main>
+      <header>
+        <p><a href="./index.html">← Playground</a></p>
+        <h1><code>drl-game-board</code></h1>
+        <p>
+          Rendu paramétrable d'un <code>BoardView</code> : grille rows × cols, pions, cellules
+          surlignées (<code>highlight</code>) et cliquables (<code>clickable</code>). Survolez les
+          cases cliquables : curseur <em>pointer</em> et voile accent. Un clic émet
+          <code>drl-cell-click</code> avec <code>{ row, col }</code> ; la page hôte traduit en coup.
+        </p>
+      </header>
+
+      <section>
+        <h2>Morpion 3×3 — <code>piece-style="marks"</code></h2>
+        <div class="controls">
+          <button id="ttt-clickable" type="button" aria-pressed="true">Cases cliquables</button>
+          <button id="ttt-highlight" type="button" aria-pressed="true">
+            Surligner le dernier coup
+          </button>
+          <label for="ttt-size">cell-size</label>
+          <input id="ttt-size" type="range" min="16" max="96" step="8" value="72" />
+          <output id="ttt-size-value" for="ttt-size">72 px</output>
+        </div>
+        <drl-game-board id="ttt-board" piece-style="marks" cell-size="72"></drl-game-board>
+      </section>
+
+      <section>
+        <h2>Puissance 4 — 6×7, <code>piece-style="discs"</code></h2>
+        <p>
+          Toute la colonne vide est cliquable ; l'hôte réduit le clic à la colonne et applique la
+          gravité — le composant, lui, ne connaît aucun jeu.
+        </p>
+        <drl-game-board id="c4-board" piece-style="discs" cell-size="48"></drl-game-board>
+      </section>
+
+      <section>
+        <h2>Miniatures (nœuds de l'arbre d'évaluation)</h2>
+        <p>Le même composant, même <code>view</code>, à différentes échelles — dont ≈ 3 rem.</p>
+        <div class="row">
+          <div class="mini">
+            <drl-game-board id="mini-ttt" piece-style="marks" cell-size="16"></drl-game-board>
+            <span>3×3 · marks · 16 · cliquable</span>
+          </div>
+          <div class="mini">
+            <drl-game-board id="mini-ttt-b" piece-style="marks" cell-size="24"></drl-game-board>
+            <span>3×3 · marks · 24</span>
+          </div>
+          <div class="mini">
+            <drl-game-board id="mini-c4" piece-style="discs" cell-size="8"></drl-game-board>
+            <span>6×7 · discs · 8</span>
+          </div>
+          <div class="mini">
+            <drl-game-board id="mini-c4-b" piece-style="discs" cell-size="14"></drl-game-board>
+            <span>6×7 · discs · 14</span>
+          </div>
+          <div class="mini">
+            <drl-game-board id="mini-null" cell-size="16"></drl-game-board>
+            <span>view absent · rendu vide</span>
+          </div>
+        </div>
+      </section>
+    </main>
+    <script type="module" src="/src/components/drl-game-board/drl-game-board.ts"></script>
+    <script type="module">
+      const tttBoard = document.getElementById('ttt-board');
+      const c4Board = document.getElementById('c4-board');
+      const miniTtt = document.getElementById('mini-ttt');
+      const miniTttB = document.getElementById('mini-ttt-b');
+      const miniC4 = document.getElementById('mini-c4');
+      const miniC4B = document.getElementById('mini-c4-b');
+
+      const toggle = (element, state) => element.setAttribute('aria-pressed', String(state));
+      const other = (player) => (player === 0 ? 1 : 0);
+
+      function makeGrid(rows, cols) {
+        return Array.from({ length: rows }, () => Array.from({ length: cols }, () => null));
+      }
+
+      function emptyCoords(cells) {
+        const coords = [];
+        cells.forEach((row, r) => {
+          row.forEach((player, c) => {
+            if (player === null) {
+              coords.push({ row: r, col: c });
+            }
+          });
+        });
+        return coords;
+      }
+
+      const ttt = { cells: makeGrid(3, 3), player: 0, last: null, clickable: true, highlight: true };
+      ttt.cells[1][1] = 0;
+      ttt.player = 1;
+      ttt.last = { row: 1, col: 1 };
+
+      function renderTtt() {
+        tttBoard.view = {
+          rows: 3,
+          cols: 3,
+          cells: ttt.cells,
+          highlight: ttt.highlight && ttt.last ? [ttt.last] : undefined,
+          clickable: ttt.clickable ? emptyCoords(ttt.cells) : undefined,
+        };
+      }
+
+      tttBoard.addEventListener('drl-cell-click', (event) => {
+        const { row, col } = event.detail;
+        if (ttt.cells[row][col] !== null) {
+          return;
+        }
+        ttt.cells[row][col] = ttt.player;
+        ttt.last = { row, col };
+        ttt.player = other(ttt.player);
+        renderTtt();
+      });
+
+      const c4 = { cells: makeGrid(6, 7), player: 1, last: null };
+      c4.cells[5][2] = 0;
+      c4.cells[5][3] = 0;
+      c4.cells[5][4] = 1;
+      c4.cells[4][2] = 1;
+      c4.cells[4][3] = 1;
+      c4.cells[4][4] = 0;
+      c4.cells[3][3] = 0;
+      c4.last = { row: 3, col: 3 };
+
+      function renderC4() {
+        const clickable = [];
+        c4.cells[0].forEach((player, col) => {
+          if (player === null) {
+            clickable.push({ row: 0, col });
+          }
+        });
+        c4Board.view = {
+          rows: 6,
+          cols: 7,
+          cells: c4.cells,
+          highlight: c4.last ? [c4.last] : undefined,
+          clickable,
+        };
+      }
+
+      c4Board.addEventListener('drl-cell-click', (event) => {
+        const col = event.detail.col;
+        let target = -1;
+        for (let row = c4.cells.length - 1; row >= 0; row -= 1) {
+          if (c4.cells[row][col] === null) {
+            target = row;
+            break;
+          }
+        }
+        if (target < 0) {
+          return;
+        }
+        c4.cells[target][col] = c4.player;
+        c4.last = { row: target, col };
+        c4.player = other(c4.player);
+        renderC4();
+      });
+
+      const miniGame = {
+        cells: [
+          [0, 1, 0],
+          [1, 0, null],
+          [null, null, 1],
+        ],
+        player: 0,
+        last: { row: 2, col: 2 },
+      };
+
+      function renderMini() {
+        miniTtt.view = {
+          rows: 3,
+          cols: 3,
+          cells: miniGame.cells,
+          highlight: [miniGame.last],
+          clickable: emptyCoords(miniGame.cells),
+        };
+      }
+
+      miniTtt.addEventListener('drl-cell-click', (event) => {
+        const { row, col } = event.detail;
+        if (miniGame.cells[row][col] !== null) {
+          return;
+        }
+        miniGame.cells[row][col] = miniGame.player;
+        miniGame.last = { row, col };
+        miniGame.player = other(miniGame.player);
+        renderMini();
+      });
+
+      miniTttB.view = {
+        rows: 3,
+        cols: 3,
+        cells: miniGame.cells,
+        highlight: [miniGame.last],
+      };
+
+      const miniC4Cells = makeGrid(6, 7);
+      miniC4Cells[5][2] = 0;
+      miniC4Cells[5][3] = 0;
+      miniC4Cells[5][4] = 1;
+      miniC4Cells[4][2] = 1;
+      miniC4Cells[4][3] = 1;
+      miniC4Cells[4][4] = 0;
+      const miniC4View = { rows: 6, cols: 7, cells: miniC4Cells, highlight: [{ row: 4, col: 4 }] };
+      miniC4.view = miniC4View;
+      miniC4B.view = miniC4View;
+
+      const clickableToggle = document.getElementById('ttt-clickable');
+      const highlightToggle = document.getElementById('ttt-highlight');
+      clickableToggle.addEventListener('click', () => {
+        ttt.clickable = !ttt.clickable;
+        toggle(clickableToggle, ttt.clickable);
+        renderTtt();
+      });
+      highlightToggle.addEventListener('click', () => {
+        ttt.highlight = !ttt.highlight;
+        toggle(highlightToggle, ttt.highlight);
+        renderTtt();
+      });
+
+      const sizeInput = document.getElementById('ttt-size');
+      const sizeValue = document.getElementById('ttt-size-value');
+      sizeInput.addEventListener('input', () => {
+        tttBoard.cellSize = Number(sizeInput.value);
+        sizeValue.textContent = `${sizeInput.value} px`;
+      });
+
+      renderTtt();
+      renderC4();
+      renderMini();
+    </script>
+  </body>
+</html>

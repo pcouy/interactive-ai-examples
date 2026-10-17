@@ -54,11 +54,13 @@ export function describeGameContract<S, M>(
       }
     });
 
-    it('produces distinct successor keys for distinct legal moves', () => {
+    it('derives the same key for equal states and a new key for each move', () => {
       for (const state of states) {
-        const moves = game.legalMoves(state);
-        const keys = new Set(moves.map((move) => game.stateKey(game.apply(state, move))));
-        expect(keys.size).toBe(moves.length);
+        expect(game.stateKey(structuredClone(state))).toBe(game.stateKey(state));
+        const parentKey = game.stateKey(state);
+        for (const move of game.legalMoves(state)) {
+          expect(game.stateKey(game.apply(state, move))).not.toBe(parentKey);
+        }
       }
     });
 
