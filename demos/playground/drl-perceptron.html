@@ -1,0 +1,60 @@
+<!doctype html>
+<html lang="fr">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>Perceptron — démonstration interactive</title>
+    <style>
+      body {
+        margin: 0;
+        padding: 2rem;
+        background: #f8fafc;
+        color: #0f172a;
+        font-family: system-ui, sans-serif;
+      }
+
+      main {
+        display: grid;
+        gap: 1rem;
+        max-width: 640px;
+        margin: 0 auto;
+      }
+
+      a {
+        color: #2563eb;
+      }
+    </style>
+  </head>
+  <body>
+    <main>
+      <p><a href="./index.html">← Playground</a></p>
+      <drl-card heading="Perceptron — démonstration interactive">
+        <p>
+          Cliquez sur le plan pour ajouter un point de la classe active. Play lance
+          l'entraînement ; à chaque erreur, le perceptron ajuste ses poids et la frontière
+          bouge.
+        </p>
+        <drl-perceptron speed="1"></drl-perceptron>
+        <p>
+          <drl-slider
+            label="Taux d'apprentissage"
+            min="0.01"
+            max="1"
+            step="0.01"
+            value="0.1"
+          ></drl-slider>
+        </p>
+      </drl-card>
+    </main>
+    <script type="module" src="/src/index.ts"></script>
+    <script type="module">
+      const demo = document.querySelector('drl-perceptron');
+      const slider = document.querySelector('drl-slider');
+      slider?.addEventListener('drl-input', (event) => {
+        if (demo) {
+          demo.learningRate = event.detail;
+        }
+      });
+    </script>
+  </body>
+</html>

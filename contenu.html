@@ -1,0 +1,335 @@
+<h1 id="histoire-de-lia-avant-les-llm">Histoire de l’IA avant les
+LLM</h1>
+<h2
+id="conférence-interactive-45-min-public-général-en-français">Conférence
+interactive — 45 min, public général, en français</h2>
+<h2 id="vision">1. Vision</h2>
+<ul>
+<li><strong>Support</strong> : site web statique, sans étape de build,
+fonctionnant hors-ligne (présentation depuis un fichier local). Sommaire
++ navigation précédent/suivant, une page par étape, plusieurs démos
+possibles par page.</li>
+<li><strong>Créneau</strong> : 75 min — 45 min de conférence, le reste
+pour l’interaction et les questions.</li>
+<li><strong>Public</strong> : grand public. Histoire d’abord, aucune
+équation à l’écran ; la profondeur technique vit dans les démos et les
+annexes, pas dans le discours.</li>
+<li><strong>Deux fils directeurs</strong> tissés à travers toute la
+narration :
+<ol type="1">
+<li><strong>Savoir codé à la main contre apprentissage à partir des
+données</strong> — symbolique, recherche arborescente, systèmes experts
+d’un côté ; perceptron, rétropropagation, RL de l’autre. Les deux
+branches convergent dans AlphaGo.</li>
+<li><strong>Hype contre limites réelles</strong> — chaque vague
+sur-promet ; la vraie limite était le calcul et les données, pas les
+idées. Se clôt avec la « leçon amère » de Sutton (2019).</li>
+</ol></li>
+</ul>
+<blockquote>
+<p>Remarque d’équilibre : la conférence s’appuie beaucoup sur les jeux —
+c’est un choix défendable, les jeux étant le banc d’essai de l’époque.
+L’étape 6 (« IA du quotidien ») répond explicitement à cette
+objection.</p>
+</blockquote>
+<h2 id="la-frise-en-8-étapes-44-min">2. La frise en 8 étapes (44
+min)</h2>
+<h3 id="turing-et-le-rêve-fondateur-19431956-6-min">1. « Turing et le
+rêve fondateur » (1943–1956) — ~6 min</h3>
+<ul>
+<li>Jeu d’imitation et <strong>machine-enfant</strong> : Turing a posé
+les DEUX côtés du débat (programmer l’intelligence vs la faire grandir
+par apprentissage).</li>
+<li>Objections auxquelles il répond lui-même : théologique, gödelienne,
+Lady Lovelace (« les machines ne font que ce qu’on leur dit »),
+conscience (Jefferson). Échos ultérieurs : Chambre chinoise (Searle,
+1980), effet ELIZA.</li>
+<li>Contexte : neurones formels de McCulloch &amp; Pitts (1943), règle
+de Hebb (1949), <em>Intelligent Machinery</em> (1948) et ses machines
+non organisées — des réseaux de neurones proto. Dartmouth (1956) intégré
+ici comme acte fondateur.</li>
+<li><strong>Démo : ELIZA</strong> — le public expérimente le test se
+faisant manipuler.</li>
+</ul>
+<h3 id="le-perceptron-la-première-machine-qui-apprend-19581969-6-min">2.
+« Le perceptron : la première machine qui apprend » (1958–1969) — ~6
+min</h3>
+<ul>
+<li>Rosenblatt (1958) et sa <strong>règle du perceptron</strong> : nudge
+des poids uniquement en cas d’erreur — ce n’est <strong>pas</strong> la
+descente de gradient.</li>
+<li><strong>ADALINE</strong> (Widrow &amp; Hoff, 1960) : la règle delta,
+vraie descente de gradient sur l’erreur quadratique — le pont honnête
+vers la rétropropagation (1986).</li>
+<li>Sur écran : la frontière qui <strong>ne peut pas séparer
+XOR</strong> → Minsky &amp; Papert (<em>Perceptrons</em>, 1969) →
+<strong>hiver n°1</strong> avec ses causes : rapport Lighthill (1973),
+coupes DARPA.</li>
+<li><strong>Démo : entraîneur de frontière de décision</strong> —
+bascule règle perceptron / descente de gradient + preset XOR.</li>
+</ul>
+<h3 id="deep-blue-la-force-brute-19501997-5-min">3. « Deep Blue : la
+force brute » (1950–1997) — ~5 min</h3>
+<ul>
+<li>Shannon (1950) formalise le jeu d’échecs par recherche.</li>
+<li><strong>Samuel (1959)</strong> : son programme de dames apprend son
+évaluation par auto-apprentissage — la graine du RL, plantée 40 ans plus
+tôt.</li>
+<li>Minimax, <strong>élagage alpha-bêta</strong>, fonction d’évaluation
+artisanée (avec le GM Joel Benjamin), matériel dédié (~200 M
+positions/s).</li>
+<li>Les controverses Kasparov (1996–97) : le « coup 37 » du jeu 2,
+accusation d’intervention humaine, refus de revanche d’IBM.</li>
+<li><strong>Démo : explorateur alpha-bêta</strong> — nœuds élagués en
+surbrillance.</li>
+</ul>
+<h3 id="les-systèmes-experts-le-savoir-en-boîtes-19651993-5-min">4. «
+Les systèmes experts : le savoir en boîtes » (1965–1993) — ~5 min</h3>
+<ul>
+<li>DENDRAL (1965), MYCIN (années 70), XCON (économie réelle pour DEC),
+projet japonais de Cinquième Génération (1982).</li>
+<li>Modes d’échec : <strong>goulot d’étranglement de l’acquisition de
+connaissances</strong>, fragilité hors du domaine prévu.</li>
+<li><strong>Hiver n°2</strong> avec ses causes propres — effondrement du
+marché des machines Lisp, faillite de la bulle des systèmes experts. Ne
+jamais fusionner les deux hivers.</li>
+<li><strong>Démo : moteur de règles</strong> — chaînage avant + trace «
+pourquoi ? ».</li>
+</ul>
+<h3 id="lapprentissage-par-renforcement-19881989-6-min">5. «
+L’apprentissage par renforcement » (1988–1989) — ~6 min</h3>
+<ul>
+<li>Bellman et la programmation dynamique → <strong>TD</strong> (Sutton,
+1988) → <strong>Q-learning</strong> (Watkins, 1989). Récit pur, sans
+équations.</li>
+<li><strong>Démo : gridworld Q-learning</strong> — LA démo centrale :
+curseurs ε/α/γ, carte de chaleur des valeurs, flèches de politique, murs
+éditables.</li>
+</ul>
+<h3 id="les-années-discrètes-19802012-4-min-sans-démo-respiration">6. «
+Les années discrètes » (1980–2012) — ~4 min — sans démo
+(respiration)</h3>
+<ul>
+<li>L’IA se rebaptise « machine learning » : SVM, forêts aléatoires,
+boosting, HMM, réseaux bayésiens (Pearl — prix Turing 2011).</li>
+<li><strong>L’IA du quotidien que tout le monde a vécue</strong> :
+filtres anti-spam, PageRank, détection de visages — réponse à
+l’objection « trop de jeux ».</li>
+<li>L’underground neuronal survit : Néocognitron (Fukushima, 1980) → CNN
+de LeCun (1989) → LSTM (1997) → réseaux de croyance profonds
+(2006).</li>
+<li>Les ingrédients de 2012 : <strong>GPUs + ImageNet (2009) →
+AlexNet</strong>, le pivot. Puis parole (2010–12), word2vec, GANs,
+ResNet, teaser « attention » sans entrer dans les LLM.</li>
+</ul>
+<h3 id="td-gammon-dqn-la-récompense-tardive-19922013-6-min">7. «
+TD-Gammon → DQN : la récompense tardive » (1992–2013) — ~6 min</h3>
+<ul>
+<li>1992 : TD-Gammon (Tesauro) apprend le backgammon en jouant contre
+lui-même — niveau expert. <strong>Un succès prématuré.</strong></li>
+<li>Pourquoi 20 ans pour généraliser : la <strong>triade
+mortelle</strong> (bootstrap + hors-politique + approximation de
+fonction) — <strong>montrée, pas nommée</strong> : on regarde
+l’apprentissage exploser à l’écran.</li>
+<li>2013 : DQN (Mnih et al.) et ses deux astuces — <strong>mémoire de
+rejeu</strong> et <strong>réseau cible</strong> — rendent enfin l’idée
+stable.</li>
+<li><strong>Démo : divergence vs stabilisation</strong> — la plus
+démonstrative de la conférence.</li>
+</ul>
+<h3 id="alphago-et-après-20162024-6-min">8. « AlphaGo et après »
+(2016–2024) — ~6 min</h3>
+<ul>
+<li>AlphaGo = <strong>MCTS (2006) + réseaux profonds + RL</strong> : la
+branche force brute (étape 3) et la branche apprentissage (étapes 5–7)
+se rejoignent. Le coup 37 contre Lee Sedol. Puis AlphaGo Zero (sans
+données humaines), AlphaZero, MuZero (qui apprend les règles).</li>
+<li><strong>AlphaFold</strong> : flèche <strong>thématique</strong> — le
+même labo pointe l’apprentissage vers la science. Supervisé + attention,
+<strong>pas</strong> de RL ni recherche arborescente.</li>
+<li>Clôture : <strong>double Nobel 2024</strong> (Physique : Hopfield
+&amp; Hinton ; Chimie : Hassabis &amp; Jumper) + la « leçon amère » de
+Sutton (2019).</li>
+<li><strong>Démo : explorateur MCTS</strong> — arbre de recherche en
+direct, jouer contre lui.</li>
+</ul>
+<h2 id="corrections-historiques-intégrées-à-ne-pas-perdre-en-route">3.
+Corrections historiques intégrées (à ne pas perdre en route)</h2>
+<ol type="1">
+<li><strong>Perceptron ≠ descente de gradient.</strong> La règle de
+Rosenblatt ajuste seulement sur erreur. Le pont honnête est ADALINE
+(1960), puis la rétropropagation (1986).</li>
+<li><strong>DQN n’était pas la première combinaison réseau +
+RL.</strong> TD-Gammon (1992) précède de 20 ans ; l’écart s’explique par
+l’instabilité de l’approximation de fonction, corrigée par le rejeu et
+le réseau cible.</li>
+<li><strong>AlphaGo → AlphaFold est une flèche thématique</strong>, pas
+une filiation technique.</li>
+<li><strong>Deux hivers, deux causes distinctes</strong> (promesses
+symboliques années 70 ; effondrement systèmes experts/Lisp fin des
+années 80). Ne jamais les fusionner.</li>
+<li><strong>Ordre chronologique respecté</strong> : la révolution deep
+learning (2012) précède DQN (2013) — DQN n’est possible qu’après
+AlexNet.</li>
+<li>La conférence s’appuie sur les jeux par choix assumé, corrigé par
+l’étape 6.</li>
+</ol>
+<h2 id="démos-spécifications-et-vérification">4. Démos — spécifications
+et vérification</h2>
+<table>
+<colgroup>
+<col style="width: 8%" />
+<col style="width: 16%" />
+<col style="width: 16%" />
+<col style="width: 37%" />
+<col style="width: 21%" />
+</colgroup>
+<thead>
+<tr>
+<th>#</th>
+<th>Démo</th>
+<th>Cœur</th>
+<th>Vérification</th>
+<th>Taille</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td>1</td>
+<td>ELIZA</td>
+<td>Script docteur français, interface de chat</td>
+<td>Conversations prédéfinies → réponses sensées</td>
+<td>S</td>
+</tr>
+<tr>
+<td>2</td>
+<td>Perceptron</td>
+<td>Points au clic, presets séparable/XOR, bascule règle perceptron /
+delta, frontière + courbe d’erreur</td>
+<td>Converge sur données séparables ; les deux règles échouent sur
+XOR</td>
+<td>M</td>
+</tr>
+<tr>
+<td>3</td>
+<td>Alpha-bêta</td>
+<td>Arbre abstrait fixe (D3), élagage animé, curseur de profondeur,
+compteur de nœuds</td>
+<td>Même valeur à la racine que minimax complet</td>
+<td>M</td>
+</tr>
+<tr>
+<td>4</td>
+<td>Moteur de règles</td>
+<td>~20 règles « identifier l’animal », chaînage avant, trace « pourquoi
+? »</td>
+<td>Faits donnés → animaux corrects</td>
+<td>S</td>
+</tr>
+<tr>
+<td>5</td>
+<td>Gridworld Q</td>
+<td>10×10 éditable, curseurs ε/α/γ, carte de chaleur, flèches de
+politique, courbe de récompense</td>
+<td>Q tabulaire résout un gridworld connu en un nombre borné
+d’épisodes</td>
+<td>M+</td>
+</tr>
+<tr>
+<td>6</td>
+<td>Divergence</td>
+<td>Même gridworld, connaissances compressées → explosion ; rejeu +
+réseau cible → stabilisation. <strong>Plan B garanti : étoile de
+Baird</strong></td>
+<td>Divergence visuelle sans correctifs, stabilité avec</td>
+<td>M+</td>
+</tr>
+<tr>
+<td>7</td>
+<td>MCTS</td>
+<td>Morpion humain vs MCTS, arbre en direct (visites, taux de victoire,
+UCB1 en surbrillance), budget de simulations réglable</td>
+<td>MCTS à fort budget ne perd jamais ; coup optimal en positions
+connues</td>
+<td>L</td>
+</tr>
+<tr>
+<td>8</td>
+<td>Frise maîtresse</td>
+<td>D3, 1943–2024, événements colorés par fil (symbolique /
+apprentissage / hivers), infobulles, liens vers les pages</td>
+<td>Tous les événements cliquables renvoient au bon endroit</td>
+<td>M</td>
+</tr>
+</tbody>
+</table>
+<p>Risque principal : la démo 6 exige un réglage fin pour être
+spectaculaire ; l’étoile de Baird (divergence canonique, déterministe)
+sert de repli garanti. Décision au moment du build.</p>
+<h2 id="annexes-zéro-minute-de-conférence">5. Annexes (zéro minute de
+conférence)</h2>
+<ul>
+<li>Frise chronologique complète et interactive (aussi colonne
+vertébrale du sommaire)</li>
+<li>Objections et Chambre chinoise</li>
+<li>Ère symbolique : Logic Theorist, GPS, SHRDLU, Shakey/A*</li>
+<li>Hype et hivers : les deux cycles, courbes de financement</li>
+<li>Triade mortelle : note technique pour les curieux</li>
+<li>Watson (2011) : le pont dans la mémoire collective entre Deep Blue
+et AlphaGo</li>
+<li>La « leçon amère » (Sutton, 2019) : traduction et commentaire</li>
+<li>L’IA du quotidien des années discrètes (spam, PageRank,
+visages)</li>
+</ul>
+<h2 id="architecture-technique">6. Architecture technique</h2>
+<pre><code>histoire_IA/
+├── index.html                  # Accueil : hero + frise maîtresse (D3)
+├── pages/01-turing.html … 08-alphago.html
+├── annexes/                    # pages annexes ci-dessus
+├── assets/css/style.css
+├── assets/js/demos/            # eliza, perceptron, minimax, rules, gridworld, divergence, mcts
+├── assets/js/timeline.js       # frise maîtresse (D3)
+├── assets/js/data/            # timeline.js, rules.js — &lt;script&gt;, jamais fetch()
+└── assets/vendor/d3.v7.min.js # vendu localement, CDN en repli</code></pre>
+<ul>
+<li><strong>Aucune étape de build</strong> ; chrome de page dupliqué en
+HTML statique (15 pages, chrome minime). Fonctionne depuis
+<code>file://</code> — données en <code>&lt;script&gt;</code>, pas de
+fetch.</li>
+<li><strong>Conventions</strong> : prose et interface en français ;
+identifiants et commentaires de code en anglais ; typographie française
+(« ») ; polices système (hors-ligne) ; d’abord projecteur 16:9,
+responsive ensuite.</li>
+<li><strong>Tests</strong> : fichiers Node zéro-dépendance
+(<code>node tests/*.js</code>) pour la correction algorithmique
+(perceptron, alpha-bêta, Q tabulaire, UCT, chaînage avant).</li>
+</ul>
+<h2 id="jalons">7. Jalons</h2>
+<ol type="1">
+<li><strong>M1 — Squelette</strong> : git init, style, accueil + frise,
+8 pages avec prose complète (brouillons), annexes en texte → site
+lisible tôt.</li>
+<li><strong>M2 — Gridworld Q-learner</strong> (cœur réutilisé par
+M3).</li>
+<li><strong>M3 — Divergence</strong> (la plus risquée, planifiée tôt
+avec temps de réglage).</li>
+<li><strong>M4 — Perceptron</strong> · <strong>M5 — MCTS</strong> ·
+<strong>M6 — Alpha-bêta</strong> · <strong>M7 — ELIZA + moteur de
+règles</strong>.</li>
+<li><strong>M8 — Finition</strong> : prose finale, annexes, checklist
+répétition hors-ligne (file://, contraste projecteur, plein écran, test
+du déroulé complet).</li>
+</ol>
+<h2 id="checklist-de-répétition">8. Checklist de répétition</h2>
+<ul class="task-list">
+<li><label><input type="checkbox" />Ouvrir chaque page depuis
+<code>file://</code> sans réseau</label></li>
+<li><label><input type="checkbox" />Chaque démo atteignable en 2 clics
+depuis l’accueil</label></li>
+<li><label><input type="checkbox" />Contraste et tailles lisibles en
+projection</label></li>
+<li><label><input type="checkbox" />Déroulé chronométré sur les 8 étapes
+(cible : ≤ 45 min)</label></li>
+<li><label><input type="checkbox" />Plan B prêt si le lieu n’a pas de
+réseau (site 100 % local)</label></li>
+</ul>

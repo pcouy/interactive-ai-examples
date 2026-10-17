@@ -1,0 +1,28 @@
+import { describe, expect, it } from 'vitest';
+import { {{pascalCase name}}Core } from './{{name}}.js';
+
+describe('{{pascalCase name}}Core', () => {
+  it('starts from a zeroed state', () => {
+    const core = new {{pascalCase name}}Core();
+    expect(core.ticksElapsed).toBe(0);
+    expect(core.value).toBeCloseTo(0.5);
+  });
+
+  it('advances the value inside the unit range', () => {
+    const core = new {{pascalCase name}}Core();
+    for (let i = 0; i < 12; i += 1) {
+      core.tick();
+    }
+    expect(core.ticksElapsed).toBe(12);
+    expect(core.value).toBeGreaterThanOrEqual(0);
+    expect(core.value).toBeLessThanOrEqual(1);
+  });
+
+  it('resets back to the initial state', () => {
+    const core = new {{pascalCase name}}Core();
+    core.tick();
+    core.reset();
+    expect(core.ticksElapsed).toBe(0);
+    expect(core.value).toBeCloseTo(0.5);
+  });
+});

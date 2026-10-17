@@ -1,0 +1,83 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>Playground — démos DRL</title>
+    <style>
+      :root {
+        color-scheme: light;
+      }
+
+      body {
+        margin: 0;
+        padding: 2rem;
+        background: #f8fafc;
+        color: #0f172a;
+        font-family: system-ui, -apple-system, 'Segoe UI', Roboto, sans-serif;
+      }
+
+      header,
+      main {
+        max-width: 960px;
+        margin: 0 auto;
+      }
+
+      header p {
+        color: #64748b;
+      }
+
+      .grid {
+        display: grid;
+        grid-template-columns: repeat(auto-fill, minmax(220px, 1fr));
+        gap: 1rem;
+        margin-top: 1.5rem;
+      }
+
+      .demo-card {
+        display: grid;
+        gap: 0.25rem;
+        padding: 1rem;
+        background: #ffffff;
+        border: 1px solid #e2e8f0;
+        border-radius: 10px;
+        box-shadow: 0 1px 2px rgb(15 23 42 / 6%);
+        color: inherit;
+        text-decoration: none;
+      }
+
+      .demo-card:hover {
+        border-color: #2563eb;
+      }
+
+      .demo-card h3 {
+        margin: 0;
+      }
+
+      .demo-tag {
+        color: #64748b;
+        font-size: 0.85rem;
+      }
+    </style>
+  </head>
+  <body>
+    <header>
+      <h1>Playground — démos DRL</h1>
+      <p>Galerie de développement des composants web générés. Chaque carte ouvre une démo isolée.</p>
+    </header>
+    <main>
+      <section class="grid" aria-label="Demo gallery">
+        <a class="demo-card" href="./drl-perceptron.html">
+          <h3>drl-perceptron</h3>
+          <span class="demo-tag">2D demo</span>
+        </a>
+        <a class="demo-card" href="./drl-gradient-descent.html">
+          <h3>drl-gradient-descent</h3>
+          <span class="demo-tag">3D demo</span>
+        </a>
+        <!-- @demos-cards -->
+      </section>
+    </main>
+    <script type="module" src="/src/index.ts"></script>
+  </body>
+</html>

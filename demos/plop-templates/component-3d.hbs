@@ -1,0 +1,140 @@
+import type { TemplateResult } from 'lit';
+import { css, html } from 'lit';
+import { customElement, property, state } from 'lit/decorators.js';
+import { DemoElement } from '../../base/demo-element.js';
+import { {{pascalCase name}}Core } from '../../core/{{name}}.js';
+import { drlTokens } from '../../styles/tokens.js';
+
+type ThreeModule = typeof import('three');
+type ThreeRenderer = InstanceType<ThreeModule['WebGLRenderer']>;
+type ThreeScene = InstanceType<ThreeModule['Scene']>;
+type ThreeCamera = InstanceType<ThreeModule['PerspectiveCamera']>;
+type ThreeMesh = InstanceType<ThreeModule['Mesh']>;
+
+@customElement('drl-{{name}}')
+export class {{pascalCase name}} extends DemoElement {
+  static override styles = [
+    drlTokens,
+    css`
+      :host {
+        display: block;
+      }
+
+      canvas {
+        display: block;
+        width: 100%;
+        max-width: 480px;
+        height: auto;
+        background: var(--drl-surface);
+        border: 1px solid var(--drl-border);
+        border-radius: var(--drl-radius);
+      }
+
+      .drl-webgl-error {
+        color: var(--drl-muted);
+      }
+    `,
+  ];
+
+  @property({ type: Number, attribute: 'learning-rate' })
+  learningRate = 0.1;
+
+  @state()
+  private webglError = false;
+
+  private readonly core = new {{pascalCase name}}Core();
+
+  private renderer: ThreeRenderer | null = null;
+
+  private scene: ThreeScene | null = null;
+
+  private camera: ThreeCamera | null = null;
+
+  private mesh: ThreeMesh | null = null;
+
+  // TODO: replace this placeholder three.js scene with the real demo scene.
+  protected override async firstUpdated(): Promise<void> {
+    const canvas = this.renderRoot.querySelector('canvas');
+    if (!(canvas instanceof HTMLCanvasElement)) {
+      return;
+    }
+    try {
+      const THREE = await import('three');
+      const renderer = new THREE.WebGLRenderer({ canvas, antialias: true });
+      const scene = new THREE.Scene();
+      const camera = new THREE.PerspectiveCamera(50, canvas.width / canvas.height, 0.1, 100);
+      camera.position.set(0, 0, 4.5);
+
+      const mesh = new THREE.Mesh(
+        new THREE.BoxGeometry(1.6, 1.6, 1.6),
+        new THREE.MeshStandardMaterial({ color: 0x2563eb }),
+      );
+      scene.add(mesh);
+      scene.add(new THREE.AmbientLight(0xffffff, 1.4));
+      const light = new THREE.DirectionalLight(0xffffff, 2);
+      light.position.set(2, 3, 4);
+      scene.add(light);
+
+      renderer.setPixelRatio(Math.min(window.devicePixelRatio, 2));
+      renderer.setSize(canvas.width, canvas.height, false);
+
+      this.renderer = renderer;
+      this.scene = scene;
+      this.camera = camera;
+      this.mesh = mesh;
+      this.drawScene();
+    } catch {
+      this.webglError = true;
+    }
+  }
+
+  override step(): void {
+    this.core.tick(this.learningRate);
+    if (this.mesh) {
+      this.mesh.rotation.y = this.core.value * Math.PI * 2;
+      this.mesh.rotation.x = this.core.value * Math.PI;
+    }
+    this.drawScene();
+  }
+
+  protected override onReset(): void {
+    this.core.reset();
+    this.drawScene();
+  }
+
+  override disconnectedCallback(): void {
+    super.disconnectedCallback();
+    if (this.mesh) {
+      this.mesh.geometry.dispose();
+      const { material } = this.mesh;
+      if (Array.isArray(material)) {
+        for (const entry of material) {
+          entry.dispose();
+        }
+      } else {
+        material.dispose();
+      }
+      this.scene?.remove(this.mesh);
+    }
+    this.renderer?.dispose();
+    this.renderer = null;
+    this.scene = null;
+    this.camera = null;
+    this.mesh = null;
+  }
+
+  private drawScene(): void {
+    if (this.renderer && this.scene && this.camera) {
+      this.renderer.render(this.scene, this.camera);
+    }
+  }
+
+  protected override renderContent(): TemplateResult {
+    if (this.webglError) {
+      return html`<p class="drl-webgl-error">WebGL is not available in this environment.</p>`;
+    }
+    return html`
+      <canvas width="480" height="360" aria-label="{{name}} 3D demo"></canvas>
+    `;
+  }
+}

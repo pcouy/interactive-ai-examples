@@ -1,0 +1,29 @@
+const TICK_RADIANS = 0.15;
+
+export class {{pascalCase name}}Core {
+  private ticks = 0;
+
+  private phase = 0;
+
+  get ticksElapsed(): number {
+    return this.ticks;
+  }
+
+  get value(): number {
+    return 0.5 + 0.5 * Math.sin(this.phase);
+  }
+
+  tick(rate = 1): void {
+    this.phase += TICK_RADIANS * rate;
+    this.ticks += 1;
+  }
+
+  valueAt(index: number): number {
+    return 0.5 + 0.5 * Math.sin(this.phase + index * 0.6);
+  }
+
+  reset(): void {
+    this.ticks = 0;
+    this.phase = 0;
+  }
+}

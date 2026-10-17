@@ -1,0 +1,364 @@
+<!DOCTYPE html>
+<html lang="fr">
+<head>
+<meta charset="UTF-8">
+<title>Descente de gradient — surface 3D</title>
+<style>
+  :root {
+    color-scheme: light dark;
+    --bg: #fafaf8;
+    --panel: #ffffff;
+    --border: #e1e0d9;
+    --text: #1a1a19;
+    --text-secondary: #52514e;
+    --accent: #D85A30;
+    --accent-dark: #4A1B0C;
+  }
+  @media (prefers-color-scheme: dark) {
+    :root {
+      --bg: #1a1a19;
+      --panel: #232322;
+      --border: #383835;
+      --text: #f2f1ea;
+      --text-secondary: #c3c2b7;
+    }
+  }
+  * { box-sizing: border-box; }
+  body {
+    margin: 0;
+    font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+    background: var(--bg);
+    color: var(--text);
+    padding: 1.5rem;
+  }
+  .wrap { max-width: 640px; margin: 0 auto; }
+  h1 { font-size: 18px; font-weight: 500; margin: 0 0 4px; }
+  .hint { font-size: 13px; color: var(--text-secondary); margin: 0 0 1rem; }
+  #canvas-container {
+    width: 100%;
+    height: 420px;
+    border-radius: 12px;
+    border: 0.5px solid var(--border);
+    overflow: hidden;
+    background: var(--panel);
+    cursor: grab;
+    touch-action: none;
+  }
+  #canvas-container:active { cursor: grabbing; }
+  .controls { display: flex; flex-direction: column; gap: 14px; margin-top: 1rem; }
+  .row { display: flex; align-items: center; gap: 12px; }
+  .row label { font-size: 14px; color: var(--text-secondary); width: 130px; flex-shrink: 0; }
+  .row span { font-size: 14px; font-weight: 500; min-width: 40px; text-align: right; }
+  input[type="range"] { flex: 1; accent-color: var(--accent); }
+  .btnrow { display: flex; gap: 8px; flex-wrap: wrap; }
+  button {
+    font-family: inherit;
+    font-size: 14px;
+    padding: 8px 14px;
+    background: transparent;
+    border: 0.5px solid var(--border);
+    border-radius: 8px;
+    color: var(--text);
+    cursor: pointer;
+  }
+  button:hover { background: var(--panel); border-color: var(--text-secondary); }
+  button.small { font-size: 13px; padding: 6px 12px; }
+  .stats { display: grid; grid-template-columns: repeat(4, minmax(0,1fr)); gap: 12px; margin-top: 4px; }
+  .stat { background: var(--panel); border: 0.5px solid var(--border); border-radius: 8px; padding: 0.75rem; }
+  .stat p:first-child { font-size: 12px; color: var(--text-secondary); margin: 0 0 2px; }
+  .stat p:last-child { font-size: 18px; font-weight: 500; margin: 0; }
+  #status-msg { font-size: 13px; color: var(--text-secondary); margin: 0; min-height: 18px; }
+</style>
+</head>
+<body>
+<div class="wrap">
+  <h1>Descente de gradient sur une surface — vraie 3D</h1>
+  <p class="hint">Glissez pour tourner la caméra, clic molette + glisser pour déplacer la vue, molette pour zoomer.</p>
+
+  <div id="canvas-container"></div>
+
+  <div class="controls">
+    <div class="row">
+      <label>Taux d'apprentissage</label>
+      <input type="range" id="lr" min="0.01" max="0.6" step="0.01" value="0.15">
+      <span id="lr-out">0.15</span>
+    </div>
+    <div class="row">
+      <label>Départ x</label>
+      <input type="range" id="startx" min="-2.9" max="2.9" step="0.05" value="-2.5">
+      <span id="startx-out">-2.5</span>
+    </div>
+    <div class="row">
+      <label>Départ y</label>
+      <input type="range" id="starty" min="-2.9" max="2.9" step="0.05" value="2.2">
+      <span id="starty-out">2.2</span>
+    </div>
+
+    <div class="btnrow">
+      <button id="btn-step">Un pas</button>
+      <button id="btn-run">Lancer</button>
+      <button id="btn-reset">Réinitialiser</button>
+    </div>
+    <div class="btnrow">
+      <button class="small" id="preset-small">Taux trop petit</button>
+      <button class="small" id="preset-good">Taux optimal</button>
+      <button class="small" id="preset-big">Taux trop grand</button>
+    </div>
+
+    <div class="stats">
+      <div class="stat"><p>Itération</p><p id="stat-iter">0</p></div>
+      <div class="stat"><p>x, y</p><p id="stat-xy">0.00, 0.00</p></div>
+      <div class="stat"><p>f(x, y)</p><p id="stat-fxy">0.00</p></div>
+      <div class="stat"><p>|gradient|</p><p id="stat-grad">0.00</p></div>
+    </div>
+    <p id="status-msg"></p>
+  </div>
+</div>
+
+<script type="module">
+import * as THREE from "https://cdnjs.cloudflare.com/ajax/libs/three.js/0.184.0/three.module.min.js";
+(function(){
+  var f = function(x,y){ return 0.15*Math.pow(x,4) - 0.9*x*x + 0.1*x + 0.6*y*y + 2; };
+  var gradX = function(x,y){ return 0.6*Math.pow(x,3) - 1.8*x + 0.1; };
+  var gradY = function(x,y){ return 1.2*y; };
+  var domainMin = -3, domainMax = 3;
+
+  var container = document.getElementById("canvas-container");
+  var scene = new THREE.Scene();
+  var camera = new THREE.PerspectiveCamera(45, container.clientWidth/container.clientHeight, 0.1, 100);
+  var renderer = new THREE.WebGLRenderer({ antialias: true, alpha: true });
+  renderer.setPixelRatio(window.devicePixelRatio || 1);
+  renderer.setSize(container.clientWidth, container.clientHeight);
+  renderer.setClearColor(0x000000, 0);
+  container.appendChild(renderer.domElement);
+
+  scene.add(new THREE.AmbientLight(0xffffff, 0.65));
+  var dirLight = new THREE.DirectionalLight(0xffffff, 0.8);
+  dirLight.position.set(5, 10, 7);
+  scene.add(dirLight);
+  var dirLight2 = new THREE.DirectionalLight(0xffffff, 0.3);
+  dirLight2.position.set(-5, 4, -7);
+  scene.add(dirLight2);
+
+  var res = 70;
+  var positions = new Float32Array((res+1)*(res+1)*3);
+  var colors = new Float32Array((res+1)*(res+1)*3);
+  var fMin = Infinity, fMax = -Infinity;
+  var heightGrid = [];
+  for(var j=0; j<=res; j++){
+    var y = domainMin + (domainMax-domainMin)*j/res;
+    var row = [];
+    for(var i=0; i<=res; i++){
+      var x = domainMin + (domainMax-domainMin)*i/res;
+      var h = f(x,y);
+      row.push(h);
+      if(h<fMin) fMin=h;
+      if(h>fMax) fMax=h;
+    }
+    heightGrid.push(row);
+  }
+  var lowColor = [0.90, 0.945, 0.984];
+  var highColor = [0.016, 0.173, 0.325];
+  var idx = 0;
+  for(var j=0; j<=res; j++){
+    var y = domainMin + (domainMax-domainMin)*j/res;
+    for(var i=0; i<=res; i++){
+      var x = domainMin + (domainMax-domainMin)*i/res;
+      var h = heightGrid[j][i];
+      positions[idx*3] = x;
+      positions[idx*3+1] = h;
+      positions[idx*3+2] = y;
+      var t = (h-fMin)/(fMax-fMin);
+      colors[idx*3] = lowColor[0] + (highColor[0]-lowColor[0])*t;
+      colors[idx*3+1] = lowColor[1] + (highColor[1]-lowColor[1])*t;
+      colors[idx*3+2] = lowColor[2] + (highColor[2]-lowColor[2])*t;
+      idx++;
+    }
+  }
+  var indices = [];
+  for(var j=0; j<res; j++){
+    for(var i=0; i<res; i++){
+      var a = j*(res+1)+i, b = a+1, c = a+(res+1), d = c+1;
+      indices.push(a,c,b, b,c,d);
+    }
+  }
+  var geometry = new THREE.BufferGeometry();
+  geometry.setIndex(indices);
+  geometry.setAttribute("position", new THREE.BufferAttribute(positions,3));
+  geometry.setAttribute("color", new THREE.BufferAttribute(colors,3));
+  geometry.computeVertexNormals();
+  var material = new THREE.MeshStandardMaterial({ vertexColors: true, roughness: 0.85, metalness: 0.0, side: THREE.DoubleSide });
+  var surfaceMesh = new THREE.Mesh(geometry, material);
+  scene.add(surfaceMesh);
+
+  var ballGeo = new THREE.SphereGeometry(0.14, 20, 20);
+  var ballMat = new THREE.MeshStandardMaterial({ color: 0xD85A30, roughness: 0.4 });
+  var ball = new THREE.Mesh(ballGeo, ballMat);
+  scene.add(ball);
+
+  var trailMaxPoints = 60;
+  var trailPositions = new Float32Array(trailMaxPoints*3);
+  var trailGeo = new THREE.BufferGeometry();
+  trailGeo.setAttribute("position", new THREE.BufferAttribute(trailPositions,3));
+  trailGeo.setDrawRange(0,0);
+  var trailMat = new THREE.LineBasicMaterial({ color: 0xD85A30, transparent: true, opacity: 0.55 });
+  var trailLine = new THREE.Line(trailGeo, trailMat);
+  scene.add(trailLine);
+  var trailPts = [];
+
+  var target = new THREE.Vector3(0, (fMin+fMax)/2, 0);
+  var radius = 9.5, theta = Math.PI*0.28, phi = Math.PI*0.35;
+  function updateCamera(){
+    camera.position.x = target.x + radius*Math.sin(phi)*Math.sin(theta);
+    camera.position.y = target.y + radius*Math.cos(phi);
+    camera.position.z = target.z + radius*Math.sin(phi)*Math.cos(theta);
+    camera.lookAt(target);
+  }
+  updateCamera();
+
+  var dragging = false, panning = false, lastX=0, lastY=0;
+  function panCamera(dx,dy){
+    camera.updateMatrixWorld();
+    var right = new THREE.Vector3().setFromMatrixColumn(camera.matrix, 0);
+    var up = new THREE.Vector3().setFromMatrixColumn(camera.matrix, 1);
+    var panScale = radius*0.0015;
+    target.addScaledVector(right, -dx*panScale);
+    target.addScaledVector(up, dy*panScale);
+    updateCamera();
+  }
+  container.addEventListener("pointerdown", function(e){
+    if(e.button===1){ panning=true; e.preventDefault(); }
+    else { dragging=true; }
+    lastX=e.clientX; lastY=e.clientY;
+    container.setPointerCapture(e.pointerId);
+  });
+  container.addEventListener("pointerup", function(){ dragging=false; panning=false; });
+  container.addEventListener("pointerleave", function(){ dragging=false; panning=false; });
+  container.addEventListener("pointermove", function(e){
+    if(!dragging && !panning) return;
+    var dx = e.clientX-lastX, dy = e.clientY-lastY;
+    lastX=e.clientX; lastY=e.clientY;
+    if(panning){
+      panCamera(dx,dy);
+      return;
+    }
+    theta -= dx*0.006;
+    phi -= dy*0.006;
+    phi = Math.max(0.15, Math.min(Math.PI-0.15, phi));
+    updateCamera();
+  });
+  container.addEventListener("auxclick", function(e){ if(e.button===1) e.preventDefault(); });
+  container.addEventListener("wheel", function(e){
+    e.preventDefault();
+    radius += e.deltaY*0.01;
+    radius = Math.max(4, Math.min(18, radius));
+    updateCamera();
+  }, { passive:false });
+
+  window.addEventListener("resize", function(){
+    camera.aspect = container.clientWidth/container.clientHeight;
+    camera.updateProjectionMatrix();
+    renderer.setSize(container.clientWidth, container.clientHeight);
+  });
+
+  var lrInput = document.getElementById("lr");
+  var lrOut = document.getElementById("lr-out");
+  var startxInput = document.getElementById("startx");
+  var startxOut = document.getElementById("startx-out");
+  var startyInput = document.getElementById("starty");
+  var startyOut = document.getElementById("starty-out");
+  var statIter = document.getElementById("stat-iter");
+  var statXY = document.getElementById("stat-xy");
+  var statFxy = document.getElementById("stat-fxy");
+  var statGrad = document.getElementById("stat-grad");
+  var statusMsg = document.getElementById("status-msg");
+
+  var state = { x:0, y:0, iter:0, running:false, timer:null };
+
+  function placeBall(){
+    var h = f(state.x, state.y);
+    ball.position.set(state.x, h+0.05, state.y);
+  }
+  function pushTrail(x,y){
+    trailPts.push([x, f(x,y)+0.05, y]);
+    if(trailPts.length>trailMaxPoints) trailPts.shift();
+    for(var k=0;k<trailPts.length;k++){
+      trailPositions[k*3] = trailPts[k][0];
+      trailPositions[k*3+1] = trailPts[k][1];
+      trailPositions[k*3+2] = trailPts[k][2];
+    }
+    trailGeo.attributes.position.needsUpdate = true;
+    trailGeo.setDrawRange(0, trailPts.length);
+  }
+  function updateStats(){
+    statIter.textContent = state.iter;
+    statXY.textContent = state.x.toFixed(2)+", "+state.y.toFixed(2);
+    statFxy.textContent = f(state.x,state.y).toFixed(2);
+    var gx=gradX(state.x,state.y), gy=gradY(state.x,state.y);
+    statGrad.textContent = Math.sqrt(gx*gx+gy*gy).toFixed(2);
+  }
+  function reset(){
+    stopRun();
+    state.x = parseFloat(startxInput.value);
+    state.y = parseFloat(startyInput.value);
+    state.iter = 0;
+    trailPts = [];
+    trailGeo.setDrawRange(0,0);
+    statusMsg.textContent = "";
+    updateStats();
+    placeBall();
+  }
+  function step(){
+    var lr = parseFloat(lrInput.value);
+    var gx = gradX(state.x,state.y), gy = gradY(state.x,state.y);
+    pushTrail(state.x, state.y);
+    state.x -= lr*gx;
+    state.y -= lr*gy;
+    state.iter++;
+    updateStats();
+    placeBall();
+    if(Math.abs(state.x)>4 || Math.abs(state.y)>4){
+      statusMsg.textContent = "La balle diverge : le taux d'apprentissage est trop grand.";
+      stopRun(); return;
+    }
+    var mag = Math.sqrt(gx*gx+gy*gy);
+    if(mag<0.01){
+      statusMsg.textContent = "Convergence : la balle s'est stabilisée dans un creux.";
+      stopRun(); return;
+    }
+    if(state.iter>=300){ statusMsg.textContent = "300 itérations atteintes sans convergence nette."; stopRun(); }
+  }
+  function stopRun(){
+    state.running=false;
+    if(state.timer){ clearInterval(state.timer); state.timer=null; }
+    document.getElementById("btn-run").textContent = "Lancer";
+  }
+  function toggleRun(){
+    if(state.running){ stopRun(); return; }
+    state.running=true;
+    document.getElementById("btn-run").textContent = "Pause";
+    statusMsg.textContent = "";
+    state.timer = setInterval(function(){ if(state.running) step(); }, 200);
+  }
+
+  lrInput.addEventListener("input", function(){ lrOut.textContent = parseFloat(lrInput.value).toFixed(2); });
+  startxInput.addEventListener("input", function(){ startxOut.textContent = parseFloat(startxInput.value).toFixed(2); reset(); });
+  startyInput.addEventListener("input", function(){ startyOut.textContent = parseFloat(startyInput.value).toFixed(2); reset(); });
+  document.getElementById("btn-step").addEventListener("click", function(){ if(!state.running) step(); });
+  document.getElementById("btn-run").addEventListener("click", toggleRun);
+  document.getElementById("btn-reset").addEventListener("click", reset);
+  document.getElementById("preset-small").addEventListener("click", function(){ lrInput.value=0.02; lrOut.textContent="0.02"; reset(); });
+  document.getElementById("preset-good").addEventListener("click", function(){ lrInput.value=0.15; lrOut.textContent="0.15"; reset(); });
+  document.getElementById("preset-big").addEventListener("click", function(){ lrInput.value=0.55; lrOut.textContent="0.55"; reset(); });
+
+  reset();
+
+  function animate(){
+    requestAnimationFrame(animate);
+    renderer.render(scene, camera);
+  }
+  animate();
+})();
+</script>
+</body>
+</html>
