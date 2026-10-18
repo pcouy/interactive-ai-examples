@@ -41,6 +41,11 @@ export interface EvalContext<S, M> {
 
 export interface Evaluator<S, M> {
   readonly id: string;
+  /** Présent uniquement pour les évaluateurs stochastic-échantillonnés :
+   * permet au moteur de savoir combien de tirages produisent une évaluation
+   * (pour merger les moyennes dans la table de transposition). Non
+   * obligatoire pour les autres évaluateurs. */
+  readonly samplesPerEvaluation?: number;
   evaluate(state: S, ctx: EvalContext<S, M>): number;
 }
 

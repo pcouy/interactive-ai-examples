@@ -14,6 +14,7 @@ import {
   createGameAgent,
   type GameComponentApi,
   parseEvaluatorMode,
+  sanitizeDiscount,
   TIC_TAC_TOE_GAME_CONFIG,
 } from '../shared/create-game-component.js';
 
@@ -201,6 +202,12 @@ export class DrlDeepBluePage extends LitElement {
   @property({ type: Boolean, attribute: 'transposition' })
   transposition = false;
 
+  @property({ type: Boolean, attribute: 'pruning' })
+  pruning = true;
+
+  @property({ type: Number, attribute: 'discount' })
+  discount = 1;
+
   @state()
   replayMove: unknown = null;
 
@@ -292,9 +299,11 @@ export class DrlDeepBluePage extends LitElement {
           .depth=${this.depth ?? CONNECT4_GAME_CONFIG.defaultDepth}
           .evaluator=${this.evaluator}
           .transposition=${this.transposition}
+          .pruning=${this.pruning}
+          .discount=${this.discount}
           @drl-search-started=${this.onSearchStarted}
           @drl-game-reset=${this.onTreeReset}
-          @drl-move-undone=${this.onTreeReset}
+          @drl-move-undone=${this.onMoveUndone}
         ></drl-connect4>
       `;
     }
@@ -305,9 +314,11 @@ export class DrlDeepBluePage extends LitElement {
         .depth=${this.depth ?? TIC_TAC_TOE_GAME_CONFIG.defaultDepth}
         .evaluator=${this.evaluator}
         .transposition=${this.transposition}
+        .pruning=${this.pruning}
+        .discount=${this.discount}
         @drl-search-started=${this.onSearchStarted}
         @drl-game-reset=${this.onTreeReset}
-        @drl-move-undone=${this.onTreeReset}
+        @drl-move-undone=${this.onMoveUndone}
       ></drl-tic-tac-toe>
     `;
   }
@@ -326,17 +337,28 @@ export class DrlDeepBluePage extends LitElement {
 
   private startParallelSearch(state: unknown): void {
     const tree = this.treeElement;
+    const game = this.gameElement;
     if (tree === null) {
       return;
     }
+    const samples = game?.rolloutSamples ?? 1;
+    const discount = sanitizeDiscount(this.discount, 1);
+    // L'agent rejoué ignore les entrées du tour courant : ce qui vient d'être
+    // déployé par la recherche jouée apparaît donc déplié dans l'arbre.
     if (this.activeGameId === 'connect4') {
       const agent = createGameAgent(CONNECT4_GAME_CONFIG.game, {
         mode: parseEvaluatorMode(this.evaluator),
         depth: this.depth ?? CONNECT4_GAME_CONFIG.defaultDepth,
         fallbackDepth: CONNECT4_GAME_CONFIG.defaultDepth,
         transposition: this.transposition,
+        transpositionTable: game?.transpositionTable,
+        prune: this.pruning,
         recorder: tree.recorder,
         heuristic: CONNECT4_GAME_CONFIG.heuristic,
+        samples,
+        discount,
+        rng: Math.random,
+        probeTurns: 'previous',
       });
       tree.startSearch<Connect4Move>(agent, state);
       return;
@@ -346,8 +368,14 @@ export class DrlDeepBluePage extends LitElement {
       depth: this.depth ?? TIC_TAC_TOE_GAME_CONFIG.defaultDepth,
       fallbackDepth: TIC_TAC_TOE_GAME_CONFIG.defaultDepth,
       transposition: this.transposition,
+      transpositionTable: game?.transpositionTable,
+      prune: this.pruning,
       recorder: tree.recorder,
       heuristic: TIC_TAC_TOE_GAME_CONFIG.heuristic,
+      samples,
+      discount,
+      rng: Math.random,
+      probeTurns: 'previous',
     });
     tree.startSearch<TicTacToeMove>(agent, state);
   }
@@ -369,6 +397,12 @@ export class DrlDeepBluePage extends LitElement {
   private readonly onTreeReset = (): void => {
     this.replayMove = null;
     this.treeElement?.clearTree();
+  };
+
+  private readonly onMoveUndone = (event: Event): void => {
+    const { state } = (event as CustomEvent<{ state: unknown }>).detail;
+    this.replayMove = null;
+    this.startParallelSearch(state);
   };
 
   private readonly onRootChanged = (event: Event): void => {

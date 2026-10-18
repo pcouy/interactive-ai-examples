@@ -132,6 +132,16 @@ describe('TreeModel applyValue', () => {
     expect(model.resolved('n')).toBe(true);
   });
 
+  it('drops exactness when overwritten by a bound value', () => {
+    const model = new TreeModel<FakeState>();
+    model.insert(visit('n', null, null, 0));
+    model.applyValue({ nodeKey: 'n', score: 0.5, depth: 1, exact: true });
+    model.applyValue({ nodeKey: 'n', score: 0.9, depth: 1, exact: false });
+    expect(model.node('n')?.score).toBe(0.9);
+    expect(model.node('n')?.exact).toBe(false);
+    expect(model.resolved('n')).toBe(false);
+  });
+
   it('creates the node defensively when absent', () => {
     const model = new TreeModel<FakeState>();
     model.applyValue({ nodeKey: 'ghost', score: 0.3, depth: 4, exact: false });

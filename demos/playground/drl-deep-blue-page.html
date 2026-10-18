@@ -104,8 +104,20 @@
           Page d'intégration Deep Blue : la partie interactive (morpion ou
           puissance 4) à gauche, le visualiseur d'arbre d'évaluation à droite.
           Chaque recherche d'agent est rejouée pas à pas dans l'arbre, à son
-          propre rythme. Cliquez un nœud de l'arbre puis « Rejouer ce coup »
-          pour tester dans la partie le premier coup du chemin menant à ce nœud.
+          propre rythme. Annuler un coup relance l'évaluation de la position
+          dans l'arbre, le sélecteur « élagage » compare alpha-beta et minimax,
+          et la table de transposition reste partagée avec la recherche rejouée :
+          les entrées du tour courant y sont ignorées et redéployées dans
+          l'arbre, seules celles des tours antérieurs, strictement plus
+          profondes, sont consommées (tt-hit).
+          Cliquez un nœud de l'arbre puis « Rejouer ce coup » pour tester dans
+          la partie le premier coup du chemin menant à ce nœud ; le bouton
+          « Plein écran » de l'arbre agrandit le visualiseur. Le paramètre
+          « discount γ » (<code>γ ∈ ]0, 1]</code>) pondère la valeur de chaque
+          coup enfant à la remontée vers le parent : un gain rapide prend un
+          score plus élevé qu'un gain lointain. L'agent tire au hasard parmi
+          les coups à valeur exactement égale (départage aléatoire), si bien
+          que la recherche rejouée dans l'arbre reste fidèle à la partie.
         </p>
       </header>
 
@@ -129,6 +141,20 @@
             <option value="rollout">rollout</option>
             <option value="random">random</option>
           </select>
+          <label for="page-discount">discount γ</label>
+          <input
+            id="page-discount"
+            type="number"
+            min="0.05"
+            max="1"
+            step="0.05"
+            placeholder="1"
+          />
+          <label for="page-pruning">élagage</label>
+          <select id="page-pruning">
+            <option value="pruning" selected>alpha-beta</option>
+            <option value="nomin">minimax</option>
+          </select>
           <label for="page-tt">transposition</label>
           <input id="page-tt" type="checkbox" />
         </div>
@@ -145,7 +171,9 @@
     <script type="module">
       const page = document.getElementById('page');
       const depthInput = document.getElementById('page-depth');
+      const discountInput = document.getElementById('page-discount');
       const evaluatorSelect = document.getElementById('page-evaluator');
+      const pruningSelect = document.getElementById('page-pruning');
       const transpositionCheckbox = document.getElementById('page-tt');
       const playerButtons = document.querySelectorAll('button[data-players]');
       const log = document.getElementById('log');
@@ -182,8 +210,24 @@
         }
       });
 
+      discountInput.addEventListener('change', () => {
+        if (discountInput.value === '') {
+          page.removeAttribute('discount');
+        } else {
+          page.setAttribute('discount', discountInput.value);
+        }
+      });
+
       evaluatorSelect.addEventListener('change', () => {
         page.setAttribute('evaluator', evaluatorSelect.value);
+      });
+
+      pruningSelect.addEventListener('change', () => {
+        if (pruningSelect.value === 'pruning') {
+          page.setAttribute('pruning', '');
+        } else {
+          page.removeAttribute('pruning');
+        }
       });
 
       transpositionCheckbox.addEventListener('change', () => {

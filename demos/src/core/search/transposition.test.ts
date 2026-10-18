@@ -16,6 +16,7 @@ import { createMinimaxAgent } from './minimax.js';
 import {
   createTranspositionTable,
   isEntryUsable,
+  type ProbedEntry,
   type TranspositionEntry,
   type TranspositionTable,
 } from './transposition.js';
@@ -59,6 +60,14 @@ function finalRootScore(values: ValueEvent[], rootKey: string): number {
   throw new Error('expected a final exact root value');
 }
 
+function rootKeyOf<S>(visits: VisitEvent<S>[]): string {
+  const rootKey = visits[0]?.nodeKey;
+  if (rootKey === undefined) {
+    throw new Error('expected at least one visit');
+  }
+  return rootKey;
+}
+
 function naiveMinimax(state: TicTacToeState, depth: number, rootPlayer: PlayerId): number {
   const outcome = ticTacToe.winner(state);
   if (outcome !== null) {
@@ -80,7 +89,7 @@ function createTicTacToeAgent(
   recorder: TreeRecorder<TicTacToeState>,
   depth: number,
   prune: boolean,
-  transposition?: TranspositionTable<TicTacToeMove>,
+  transposition?: TranspositionTable,
 ): SearchAgent<TicTacToeState, TicTacToeMove> {
   return createMinimaxAgent(ticTacToe, {
     depth,
@@ -100,18 +109,17 @@ function midgameState(): TicTacToeState {
 
 describe('createTranspositionTable', () => {
   it('stores, probes, counts and clears entries', () => {
-    const table = createTranspositionTable<TicTacToeMove>();
+    const table = createTranspositionTable();
     expect(table.size()).toBe(0);
     expect(table.probe('missing')).toBeNull();
-    const entry: TranspositionEntry<TicTacToeMove> = {
+    const entry: TranspositionEntry = {
       score: 0.25,
       depth: 3,
       exact: true,
-      bestMove: { index: 4 },
     };
     table.store('a', entry);
-    expect(table.probe('a')).toEqual(entry);
-    table.store('b', { score: -1, depth: 0, exact: false, bestMove: null });
+    expect(table.probe('a')).toEqual({ ...entry, turn: 0 });
+    table.store('b', { score: -1, depth: 0, exact: false });
     expect(table.size()).toBe(2);
     expect(table.probe('b')?.score).toBe(-1);
     table.clear();
@@ -120,83 +128,179 @@ describe('createTranspositionTable', () => {
     expect(table.probe('b')).toBeNull();
   });
 
+  it('stamps stored entries with the current turn', () => {
+    const table = createTranspositionTable();
+    table.store('a', { score: 0.5, depth: 2, exact: true });
+    expect(table.probe('a')?.turn).toBe(0);
+    table.beginTurn();
+    expect(table.currentTurn()).toBe(1);
+    table.store('b', { score: -0.5, depth: 2, exact: true });
+    expect(table.probe('b')?.turn).toBe(1);
+    // Un stockage à profondeur égale écrase l'ancienne entrée et porte le
+    // tour courant.
+    table.store('a', { score: 0.75, depth: 2, exact: true });
+    expect(table.probe('a')?.score).toBe(0.75);
+    expect(table.probe('a')?.turn).toBe(1);
+  });
+
+  it('snapshots all entries sorted by key', () => {
+    const table = createTranspositionTable();
+    table.beginTurn();
+    table.beginTurn();
+    table.store('b', { score: 0.5, depth: 2, exact: true });
+    table.store('a', { score: -0.25, depth: 3, exact: false });
+    const snapshot = table.snapshot();
+    expect(snapshot.map((row) => row.key)).toEqual(['a', 'b']);
+    expect(snapshot[0]).toEqual({
+      key: 'a',
+      score: -0.25,
+      depth: 3,
+      exact: false,
+      turn: 2,
+    });
+    expect(table.probe('missing')).toBeNull();
+  });
+
   it('keeps the deeper entry when storing over an existing one', () => {
-    const table = createTranspositionTable<TicTacToeMove>();
-    table.store('k', { score: 1, depth: 2, exact: true, bestMove: null });
-    table.store('k', { score: 0, depth: 1, exact: true, bestMove: null });
+    const table = createTranspositionTable();
+    table.store('k', { score: 1, depth: 2, exact: true });
+    table.store('k', { score: 0, depth: 1, exact: true });
     expect(table.probe('k')?.score).toBe(1);
-    table.store('k', { score: 0.5, depth: 2, exact: false, bestMove: null });
+    table.store('k', { score: 0.5, depth: 2, exact: false });
     expect(table.probe('k')?.score).toBe(0.5);
-    table.store('k', { score: 0.75, depth: 5, exact: false, bestMove: null });
+    table.store('k', { score: 0.75, depth: 5, exact: false });
     expect(table.probe('k')?.score).toBe(0.75);
   });
 });
 
 describe('isEntryUsable', () => {
-  it('rejects an entry shallower than the remaining search depth', () => {
-    const entry: TranspositionEntry<TicTacToeMove> = {
+  it('accepts a strictly deeper entry whatever the turn', () => {
+    const entry: ProbedEntry = {
+      score: 0.5,
+      depth: 2,
+      exact: true,
+      turn: 0,
+    };
+    expect(isEntryUsable(entry, 1, -Infinity, Infinity, true, 5)).toBe(true);
+    expect(isEntryUsable(entry, 1, -Infinity, Infinity, true, 0)).toBe(true);
+  });
+
+  it('accepts an equal-depth entry only when it comes from the current turn', () => {
+    const entry: ProbedEntry = {
       score: 0.5,
       depth: 1,
       exact: true,
-      bestMove: null,
+      turn: 3,
     };
-    expect(isEntryUsable(entry, 0, -Infinity, Infinity, true)).toBe(true);
-    expect(isEntryUsable(entry, 1, -Infinity, Infinity, true)).toBe(true);
-    expect(isEntryUsable(entry, 2, -Infinity, Infinity, true)).toBe(false);
+    expect(isEntryUsable(entry, 1, -Infinity, Infinity, true, 3)).toBe(true);
+    expect(isEntryUsable(entry, 1, -Infinity, Infinity, true, 4)).toBe(false);
+    expect(isEntryUsable(entry, 0, -Infinity, Infinity, true, 99)).toBe(true);
   });
 
-  it('accepts an exact entry whatever the window', () => {
-    const entry: TranspositionEntry<TicTacToeMove> = {
+  it('accepts an exact entry whatever the window when the depth condition holds', () => {
+    const entry: ProbedEntry = {
       score: 0.5,
       depth: 3,
       exact: true,
-      bestMove: null,
+      turn: 7,
     };
-    expect(isEntryUsable(entry, 3, -Infinity, Infinity, true)).toBe(true);
-    expect(isEntryUsable(entry, 2, -0.9, 0.1, true)).toBe(true);
-    expect(isEntryUsable(entry, 2, 0.6, Infinity, false)).toBe(true);
+    expect(isEntryUsable(entry, 3, -Infinity, Infinity, true, 7)).toBe(true);
+    expect(isEntryUsable(entry, 3, -Infinity, Infinity, true, 8)).toBe(false);
+    expect(isEntryUsable(entry, 2, -0.9, 0.1, true, 8)).toBe(true);
+    expect(isEntryUsable(entry, 2, 0.6, Infinity, false, 8)).toBe(true);
   });
 
   it('accepts a bound entry only when the window is compatible with the node direction', () => {
-    const lower: TranspositionEntry<TicTacToeMove> = {
+    const lower: ProbedEntry = {
       score: 0.3,
       depth: 3,
       exact: false,
-      bestMove: null,
+      turn: 2,
     };
-    expect(isEntryUsable(lower, 3, -Infinity, 0.2, true)).toBe(true);
-    expect(isEntryUsable(lower, 3, -Infinity, 0.3, true)).toBe(true);
-    expect(isEntryUsable(lower, 3, -Infinity, 0.4, true)).toBe(false);
-    const upper: TranspositionEntry<TicTacToeMove> = {
+    expect(isEntryUsable(lower, 2, -Infinity, 0.2, true, 2)).toBe(true);
+    expect(isEntryUsable(lower, 2, -Infinity, 0.3, true, 2)).toBe(true);
+    expect(isEntryUsable(lower, 2, -Infinity, 0.4, true, 2)).toBe(false);
+    expect(isEntryUsable(lower, 3, -Infinity, 0.2, true, 3)).toBe(false);
+    expect(isEntryUsable(lower, 3, -Infinity, 0.2, true, 2)).toBe(true);
+    const upper: ProbedEntry = {
       score: -0.3,
       depth: 3,
       exact: false,
-      bestMove: null,
+      turn: 2,
     };
-    expect(isEntryUsable(upper, 3, -0.2, Infinity, false)).toBe(true);
-    expect(isEntryUsable(upper, 3, -0.3, Infinity, false)).toBe(true);
-    expect(isEntryUsable(upper, 3, -0.4, Infinity, false)).toBe(false);
+    expect(isEntryUsable(upper, 2, -0.2, Infinity, false, 2)).toBe(true);
+    expect(isEntryUsable(upper, 2, -0.3, Infinity, false, 2)).toBe(true);
+    expect(isEntryUsable(upper, 2, -0.4, Infinity, false, 2)).toBe(false);
+    expect(isEntryUsable(upper, 3, -0.2, Infinity, false, 3)).toBe(false);
+    expect(isEntryUsable(upper, 3, -0.2, Infinity, false, 2)).toBe(true);
   });
 });
 
 describe('minimax with a transposition table', () => {
-  it('visits strictly fewer nodes with ttHits > 0 on transposition-heavy positions and keeps the same score and bestMove', () => {
+  it('visits strictly fewer nodes with ttHits > 0 and keeps the same score and bestMove', () => {
     for (const state of [ticTacToe.initialState(), midgameState()]) {
-      const rootKey = ticTacToe.stateKey(state);
       const off = recordSearch((recorder) => createTicTacToeAgent(recorder, 5, true), state);
       const on = recordSearch(
         (recorder) => createTicTacToeAgent(recorder, 5, true, createTranspositionTable()),
         state,
       );
+      // Au sein d'une même recherche, tous les stockages partagent le même
+      // tour : les transpositions à profondeur égale sont donc consommées.
       const offStats = off.agent.stats();
       const onStats = on.agent.stats();
       expect(onStats.nodesVisited).toBeLessThan(offStats.nodesVisited);
       expect(onStats.ttHits).toBeGreaterThan(0);
       expect(onStats.ttMisses).toBeGreaterThan(0);
       expect(onStats.elapsedSteps).toBe(onStats.nodesVisited);
-      expect(finalRootScore(on.values, rootKey)).toBe(finalRootScore(off.values, rootKey));
+      expect(finalRootScore(on.values, rootKeyOf(on.visits))).toBe(
+        finalRootScore(off.values, rootKeyOf(off.visits)),
+      );
       expect(on.agent.bestMove()).toEqual(off.agent.bestMove());
     }
+  });
+
+  it('reuses equal-depth entries only within the same turn across two searches', () => {
+    const shared = createTranspositionTable();
+    const first = recordSearch(
+      (recorder) => createTicTacToeAgent(recorder, 4, true, shared),
+      ticTacToe.initialState(),
+    );
+    const firstStats = first.agent.stats();
+    expect(firstStats.nodesVisited).toBeGreaterThan(1);
+    // Une ré-exécution sans nouveau tour : la racine n'est jamais résolue
+    // depuis la table, elle explore toujours ses enfants. En revanche les
+    // nœuds internes consomment les entrées à profondeur égale du même tour :
+    // les neuf enfants de la racine sont frappés (tt-hit) et la sous-arborescence
+    // sous ces frappes disparaît.
+    const replay = recordSearch(
+      (recorder) => createTicTacToeAgent(recorder, 4, true, shared),
+      ticTacToe.initialState(),
+    );
+    const replayStats = replay.agent.stats();
+    const replayRootKey = rootKeyOf(replay.visits);
+    const replayRootChildren = replay.visits.filter((visit) => visit.parentKey === replayRootKey);
+    expect(replayRootChildren).toHaveLength(ticTacToe.legalMoves(ticTacToe.initialState()).length);
+    expect(replayRootChildren.some((visit) => visit.kind === 'tt-hit')).toBe(true);
+    expect(replayStats.nodesVisited).toBeGreaterThan(1);
+    expect(replayStats.nodesVisited).toBeLessThan(firstStats.nodesVisited);
+    expect(replayStats.ttHits).toBeGreaterThan(0);
+    expect(finalRootScore(replay.values, replayRootKey)).toBe(
+      finalRootScore(first.values, rootKeyOf(first.visits)),
+    );
+    expect(replay.agent.bestMove()).toEqual(first.agent.bestMove());
+    // Après beginTurn, la même ré-exécution à profondeur égale ne peut plus
+    // consommer les entrées du tour précédent : elle ré-explore tout, exactement
+    // comme une recherche à table fraîche.
+    shared.beginTurn();
+    const stale = recordSearch(
+      (recorder) => createTicTacToeAgent(recorder, 4, true, shared),
+      ticTacToe.initialState(),
+    );
+    expect(stale.agent.stats().nodesVisited).toBe(firstStats.nodesVisited);
+    expect(finalRootScore(stale.values, rootKeyOf(stale.visits))).toBe(
+      finalRootScore(first.values, rootKeyOf(first.visits)),
+    );
+    expect(stale.agent.bestMove()).toEqual(first.agent.bestMove());
   });
 
   it('is correct with and without pruning and matches the naive score', () => {
@@ -211,17 +315,16 @@ describe('minimax with a transposition table', () => {
         (recorder) => createTicTacToeAgent(recorder, 5, prune, createTranspositionTable()),
         ticTacToe.initialState(),
       );
-      const rootKey = ticTacToe.stateKey(ticTacToe.initialState());
-      expect(finalRootScore(on.values, rootKey)).toBe(expected);
-      expect(finalRootScore(off.values, rootKey)).toBe(expected);
+      expect(finalRootScore(on.values, rootKeyOf(on.visits))).toBe(expected);
+      expect(finalRootScore(off.values, rootKeyOf(off.visits))).toBe(expected);
       expect(on.agent.bestMove()).toEqual(off.agent.bestMove());
-      expect(on.agent.stats().nodesVisited).toBeLessThan(off.agent.stats().nodesVisited);
       expect(on.agent.stats().ttHits).toBeGreaterThan(0);
+      expect(on.agent.stats().nodesVisited).toBeLessThan(off.agent.stats().nodesVisited);
     }
   });
 
   it('misses entries from a shallower search when searching deeper, then hits when searching shallower again', () => {
-    const shared = createTranspositionTable<TicTacToeMove>();
+    const shared = createTranspositionTable();
     recordSearch(
       (recorder) => createTicTacToeAgent(recorder, 2, true, shared),
       ticTacToe.initialState(),
@@ -230,8 +333,11 @@ describe('minimax with a transposition table', () => {
       (recorder) => createTicTacToeAgent(recorder, 4, true, shared),
       ticTacToe.initialState(),
     );
-    const rootKey = ticTacToe.stateKey(ticTacToe.initialState());
+    const rootKey = rootKeyOf(deep.visits);
     const deepStats = deep.agent.stats();
+    // Les entrées de la recherche à 2 sont strictement moins profondes :
+    // impossibles à consommer. Les touches de la recherche profonde viennent
+    // de ses propres transpositions, à profondeur égale et au même tour.
     expect(deepStats.ttMisses).toBeGreaterThan(0);
     expect(deepStats.ttHits).toBeGreaterThan(0);
     expect(finalRootScore(deep.values, rootKey)).toBe(naiveMinimax(ticTacToe.initialState(), 4, 0));
@@ -241,10 +347,16 @@ describe('minimax with a transposition table', () => {
       ticTacToe.initialState(),
     );
     const againStats = again.agent.stats();
-    expect(againStats.nodesVisited).toBe(1);
-    expect(againStats.ttHits).toBe(1);
+    // La racine de cette nouvelle recherche à 2 est toujours ré-explorée :
+    // seulement 1 ne serait plus possible. En revanche ses nœuds internes peu
+    // profonds consomment les entrées à profondeur égale ou supérieure du
+    // même tour.
+    expect(againStats.nodesVisited).toBeGreaterThan(1);
+    expect(againStats.ttHits).toBeGreaterThan(0);
     expect(again.agent.bestMove()).toEqual(deep.agent.bestMove());
-    expect(finalRootScore(again.values, rootKey)).toBe(finalRootScore(deep.values, rootKey));
+    expect(finalRootScore(again.values, rootKeyOf(again.visits))).toBe(
+      naiveMinimax(ticTacToe.initialState(), 2, 0),
+    );
   });
 
   it('keeps the same score and bestMove as the table-free engine over a random corpus', () => {
@@ -253,14 +365,46 @@ describe('minimax with a transposition table', () => {
       minPly: 0,
       maxPly: 6,
     })) {
-      const rootKey = ticTacToe.stateKey(state);
       const off = recordSearch((recorder) => createTicTacToeAgent(recorder, 4, true), state);
       const on = recordSearch(
         (recorder) => createTicTacToeAgent(recorder, 4, true, createTranspositionTable()),
         state,
       );
-      expect(finalRootScore(on.values, rootKey)).toBe(finalRootScore(off.values, rootKey));
+      expect(finalRootScore(on.values, rootKeyOf(on.visits))).toBe(
+        finalRootScore(off.values, rootKeyOf(off.visits)),
+      );
       expect(on.agent.bestMove()).toEqual(off.agent.bestMove());
     }
+  });
+
+  it('the root of a search is never answered from the table', () => {
+    const reference = recordSearch(
+      (recorder) => createTicTacToeAgent(recorder, 4, true),
+      ticTacToe.initialState(),
+    );
+    const shared = createTranspositionTable();
+    recordSearch(
+      (recorder) => createTicTacToeAgent(recorder, 4, true, shared),
+      ticTacToe.initialState(),
+    );
+    // Table peuplée par une recherche identique au même tour : la racine doit
+    // malgré tout être redéveloppée et choisir son coup via la recherche.
+    const replay = recordSearch(
+      (recorder) => createTicTacToeAgent(recorder, 4, true, shared),
+      ticTacToe.initialState(),
+    );
+    const replayRootKey = rootKeyOf(replay.visits);
+    expect(replay.visits[0]).toMatchObject({
+      nodeKey: replayRootKey,
+      parentKey: null,
+      depth: 0,
+      kind: 'expand',
+    });
+    const replayRootChildren = replay.visits.filter((visit) => visit.parentKey === replayRootKey);
+    expect(replayRootChildren).toHaveLength(ticTacToe.legalMoves(ticTacToe.initialState()).length);
+    expect(finalRootScore(replay.values, replayRootKey)).toBe(
+      finalRootScore(reference.values, rootKeyOf(reference.visits)),
+    );
+    expect(replay.agent.bestMove()).toEqual(reference.agent.bestMove());
   });
 });

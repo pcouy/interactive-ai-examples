@@ -9,7 +9,7 @@ import {
 } from 'd3-zoom';
 import type { PropertyValues, TemplateResult } from 'lit';
 import { css, html, nothing } from 'lit';
-import { customElement, property } from 'lit/decorators.js';
+import { customElement, property, state } from 'lit/decorators.js';
 import { DemoElement } from '../../base/demo-element.js';
 import type {
   Game,
@@ -188,6 +188,18 @@ export class DrlEvalTree<S> extends DemoElement {
         align-items: center;
         gap: var(--drl-space-1);
         color: var(--drl-muted);
+      }
+
+      .drl-autofit {
+        display: inline-flex;
+        align-items: center;
+        gap: var(--drl-space-1);
+        color: var(--drl-muted);
+        cursor: pointer;
+      }
+
+      .drl-autofit input {
+        cursor: pointer;
       }
 
       .drl-depth-input {
@@ -406,6 +418,37 @@ export class DrlEvalTree<S> extends DemoElement {
         font-size: 0.9em;
         min-height: 1.3em;
       }
+
+      :host(:fullscreen) {
+        display: flex;
+        flex-direction: column;
+        width: 100%;
+        height: 100%;
+        background: var(--drl-bg);
+      }
+
+      :host(:fullscreen) drl-controls {
+        flex: none;
+      }
+
+      :host(:fullscreen) .drl-content {
+        display: flex;
+        flex-direction: column;
+        flex: 1;
+        min-height: 0;
+      }
+
+      :host(:fullscreen) .drl-toolbar,
+      :host(:fullscreen) .drl-breadcrumbs,
+      :host(:fullscreen) .drl-status {
+        flex: none;
+      }
+
+      :host(:fullscreen) .drl-canvas {
+        flex: 1;
+        height: auto;
+        min-height: 320px;
+      }
     `,
   ];
 
@@ -418,8 +461,14 @@ export class DrlEvalTree<S> extends DemoElement {
   @property({ type: Boolean })
   stepper = true;
 
+  @property({ type: Boolean, attribute: 'auto-fit' })
+  autoFit = false;
+
   @property({ type: String, attribute: 'piece-style' })
   pieceStyle: PieceStyle | null = null;
+
+  @state()
+  private isFullscreen = false;
 
   readonly model = new TreeModel<S>();
 
@@ -477,6 +526,7 @@ export class DrlEvalTree<S> extends DemoElement {
   private zoomBehavior: ZoomBehavior<HTMLDivElement, undefined> | null = null;
 
   protected override firstUpdated(): void {
+    document.addEventListener('fullscreenchange', this.handleFullscreenChange);
     const canvas = this.renderRoot.querySelector<HTMLDivElement>('.drl-canvas');
     const viewport = this.renderRoot.querySelector<HTMLDivElement>('.drl-viewport');
     const nodeLayer = this.renderRoot.querySelector<HTMLDivElement>('.drl-node-layer');
@@ -509,6 +559,7 @@ export class DrlEvalTree<S> extends DemoElement {
 
   override disconnectedCallback(): void {
     super.disconnectedCallback();
+    document.removeEventListener('fullscreenchange', this.handleFullscreenChange);
     if (this.pendingFrame !== 0) {
       cancelAnimationFrame(this.pendingFrame);
       this.pendingFrame = 0;
@@ -652,10 +703,42 @@ export class DrlEvalTree<S> extends DemoElement {
     this.fit();
   };
 
+  private readonly handleAutoFitChange = (event: Event): void => {
+    const input = event.target;
+    if (!(input instanceof HTMLInputElement)) {
+      return;
+    }
+    this.autoFit = input.checked;
+    if (this.autoFit) {
+      this.fit();
+    }
+  };
+
   private readonly handleFull = (): void => {
     if (this.zoomSelection && this.zoomBehavior) {
       this.zoomSelection.call(this.zoomBehavior.scaleTo, 1);
     }
+  };
+
+  private readonly handleFullscreen = (): void => {
+    if (document.fullscreenElement === this) {
+      void document.exitFullscreen();
+      return;
+    }
+    if (document.fullscreenEnabled) {
+      void this.requestFullscreen();
+    }
+  };
+
+  private readonly handleFullscreenChange = (): void => {
+    const fullscreen = document.fullscreenElement === this;
+    if (fullscreen === this.isFullscreen) {
+      return;
+    }
+    this.isFullscreen = fullscreen;
+    requestAnimationFrame(() => {
+      this.fit();
+    });
   };
 
   private readonly handleZoomInput = (event: Event): void => {
@@ -729,11 +812,22 @@ export class DrlEvalTree<S> extends DemoElement {
     const walk = (node: TreeNode<S>, relDepth: number): LayoutItem<S> => {
       const children = this.model.children(node.nodeKey);
       if (children.length > 0 && (relDepth >= maxDepth || rendered >= MAX_RENDER_NODES)) {
+        // Le nœud reste affiché normalement (état + score) ; la taille du
+        // sous-arbre masqué migre sur un enfant factice unique.
+        rendered += 1;
         return {
           key: node.nodeKey,
           node,
-          compact: true,
-          collapsedCount: this.countDescendants(node.nodeKey, memo),
+          compact: false,
+          collapsedCount: 0,
+          children: [
+            {
+              key: `${node.nodeKey}:collapsed`,
+              node,
+              compact: true,
+              collapsedCount: this.countDescendants(node.nodeKey, memo),
+            },
+          ],
         };
       }
       rendered += 1;
@@ -789,6 +883,9 @@ export class DrlEvalTree<S> extends DemoElement {
     this.updateBreadcrumbs();
     this.updateTree();
     this.updateStatus();
+    if (this.autoFit) {
+      this.fit();
+    }
   }
 
   private updateToolbarState(): void {
@@ -873,18 +970,31 @@ export class DrlEvalTree<S> extends DemoElement {
       return item;
     });
     const rendered = new Set(this.lastItems.map((entry) => entry.item.key));
+    const rootNode = this.model.root();
+    const rootPlayer =
+      this.game !== null && rootNode !== null && rootNode.state !== undefined
+        ? this.game.currentPlayer(rootNode.state)
+        : null;
     const bestEdges = new Map<string, string>();
     for (const entry of this.lastItems) {
       if (entry.item.compact) {
         continue;
       }
+      // Nœud maximisant pour le joueur racine, minimisant pour l'adversaire :
+      // le meilleur enfant est celui au score le plus bas dans le second cas.
+      const maximizing =
+        rootPlayer === null ||
+        this.game === null ||
+        entry.item.node.state === undefined ||
+        this.game.currentPlayer(entry.item.node.state) === rootPlayer;
       let bestKey: string | null = null;
-      let bestScore = Number.NEGATIVE_INFINITY;
+      let bestScore = maximizing ? Number.NEGATIVE_INFINITY : Number.POSITIVE_INFINITY;
       for (const child of this.model.children(entry.item.node.nodeKey)) {
         if (child.score === null || !rendered.has(child.nodeKey)) {
           continue;
         }
-        if (child.score > bestScore) {
+        const improves = maximizing ? child.score > bestScore : child.score < bestScore;
+        if (improves) {
           bestScore = child.score;
           bestKey = child.nodeKey;
         }
@@ -907,7 +1017,9 @@ export class DrlEvalTree<S> extends DemoElement {
         tx: target.x,
         ty: target.y - target.half - 1,
         best: bestEdges.get(link.source.data.key) === link.target.data.key,
-        label: formatMove(link.target.data.node.move),
+        // L'arête vers l'enfant factice porte le coup du parent : on la
+        // laisse sans étiquette pour éviter la redite.
+        label: link.target.data.compact ? '' : formatMove(link.target.data.node.move),
       });
     }
     this.hiddenCount = this.lastItems.reduce(
@@ -1090,8 +1202,28 @@ export class DrlEvalTree<S> extends DemoElement {
         >
           Ajuster
         </button>
+        <label class="drl-autofit" title="Recentrer et ajuster le zoom à chaque mise à jour de l'arbre ou déplacement du point de vue">
+          <input
+            type="checkbox"
+            .checked=${this.autoFit}
+            @change=${this.handleAutoFitChange}
+          />
+          <span>Ajuster auto</span>
+        </label>
         <button type="button" class="drl-button" title="Zoom 100 %" @click=${this.handleFull}>
           100 %
+        </button>
+        <button
+          type="button"
+          class="drl-button"
+          title=${
+            this.isFullscreen
+              ? "Quitter le mode plein écran de l'arbre"
+              : "Afficher l'arbre et ses commandes en plein écran"
+          }
+          @click=${this.handleFullscreen}
+        >
+          ${this.isFullscreen ? 'Quitter le plein écran' : 'Plein écran'}
         </button>
         <label class="drl-depth">
           <span>Prof. max</span>

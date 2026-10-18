@@ -34,6 +34,9 @@ export function createRandomRolloutEvaluator<S, M>(options?: {
   const maxPlies = Math.max(1, Math.floor(options?.maxPlies ?? DEFAULT_MAX_PLIES));
   return {
     id: 'random-rollout',
+    // Le moteur exploite ce compte pour fusionner les moyennes de rollout
+    // des feuilles d'horizon dans la table de transposition (profondeur 0).
+    samplesPerEvaluation: sampleCount,
     evaluate(state, ctx) {
       const game = ctx.game;
       const rootPlayer = ctx.rootPlayer;

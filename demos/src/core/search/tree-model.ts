@@ -93,9 +93,7 @@ export class TreeModel<S> {
       this.nodes.set(event.nodeKey, node);
     }
     node.score = event.score;
-    if (event.exact) {
-      node.exact = true;
-    }
+    node.exact = event.exact;
   }
 
   root(): TreeNode<S> | null {

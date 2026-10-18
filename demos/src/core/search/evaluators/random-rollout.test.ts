@@ -37,6 +37,16 @@ describe('createRandomRolloutEvaluator', () => {
     expect(evaluator.id).toBe('random-rollout');
   });
 
+  it('exposes samplesPerEvaluation with the configured count and the default', () => {
+    const configured = createRandomRolloutEvaluator<TicTacToeState, TicTacToeMove>({
+      samples: 3,
+    });
+    expect(configured.samplesPerEvaluation).toBe(3);
+    // Défaut : DEFAULT_SAMPLES = 1 tirage par évaluation.
+    const defaulted = createRandomRolloutEvaluator<TicTacToeState, TicTacToeMove>();
+    expect(defaulted.samplesPerEvaluation).toBe(1);
+  });
+
   it('returns scores within [-1, 1] over random tic-tac-toe and connect-four corpora', () => {
     const ticTacToeEvaluator = createRandomRolloutEvaluator<TicTacToeState, TicTacToeMove>({
       rng: createRng(11),

@@ -5,14 +5,18 @@ import {
   type TicTacToeState,
   ticTacToe,
 } from '../../core/games/tic-tac-toe.js';
+import { createTranspositionTable } from '../../core/search/transposition.js';
 import { createRng, randomStates } from '../../core/testing/playouts.js';
 import {
   CONNECT4_GAME_CONFIG,
   createGameAgent,
+  createGameComponent,
+  type GameComponentApi,
   parseEvaluatorMode,
   parsePlayersConfig,
   sameMove,
   sanitizeDepth,
+  sanitizeDiscount,
   sanitizeSamples,
   TIC_TAC_TOE_GAME_CONFIG,
 } from './create-game-component.js';
@@ -230,6 +234,17 @@ describe('sanitizeSamples', () => {
   });
 });
 
+describe('sanitizeDiscount', () => {
+  it('keeps values inside ]0, 1] and rejects the others to the fallback', () => {
+    expect(sanitizeDiscount(1, 1)).toBe(1);
+    expect(sanitizeDiscount(0.5, 1)).toBe(0.5);
+    expect(sanitizeDiscount(0, 1)).toBe(1);
+    expect(sanitizeDiscount(1.5, 1)).toBe(1);
+    expect(sanitizeDiscount(Number.NaN, 1)).toBe(1);
+    expect(sanitizeDiscount(0.01, 1)).toBe(0.01);
+  });
+});
+
 describe('sameMove', () => {
   it('compares structurally identical moves', () => {
     expect(sameMove({ index: 3 }, { index: 3 })).toBe(true);
@@ -246,6 +261,7 @@ describe('createGameAgent', () => {
       depth: 6,
       fallbackDepth: 6,
       transposition: false,
+      prune: true,
       recorder: noopRecorder,
       heuristic: TIC_TAC_TOE_GAME_CONFIG.heuristic,
     });
@@ -266,6 +282,7 @@ describe('createGameAgent', () => {
       depth: 6,
       fallbackDepth: 6,
       transposition: false,
+      prune: true,
       recorder: noopRecorder,
       heuristic: TIC_TAC_TOE_GAME_CONFIG.heuristic,
     });
@@ -284,6 +301,7 @@ describe('createGameAgent', () => {
       depth: 4,
       fallbackDepth: 6,
       transposition: false,
+      prune: true,
       recorder: noopRecorder,
       heuristic: TIC_TAC_TOE_GAME_CONFIG.heuristic,
     });
@@ -301,12 +319,31 @@ describe('createGameAgent', () => {
       depth: 6,
       fallbackDepth: 6,
       transposition: true,
+      prune: true,
       recorder: noopRecorder,
       heuristic: TIC_TAC_TOE_GAME_CONFIG.heuristic,
     });
     const move = runAgentToDone(agent, state);
     expect(move).not.toBeNull();
     expect(agent.stats().ttMisses).toBeGreaterThan(0);
+  });
+
+  it('forwards the discount and rng options to the minimax engine', () => {
+    // Croix joue 0 et 1, cercles 3 : { index: 2 } gagne immédiatement.
+    const state = playTicTacToe([0, 3, 1]);
+    const agent = createGameAgent(ticTacToe, {
+      mode: 'windows',
+      depth: 6,
+      fallbackDepth: 6,
+      transposition: false,
+      prune: true,
+      recorder: noopRecorder,
+      heuristic: TIC_TAC_TOE_GAME_CONFIG.heuristic,
+      discount: 0.5,
+      rng: Math.random,
+    });
+    const move = runAgentToDone(agent, state);
+    expect(move).toEqual({ index: 2 });
   });
 
   it('plays a full connect4 search agent turn within a bounded step budget', () => {
@@ -316,6 +353,7 @@ describe('createGameAgent', () => {
       depth: 4,
       fallbackDepth: 4,
       transposition: false,
+      prune: true,
       recorder: noopRecorder,
       heuristic: CONNECT4_GAME_CONFIG.heuristic,
     });
@@ -326,5 +364,219 @@ describe('createGameAgent', () => {
         .legalMoves(state)
         .some((legal) => sameMove(legal, move as { col: number })),
     ).toBe(true);
+  });
+});
+
+type TicTacToeElement = GameComponentApi<TicTacToeState, TicTacToeMove>;
+
+function createTicTacToeElement(): TicTacToeElement {
+  const ctor = createGameComponent(TIC_TAC_TOE_GAME_CONFIG) as unknown as {
+    new (): TicTacToeElement;
+  };
+  const element = new ctor();
+  // No DOM in the node test environment: neutralize Lit's async render pass
+  // while keeping the reactive property bookkeeping.
+  (element as unknown as { performUpdate(): void }).performUpdate = () => {};
+  return element;
+}
+
+describe('persistent transposition table', () => {
+  const baseOptions = {
+    mode: 'windows' as const,
+    depth: 4,
+    fallbackDepth: 6,
+    transposition: true,
+    recorder: noopRecorder,
+    heuristic: TIC_TAC_TOE_GAME_CONFIG.heuristic,
+  };
+
+  it('stores entries in an injected table that survive across separate searches', () => {
+    const table = createTranspositionTable();
+    const state = playTicTacToe([4]);
+    const first = runAgentToDone(
+      createGameAgent(ticTacToe, { ...baseOptions, transpositionTable: table }),
+      state,
+    );
+    expect(first).not.toBeNull();
+    const sizeAfterFirstSearch = table.size();
+    expect(sizeAfterFirstSearch).toBeGreaterThan(0);
+    const nextState = ticTacToe.apply(state, first as TicTacToeMove);
+    runAgentToDone(
+      createGameAgent(ticTacToe, { ...baseOptions, transpositionTable: table }),
+      nextState,
+    );
+    expect(table.size()).toBeGreaterThan(sizeAfterFirstSearch);
+  });
+
+  it('keeps the component table alive across turns, undos and resets, and clears on demand', () => {
+    const element = createTicTacToeElement();
+    element.players = '["agent","agent"]';
+    element.transposition = true;
+    element.depth = 3;
+    element.stepTurn();
+    const sizeAfterFirstTurn = element.transpositionTable.size();
+    expect(sizeAfterFirstTurn).toBeGreaterThan(0);
+    expect(element.gameOutcome).toBeNull();
+    element.stepTurn();
+    const sizeAfterSecondTurn = element.transpositionTable.size();
+    expect(sizeAfterSecondTurn).toBeGreaterThan(sizeAfterFirstTurn);
+    element.reset();
+    expect(element.transpositionTable.size()).toBe(sizeAfterSecondTurn);
+    element.clearTranspositionTable();
+    expect(element.transpositionTable.size()).toBe(0);
+  });
+
+  it('memorizes visited states by key and clears them when the table is cleared', () => {
+    const element = createTicTacToeElement();
+    element.players = '["agent","agent"]';
+    element.transposition = true;
+    element.depth = 3;
+    element.stepTurn();
+    const internals = element as unknown as {
+      seenStates: Map<string, TicTacToeState>;
+    };
+    expect(internals.seenStates.size).toBeGreaterThan(0);
+    // Un état nécessite une recherche complète pour des entrées TT fiables.
+    element.stepTurn();
+    const current = element.currentState as TicTacToeState;
+    expect(internals.seenStates.has(ticTacToe.stateKey(current))).toBe(true);
+    expect(internals.seenStates.get(ticTacToe.stateKey(current))).toBe(current);
+    element.clearTranspositionTable();
+    expect(internals.seenStates.size).toBe(0);
+    element.reset();
+    // Le reset conserve le mémo : la TT reste persistante d'elle-même.
+    // (comparé à clearTranspositionTable qui vide les deux)
+  });
+
+  it('renders a deterministic inline SVG mini-board for a visited state', () => {
+    const element = createTicTacToeElement();
+    element.players = '["agent","agent"]';
+    element.transposition = true;
+    element.depth = 3;
+    element.stepTurn();
+    const internals = element as unknown as {
+      seenStates: Map<string, TicTacToeState>;
+      ttStateSvg(state: TicTacToeState): string;
+    };
+    const entry = internals.seenStates.entries().next();
+    expect(entry.done).toBe(false);
+    const [key, state] = entry.value as [string, TicTacToeState];
+    expect(key).toBe(ticTacToe.stateKey(state));
+    const svg = internals.ttStateSvg(state);
+    expect(svg.startsWith('<svg xmlns="http://www.w3.org/2000/svg"')).toBe(true);
+    expect(svg).toContain('viewBox="0 0 36 36"');
+    expect(svg).not.toContain('bestMove');
+    expect(internals.ttStateSvg(state)).toBe(svg);
+  });
+});
+
+describe('alpha-beta vs minimax pruning', () => {
+  const baseOptions = {
+    mode: 'windows' as const,
+    depth: 6,
+    fallbackDepth: 6,
+    transposition: false,
+    recorder: noopRecorder,
+    heuristic: TIC_TAC_TOE_GAME_CONFIG.heuristic,
+  };
+
+  it('visits fewer nodes with alpha-beta than with plain minimax on a cutting position', () => {
+    // Croix joue 1 et 2, cercles 4 et 5 : le premier coup légal (0) gagne,
+    // donc la borne alpha monte au maximum et coupe toute la suite.
+    const state = playTicTacToe([1, 4, 2, 5]);
+    const pruned = createGameAgent(ticTacToe, { ...baseOptions, prune: true });
+    const plain = createGameAgent(ticTacToe, { ...baseOptions, prune: false });
+    runAgentToDone(pruned, state);
+    runAgentToDone(plain, state);
+    expect(plain.stats().nodesPruned).toBe(0);
+    expect(pruned.stats().nodesPruned).toBeGreaterThan(0);
+    expect(pruned.stats().nodesVisited).toBeLessThan(plain.stats().nodesVisited);
+  });
+});
+
+describe('GameComponent stepTurn', () => {
+  it('runs one full agent search and plays exactly one move per call', () => {
+    const element = createTicTacToeElement();
+    element.players = '["agent","agent"]';
+    element.depth = 3;
+    expect(element.history).toHaveLength(1);
+    element.stepTurn();
+    expect(element.history).toHaveLength(2);
+    expect(element.gameOutcome).toBeNull();
+    expect(element.running).toBe(false);
+    expect(element.searchStats).not.toBeNull();
+    element.stepTurn();
+    expect(element.history).toHaveLength(3);
+    expect(element.gameOutcome).toBeNull();
+  });
+
+  it('does nothing once the game is over', () => {
+    const element = createTicTacToeElement();
+    element.players = '["agent","agent"]';
+    element.depth = 3;
+    while (element.gameOutcome === null && element.history.length < 9) {
+      element.stepTurn();
+    }
+    expect(element.gameOutcome).not.toBeNull();
+    const stalledLength = element.history.length;
+    element.stepTurn();
+    expect(element.history).toHaveLength(stalledLength);
+  });
+});
+
+describe('GameComponent auto-restart', () => {
+  function collectEvents(element: TicTacToeElement, names: string[]): () => string[] {
+    const seen: string[] = [];
+    for (const name of names) {
+      element.addEventListener(name, () => {
+        seen.push(name);
+      });
+    }
+    return () => seen;
+  }
+
+  it('restarts the game on the ending move when autoRestart is enabled', () => {
+    const element = createTicTacToeElement();
+    element.players = '["agent","agent"]';
+    element.depth = 3;
+    element.autoRestart = true;
+    const events = collectEvents(element, ['drl-game-over', 'drl-game-reset']);
+    element.stepTurn();
+    expect(element.history.length).toBeGreaterThan(1);
+    // La partie se termine, puis la relance ramène l'historique à 1 coup d'ici
+    // la fin de la boucle (les coups rejoués regrandissent l'historique).
+    let guard = 100;
+    while (element.history.length > 1 && guard > 0) {
+      element.stepTurn();
+      guard -= 1;
+    }
+    expect(guard).toBeGreaterThan(0);
+    expect(element.history).toHaveLength(1);
+    expect(element.gameOutcome).toBeNull();
+    const fired = events();
+    expect(fired).toContain('drl-game-over');
+    expect(fired).toContain('drl-game-reset');
+    expect(fired.indexOf('drl-game-over')).toBeLessThan(fired.indexOf('drl-game-reset'));
+    // En pas à pas, la nouvelle partie attend le prochain clic : running
+    // reste false et aucun tour n'a été démarré automatiquement.
+    expect(element.running).toBe(false);
+    element.stepTurn();
+    expect(element.history).toHaveLength(2);
+    expect(element.gameOutcome).toBeNull();
+  });
+
+  it('keeps the game over after the ending move when autoRestart is disabled', () => {
+    const element = createTicTacToeElement();
+    element.players = '["agent","agent"]';
+    element.depth = 3;
+    const events = collectEvents(element, ['drl-game-reset']);
+    while (element.gameOutcome === null && element.history.length < 9) {
+      element.stepTurn();
+    }
+    expect(element.gameOutcome).not.toBeNull();
+    const stalledLength = element.history.length;
+    element.stepTurn();
+    expect(element.history).toHaveLength(stalledLength);
+    expect(events()).toHaveLength(0);
   });
 });
