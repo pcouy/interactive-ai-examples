@@ -1,0 +1,331 @@
+<!doctype html>
+<html lang="fr">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>drl-eval-tree — visualiseur d'arbre d'évaluation</title>
+    <style>
+      body {
+        margin: 0;
+        padding: 2rem;
+        background: #f8fafc;
+        color: #0f172a;
+        font-family: system-ui, sans-serif;
+      }
+
+      main {
+        display: grid;
+        gap: 1.5rem;
+        max-width: 900px;
+        margin: 0 auto;
+      }
+
+      h1 {
+        margin: 0.25rem 0 0.5rem;
+        font-size: 1.4rem;
+      }
+
+      h2 {
+        margin: 0 0 0.5rem;
+        font-size: 1.05rem;
+      }
+
+      p {
+        margin: 0.25rem 0;
+        line-height: 1.5;
+      }
+
+      a {
+        color: #2563eb;
+      }
+
+      code {
+        background: #ffffff;
+        border: 1px solid #e2e8f0;
+        border-radius: 4px;
+        padding: 0 0.3rem;
+      }
+
+      section {
+        background: #ffffff;
+        border: 1px solid #e2e8f0;
+        border-radius: 10px;
+        padding: 1.25rem;
+      }
+
+      .controls {
+        display: flex;
+        flex-wrap: wrap;
+        align-items: center;
+        gap: 0.5rem;
+        margin-bottom: 0.75rem;
+      }
+
+      button {
+        font: inherit;
+        padding: 0.25rem 0.6rem;
+        border: 1px solid #e2e8f0;
+        border-radius: 5px;
+        background: #f8fafc;
+        color: #0f172a;
+        cursor: pointer;
+      }
+
+      button:hover {
+        border-color: #2563eb;
+      }
+
+      #info {
+        color: #64748b;
+        font-size: 0.85rem;
+      }
+    </style>
+  </head>
+  <body>
+    <main>
+      <header>
+        <p><a href="./index.html">← Playground</a></p>
+        <h1><code>drl-eval-tree</code></h1>
+        <p>
+          Visualiseur d'arbre d'évaluation branché sur le stepper core
+          (<code>createStepper</code>). La séquence d'événements ci-dessous est
+          <strong>scriptée</strong> : un négamax alpha-bêta avec table de transposition rejoué pas
+          à pas sur le morpion (aucun agent core requis). Les miniatures sont des
+          <code>drl-game-board</code> alimentés par <code>game.boardView(state)</code>. Cliquez un
+          nœud pour re-raciner la vue, double-cliquez le fond pour revenir à la racine.
+        </p>
+      </header>
+
+      <section>
+        <h2>Séquence scriptée (négamax + TT)</h2>
+        <div class="controls">
+          <button id="replay" type="button">Rejouer la séquence</button>
+          <label for="position">Position</label>
+          <select id="position">
+            <option value="empty" selected>Début (vide)</option>
+            <option value="mid">Milieu (2 coups)</option>
+          </select>
+          <label for="depth">Profondeur</label>
+          <input id="depth" type="range" min="3" max="6" step="1" value="5" />
+          <output id="depth-value" for="depth">5</output>
+          <span id="info"></span>
+        </div>
+        <drl-eval-tree id="tree" max-depth="4" node-size="3rem"></drl-eval-tree>
+        <p>
+          Les scores sont du point de vue du joueur qui déplace à chaque nœud (négamax) : gras =
+          valeur exacte, italique = valeur de remontée provisoire, nœud gris hachuré = coup élagué,
+          badge violet = coup résolu via la table de transposition, bordure pleine = position
+          terminale. L'arc bleu part vers le meilleur enfant.
+        </p>
+      </section>
+    </main>
+    <script type="module" src="/src/components/drl-eval-tree/drl-eval-tree.ts"></script>
+    <script type="module">
+      import { ticTacToe } from '/src/core/games/tic-tac-toe.js';
+
+      const game = ticTacToe;
+      const tree = document.getElementById('tree');
+      const info = document.getElementById('info');
+      const replayButton = document.getElementById('replay');
+      const positionSelect = document.getElementById('position');
+      const depthInput = document.getElementById('depth');
+      const depthValue = document.getElementById('depth-value');
+
+      const LINES = [
+        [0, 1, 2],
+        [3, 4, 5],
+        [6, 7, 8],
+        [0, 3, 6],
+        [1, 4, 7],
+        [2, 5, 8],
+        [0, 4, 8],
+        [2, 4, 6],
+      ];
+
+      function midGameState() {
+        return game.apply(game.apply(game.initialState(), { index: 4 }), { index: 0 });
+      }
+
+      function heuristic(state) {
+        const mover = game.currentPlayer(state);
+        let score = 0;
+        for (const [a, b, c] of LINES) {
+          const cells = [state.cells[a], state.cells[b], state.cells[c]];
+          if (cells.includes(1 - mover)) {
+            continue;
+          }
+          const mine = cells.filter((v) => v === mover).length;
+          score += mine === 2 ? 0.4 : mine === 1 ? 0.1 : 0;
+        }
+        return Math.max(-0.9, Math.min(0.9, score * 0.45));
+      }
+
+      function buildScript(rootState, maxDepth) {
+        const steps = [];
+        let counter = 0;
+        const tt = new Map();
+        const visit = (nodeKey, parentKey, move, state, depth, kind) => ({
+          nodeKey,
+          parentKey,
+          move,
+          state,
+          depth,
+          kind,
+        });
+        const value = (nodeKey, score, depth, exact) => ({ nodeKey, score, depth, exact });
+        const pushStep = (visitEvent, values) => {
+          steps.push({ visits: visitEvent ? [visitEvent] : [], values: values ?? [] });
+        };
+        let rootVisit = null;
+        function negamax(state, ownDepth, alpha, beta, parentKey, move, emitVisit) {
+          const nodeKey = `n${counter++}`;
+          const stateKey = game.stateKey(state);
+          const winner = game.winner(state);
+          if (winner !== null) {
+            const score =
+              winner === 'draw' ? 0 : winner === game.currentPlayer(state) ? 1 : -1;
+            const event = visit(nodeKey, parentKey, move, state, ownDepth, 'terminal');
+            if (emitVisit) {
+              pushStep(event, [value(nodeKey, score, ownDepth, true)]);
+            } else {
+              rootVisit = event;
+            }
+            return score;
+          }
+          if (ownDepth >= maxDepth) {
+            const score = heuristic(state);
+            const event = visit(nodeKey, parentKey, move, state, ownDepth, 'leaf');
+            if (emitVisit) {
+              pushStep(event, [value(nodeKey, score, ownDepth, true)]);
+            } else {
+              rootVisit = event;
+            }
+            return score;
+          }
+          if (emitVisit && tt.has(stateKey)) {
+            const cached = tt.get(stateKey);
+            pushStep(
+              visit(nodeKey, parentKey, move, state, ownDepth, 'tt-hit'),
+              [value(nodeKey, cached, ownDepth, true)],
+            );
+            return cached;
+          }
+          const event = visit(nodeKey, parentKey, move, state, ownDepth, 'expand');
+          if (emitVisit) {
+            pushStep(event);
+          } else {
+            rootVisit = event;
+          }
+          let best = -Infinity;
+          let alphaHere = alpha;
+          let cutoff = false;
+          const moves = game.legalMoves(state);
+          for (let i = 0; i < moves.length; i++) {
+            const childState = game.apply(state, moves[i]);
+            if (cutoff) {
+              pushStep(
+                visit(`n${counter++}`, nodeKey, moves[i], childState, ownDepth + 1, 'pruned'),
+              );
+              continue;
+            }
+            const childScore = -negamax(
+              childState,
+              ownDepth + 1,
+              -beta,
+              -alphaHere,
+              nodeKey,
+              moves[i],
+              true,
+            );
+            if (childScore > best) {
+              best = childScore;
+            }
+            if (best > alphaHere) {
+              alphaHere = best;
+            }
+            if (alphaHere >= beta) {
+              cutoff = true;
+            }
+          }
+          pushStep(null, [value(nodeKey, best, ownDepth, !cutoff)]);
+          tt.set(stateKey, best);
+          return best;
+        }
+        negamax(rootState, 0, -1, 1, null, null, false);
+        return { rootVisit, steps };
+      }
+
+      function makeAgent(rootState, maxDepth) {
+        const script = buildScript(rootState, maxDepth);
+        let index = 0;
+        return {
+          start() {
+            index = 0;
+            tree.recorder.onVisit(script.rootVisit);
+          },
+          step() {
+            const step = script.steps[index++];
+            if (!step) {
+              return 'done';
+            }
+            for (const event of step.visits) {
+              tree.recorder.onVisit(event);
+            }
+            for (const event of step.values) {
+              tree.recorder.onValue(event);
+            }
+            return 'running';
+          },
+          bestMove() {
+            return null;
+          },
+          stats() {
+            return {
+              nodesVisited: script.steps.length,
+              nodesPruned: 0,
+              ttHits: 0,
+              ttMisses: 0,
+              leavesEvaluated: 0,
+              elapsedSteps: 0,
+            };
+          },
+        };
+      }
+
+      let currentState = positionSelect.value === 'mid' ? midGameState() : game.initialState();
+
+      function replay() {
+        currentState =
+          positionSelect.value === 'mid' ? midGameState() : game.initialState();
+        tree.startSearch(makeAgent(currentState, Number(depthInput.value)), currentState);
+        refreshInfo();
+      }
+
+      function refreshInfo() {
+        info.textContent = `${tree.model.size()} nœuds · racine d'affichage : ${
+          rootNodeKey ?? '–'
+        }`;
+      }
+
+      replayButton.addEventListener('click', replay);
+
+      depthInput.addEventListener('input', () => {
+        depthValue.textContent = depthInput.value;
+      });
+      depthInput.addEventListener('change', replay);
+
+      positionSelect.addEventListener('change', replay);
+
+      let rootNodeKey = null;
+
+      tree.addEventListener('drl-root-changed', (event) => {
+        rootNodeKey = event.detail.nodeKey;
+        refreshInfo();
+      });
+
+      setInterval(refreshInfo, 500);
+
+      replay();
+    </script>
+  </body>
+</html>
