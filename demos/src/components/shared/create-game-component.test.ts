@@ -13,6 +13,7 @@ import {
   parsePlayersConfig,
   sameMove,
   sanitizeDepth,
+  sanitizeSamples,
   TIC_TAC_TOE_GAME_CONFIG,
 } from './create-game-component.js';
 
@@ -216,6 +217,16 @@ describe('sanitizeDepth', () => {
     expect(sanitizeDepth(-2, 4)).toBe(1);
     expect(sanitizeDepth(3.7, 4)).toBe(3);
     expect(sanitizeDepth(Number.NaN, 4)).toBe(4);
+  });
+});
+
+describe('sanitizeSamples', () => {
+  it('clamps to at least one sample and drops decimals', () => {
+    expect(sanitizeSamples(8, 1)).toBe(8);
+    expect(sanitizeSamples(0, 1)).toBe(1);
+    expect(sanitizeSamples(-3, 1)).toBe(1);
+    expect(sanitizeSamples(4.9, 1)).toBe(4);
+    expect(sanitizeSamples(Number.NaN, 1)).toBe(1);
   });
 });
 

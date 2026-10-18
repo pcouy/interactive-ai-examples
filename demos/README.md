@@ -95,6 +95,44 @@ nominal = 30 × speed).
 - D3 fait partie du bundle principal `drl-demos.js` : import statique `import { select }
   from 'd3'`, sans souci de poids.
 
+## Templates SVG avec Lit (`svg` vs `html`)
+
+Piège déjà rencontré sur `drl-game-board` : un `<svg>` **vide à l'écran** alors que ses
+nœuds (`rect`, `circle`, `line`…) sont bel et bien présents dans l'inspecteur de DevTools.
+
+Cause : Lit parse les templates `html` comme du **HTML**. Un template dont l'élément
+racine est `<svg>` est correct (le parseur HTML bascule en « foreign content » et place
+tout le sous-arbre dans le namespace SVG). En revanche, un template **imbriqué** — ou un
+helper — dont la racine est un élément SVG direct (`<rect>`, `<circle>`, `<line>`…)
+produit des éléments dans le **namespace HTML**. Insérés dans un vrai `<svg>`, ils
+existent dans le DOM mais ne sont **jamais dessinés**. Le tag ``svg` `` de Lit corrige
+cela en parsant le fragment dans le bon namespace.
+
+Règle : **dès que la racine d'un template est un élément SVG, utilisez ``svg` `` et non
+``html` ``** — et typez le retour en `SVGTemplateResult` (`TemplateResult` vaut
+`TemplateResult<1>` et n'accepte pas un résultat SVG).
+
+```ts
+import { html, svg } from 'lit';
+import type { SVGTemplateResult } from 'lit';
+
+// Racine <svg> : html OK (le parseur HTML passe en « foreign content »).
+renderContent() {
+  return html`<svg viewBox="…">${this.pieces()}</svg>`;
+}
+
+// Racine = éléments SVG : tag svg obligatoire, retour typé SVGTemplateResult.
+private pieces(): SVGTemplateResult {
+  return svg`<rect x="0" y="0" width="10" height="10"></rect>`;
+}
+```
+
+Symptômes de l'erreur, utiles au diagnostic : « Modifier en HTML/SVG » depuis l'inspecteur
+fait réapparaître le dessin — reparcourir le balisage recrée les nœuds dans le namespace
+SVG — mais **casse les événements** (`@click`…), car les `addEventListener` posés par Lit
+sont perdus. Exemple corrigé :
+`src/components/drl-game-board/drl-game-board.ts`.
+
 ## Démo 3D (canvas + Three.js)
 
 - `renderContent()` retourne un `<canvas>` (ou le message d'erreur `webglError`).
@@ -189,4 +227,6 @@ npm run dev         # vérifier playground/drl-<nom>.html en vrai rendu
 - Noms : composant/tag en kebab-case, classe en PascalCase (`grid-world` → `GridWorld`),
   core en `<Nom>Core`.
 - Les ancres `// @demos-imports` et `<!-- @demos-cards -->` sont gérées par plop uniquement.
+- SVG en Lit : tag ``svg` `` (et retour `SVGTemplateResult`) dès que la racine d'un
+  template est un élément SVG — voir « Templates SVG avec Lit ».
 - Code en anglais ; la logique métier vit dans `src/core/`, testable sans navigateur.

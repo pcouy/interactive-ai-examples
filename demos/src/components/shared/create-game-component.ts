@@ -39,6 +39,7 @@ export type EvaluatorMode = 'windows' | 'rollout' | 'random';
 
 const DEFAULT_PLAYER_KINDS: readonly [PlayerKind, PlayerKind] = ['human', 'agent'];
 const DEFAULT_EVALUATOR: string = 'windows';
+const DEFAULT_ROLLOUT_SAMPLES = 1;
 const AGENT_STEPS_PER_SPEED_UNIT = 32;
 const AGENT_STEP_CAP = 256;
 
@@ -68,6 +69,7 @@ export interface GameComponentApi<S, M> extends LitElement {
   players: string;
   depth: number;
   evaluator: string;
+  rolloutSamples: number;
   transposition: boolean;
   cellSize: number;
   running: boolean;
@@ -161,6 +163,13 @@ export function sanitizeDepth(value: number, fallback: number): number {
   return Math.max(1, Math.floor(value));
 }
 
+export function sanitizeSamples(value: number, fallback: number): number {
+  if (!Number.isFinite(value)) {
+    return fallback;
+  }
+  return Math.max(1, Math.floor(value));
+}
+
 export function sameMove<M>(a: M, b: M): boolean {
   return JSON.stringify(a) === JSON.stringify(b);
 }
@@ -172,6 +181,7 @@ export interface GameAgentOptions<S, M> {
   readonly transposition: boolean;
   readonly recorder: TreeRecorder<S>;
   readonly heuristic: Evaluator<S, M>;
+  readonly samples?: number;
 }
 
 export function createGameAgent<S, M>(
@@ -182,7 +192,9 @@ export function createGameAgent<S, M>(
     return createRandomAgent(game);
   }
   const evaluator: Evaluator<S, M> =
-    options.mode === 'rollout' ? createRandomRolloutEvaluator<S, M>() : options.heuristic;
+    options.mode === 'rollout'
+      ? createRandomRolloutEvaluator<S, M>({ samples: options.samples })
+      : options.heuristic;
   const transposition = options.transposition ? createTranspositionTable<M>() : undefined;
   return createMinimaxAgent(game, {
     depth: sanitizeDepth(options.depth, options.fallbackDepth),
@@ -268,6 +280,23 @@ export function createGameComponent<S, M>(
           color: var(--drl-muted);
           cursor: not-allowed;
         }
+
+        .drl-field {
+          display: inline-flex;
+          align-items: center;
+          gap: var(--drl-space-1);
+          color: var(--drl-muted);
+        }
+
+        .drl-number {
+          width: 4.5rem;
+          font: inherit;
+          padding: 2px 4px;
+          border: 1px solid var(--drl-border);
+          border-radius: calc(var(--drl-radius) / 2);
+          background: var(--drl-surface);
+          color: var(--drl-fg);
+        }
       `,
     ];
 
@@ -279,6 +308,9 @@ export function createGameComponent<S, M>(
 
     @property({ type: String, attribute: 'evaluator' })
     evaluator = DEFAULT_EVALUATOR;
+
+    @property({ type: Number, attribute: 'rollout-samples' })
+    rolloutSamples = DEFAULT_ROLLOUT_SAMPLES;
 
     @property({ type: Boolean, attribute: 'transposition' })
     transposition = false;
@@ -396,6 +428,7 @@ export function createGameComponent<S, M>(
         changed.has('players') ||
         changed.has('depth') ||
         changed.has('evaluator') ||
+        changed.has('rolloutSamples') ||
         changed.has('transposition')
       ) {
         this.pending = null;
@@ -427,6 +460,7 @@ export function createGameComponent<S, M>(
           >
             Annuler le coup
           </button>
+          ${this.renderSamplesField()}
         </div>
         <drl-game-board
           .view=${this.boardView()}
@@ -455,6 +489,14 @@ export function createGameComponent<S, M>(
         return;
       }
       this.playMove(move, player);
+    };
+
+    private readonly onSamplesInput = (event: Event): void => {
+      const input = event.target;
+      if (!(input instanceof HTMLInputElement)) {
+        return;
+      }
+      this.rolloutSamples = sanitizeSamples(Number(input.value), DEFAULT_ROLLOUT_SAMPLES);
     };
 
     private readonly onUndoClick = (): void => {
@@ -522,6 +564,7 @@ export function createGameComponent<S, M>(
         transposition: this.transposition,
         recorder: this.recorder ?? noopRecorder,
         heuristic: config.heuristic,
+        samples: this.rolloutSamples,
       });
       agent.start(state);
       this.pending = { agent, player, state };
@@ -583,6 +626,25 @@ export function createGameComponent<S, M>(
       return html`<span class="drl-reject">
         Coup non jouable (ligne ${rejected.row + 1}, colonne ${rejected.col + 1})
       </span>`;
+    }
+
+    private renderSamplesField(): TemplateResult | typeof nothing {
+      if (parseEvaluatorMode(this.evaluator) !== 'rollout') {
+        return nothing;
+      }
+      return html`
+        <label class="drl-field">
+          <span>Échantillons de rollout</span>
+          <input
+            class="drl-number"
+            type="number"
+            min="1"
+            step="1"
+            .value=${String(this.rolloutSamples)}
+            @change=${this.onSamplesInput}
+          />
+        </label>
+      `;
     }
 
     private emitEvent<D>(name: string, detail: D): void {

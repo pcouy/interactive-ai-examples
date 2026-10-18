@@ -1,5 +1,5 @@
-import type { TemplateResult } from 'lit';
-import { css, html, LitElement, nothing } from 'lit';
+import type { SVGTemplateResult, TemplateResult } from 'lit';
+import { css, html, LitElement, nothing, svg } from 'lit';
 import { customElement, property } from 'lit/decorators.js';
 import type { BoardView, Cell, CellCoord } from '../../core/contracts.js';
 import { drlTokens } from '../../styles/tokens.js';
@@ -170,8 +170,8 @@ export class DrlGameBoard extends LitElement {
     `;
   }
 
-  private cellRect(data: BoardCellData, size: number): TemplateResult {
-    return html`<rect
+  private cellRect(data: BoardCellData, size: number): SVGTemplateResult {
+    return svg`<rect
       class="drl-cell"
       x=${data.col * size}
       y=${data.row * size}
@@ -180,7 +180,7 @@ export class DrlGameBoard extends LitElement {
     ></rect>`;
   }
 
-  private pieceNode(data: BoardCellData, size: number): TemplateResult | typeof nothing {
+  private pieceNode(data: BoardCellData, size: number): SVGTemplateResult | typeof nothing {
     if (data.player === null) {
       return nothing;
     }
@@ -190,7 +190,7 @@ export class DrlGameBoard extends LitElement {
       const stroke = pieceStroke(size);
       if (data.player === 0) {
         const inset = size * MARK_INSET_RATIO;
-        return html`
+        return svg`
           <line
             class="drl-cross"
             x1=${cx - inset}
@@ -209,7 +209,7 @@ export class DrlGameBoard extends LitElement {
           ></line>
         `;
       }
-      return html`<circle
+      return svg`<circle
         class="drl-ring"
         cx=${cx}
         cy=${cy}
@@ -217,7 +217,7 @@ export class DrlGameBoard extends LitElement {
         stroke-width=${stroke}
       ></circle>`;
     }
-    return html`<circle
+    return svg`<circle
       class="drl-disc drl-disc--${data.player === 0 ? '0' : '1'}"
       cx=${cx}
       cy=${cy}
@@ -225,13 +225,13 @@ export class DrlGameBoard extends LitElement {
     ></circle>`;
   }
 
-  private highlightFrame(data: BoardCellData, size: number): TemplateResult | typeof nothing {
+  private highlightFrame(data: BoardCellData, size: number): SVGTemplateResult | typeof nothing {
     if (!data.highlighted) {
       return nothing;
     }
     const inset = Math.max(MIN_HIGHLIGHT_INSET, size * HIGHLIGHT_INSET_RATIO);
     const side = size - inset * 2;
-    return html`<rect
+    return svg`<rect
       class="drl-highlight"
       x=${data.col * size + inset}
       y=${data.row * size + inset}
@@ -242,8 +242,8 @@ export class DrlGameBoard extends LitElement {
     ></rect>`;
   }
 
-  private hitRect(data: BoardCellData, size: number): TemplateResult {
-    return html`<rect
+  private hitRect(data: BoardCellData, size: number): SVGTemplateResult {
+    return svg`<rect
       class="drl-hit"
       x=${data.col * size}
       y=${data.row * size}
