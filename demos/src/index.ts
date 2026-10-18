@@ -6,6 +6,12 @@ import './components/drl-perceptron/drl-perceptron.js';
 
 import './components/drl-gradient-descent/drl-gradient-descent.js';
 
+import './components/drl-tic-tac-toe/drl-tic-tac-toe.js';
+
+import './components/drl-connect4/drl-connect4.js';
+
+import './components/drl-deep-blue-page/drl-deep-blue-page.js';
+
 // @demos-imports
 
 export * from './base/demo-element.js';
