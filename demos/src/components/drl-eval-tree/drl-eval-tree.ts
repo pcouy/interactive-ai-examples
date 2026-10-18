@@ -542,6 +542,16 @@ export class DrlEvalTree<S> extends DemoElement {
     this.invalidate();
   }
 
+  clearTree(): void {
+    this.model.clear();
+    this.viewRootKey = null;
+    this.driver = null;
+    this.boundAgent = null;
+    this.boundState = null;
+    this.running = false;
+    this.invalidate();
+  }
+
   setViewRoot(key: string | null): void {
     if (key !== null && !this.model.has(key)) {
       return;

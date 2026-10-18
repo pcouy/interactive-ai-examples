@@ -1,0 +1,212 @@
+<!doctype html>
+<html lang="fr">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>drl-tic-tac-toe — partie interactive au morpion</title>
+    <style>
+      body {
+        margin: 0;
+        padding: 2rem;
+        background: #f8fafc;
+        color: #0f172a;
+        font-family: system-ui, sans-serif;
+      }
+
+      main {
+        display: grid;
+        gap: 1.5rem;
+        max-width: 760px;
+        margin: 0 auto;
+      }
+
+      h1 {
+        margin: 0.25rem 0 0.5rem;
+        font-size: 1.4rem;
+      }
+
+      h2 {
+        margin: 0 0 0.5rem;
+        font-size: 1.05rem;
+      }
+
+      p {
+        margin: 0.25rem 0;
+        line-height: 1.5;
+      }
+
+      a {
+        color: #2563eb;
+      }
+
+      code {
+        background: #ffffff;
+        border: 1px solid #e2e8f0;
+        border-radius: 4px;
+        padding: 0 0.3rem;
+      }
+
+      section {
+        background: #ffffff;
+        border: 1px solid #e2e8f0;
+        border-radius: 10px;
+        padding: 1.25rem;
+      }
+
+      .controls {
+        display: flex;
+        flex-wrap: wrap;
+        align-items: center;
+        gap: 0.5rem;
+        margin-bottom: 0.75rem;
+      }
+
+      button,
+      select,
+      input {
+        font: inherit;
+        padding: 0.25rem 0.6rem;
+        border: 1px solid #e2e8f0;
+        border-radius: 5px;
+        background: #f8fafc;
+        color: #0f172a;
+      }
+
+      button {
+        cursor: pointer;
+      }
+
+      button[aria-pressed='true'] {
+        border-color: #2563eb;
+        color: #2563eb;
+      }
+
+      label {
+        display: inline-flex;
+        align-items: center;
+        gap: 0.35rem;
+      }
+
+      .log {
+        margin: 0.75rem 0 0;
+        font-size: 0.85rem;
+        color: #64748b;
+        min-height: 1.2rem;
+      }
+    </style>
+  </head>
+  <body>
+    <main>
+      <header>
+        <p><a href="./index.html">← Playground</a></p>
+        <h1><code>drl-tic-tac-toe</code></h1>
+        <p>
+          Partie interactive de morpion pilotée par le contrat
+          <code>Game</code> : cliquez sur une case vide pour jouer les croix,
+          les contrôles (Play / Step / Reset) font avancer la recherche de
+          l'agent minimax. Le mapping cellule→coup et le moteur sont fournis
+          par la factory commune <code>create-game-component</code>.
+        </p>
+      </header>
+
+      <section>
+        <h2>Configuration</h2>
+        <div class="controls">
+          <button type="button" data-players='["human","agent"]' aria-pressed="true">
+            Humain vs Agent
+          </button>
+          <button type="button" data-players='["agent","human"]' aria-pressed="false">
+            Agent vs Humain
+          </button>
+          <button type="button" data-players='["human","human"]' aria-pressed="false">
+            Humain vs Humain
+          </button>
+          <button type="button" data-players='["agent","agent"]' aria-pressed="false">
+            Agent vs Agent
+          </button>
+          <label for="ttt-depth">depth</label>
+          <input id="ttt-depth" type="number" min="1" max="9" step="1" value="6" />
+          <label for="ttt-evaluator">evaluator</label>
+          <select id="ttt-evaluator">
+            <option value="windows" selected>windows</option>
+            <option value="rollout">rollout</option>
+            <option value="random">random</option>
+          </select>
+          <label for="ttt-tt">transposition</label>
+          <input id="ttt-tt" type="checkbox" />
+        </div>
+        <drl-tic-tac-toe
+          id="game"
+          players='["human","agent"]'
+          depth="6"
+          evaluator="windows"
+        ></drl-tic-tac-toe>
+        <p class="log" id="log" aria-live="polite"></p>
+      </section>
+    </main>
+    <script type="module" src="/src/components/drl-tic-tac-toe/drl-tic-tac-toe.ts"></script>
+    <script type="module">
+      const game = document.getElementById('game');
+      const depthInput = document.getElementById('ttt-depth');
+      const evaluatorSelect = document.getElementById('ttt-evaluator');
+      const transpositionCheckbox = document.getElementById('ttt-tt');
+      const playerButtons = document.querySelectorAll('button[data-players]');
+      const log = document.getElementById('log');
+
+      const entries = [];
+      function push(message) {
+        entries.unshift(message);
+        if (entries.length > 6) {
+          entries.length = 6;
+        }
+        log.textContent = entries.join(' · ');
+      }
+
+      function outcomeLabel(outcome) {
+        if (outcome === 'draw') {
+          return 'Partie nulle';
+        }
+        return `Victoire du joueur ${outcome}`;
+      }
+
+      playerButtons.forEach((button) => {
+        button.addEventListener('click', () => {
+          playerButtons.forEach((other) => other.setAttribute('aria-pressed', 'false'));
+          button.setAttribute('aria-pressed', 'true');
+          game.setAttribute('players', button.dataset.players);
+        });
+      });
+
+      depthInput.addEventListener('change', () => {
+        game.setAttribute('depth', depthInput.value);
+      });
+
+      evaluatorSelect.addEventListener('change', () => {
+        game.setAttribute('evaluator', evaluatorSelect.value);
+      });
+
+      transpositionCheckbox.addEventListener('change', () => {
+        game.toggleAttribute('transposition', transpositionCheckbox.checked);
+      });
+
+      game.addEventListener('drl-move-played', (event) => {
+        push(`Coup ${JSON.stringify(event.detail.move)} (joueur ${event.detail.player})`);
+      });
+      game.addEventListener('drl-search-started', (event) => {
+        push(`Recherche lancée pour le joueur ${event.detail.player}`);
+      });
+      game.addEventListener('drl-move-undone', (event) => {
+        push(`${event.detail.plies} coup(s) annulé(s)`);
+      });
+      game.addEventListener('drl-invalid-move', (event) => {
+        push('Coup refusé');
+      });
+      game.addEventListener('drl-game-over', (event) => {
+        push(outcomeLabel(event.detail.outcome));
+      });
+      game.addEventListener('drl-game-reset', () => {
+        push('Partie réinitialisée');
+      });
+    </script>
+  </body>
+</html>
