@@ -126,6 +126,16 @@ describe('statusLine', () => {
     );
   });
 
+  it('shows a dash for a null accuracy when the loss is present', () => {
+    expect(
+      statusLine(
+        input({ state: 'training', metricsStarted: true, loss: 0.42, validationAccuracy: null }),
+      ),
+    ).toBe(
+      'Entrée : Dessin · classe prédite : – · 1234 paramètres · lots : 0 · perte : 0,420 · précision validation (sous-ensemble) : – · temps : 0,0 s · entraînement : 600 exemples · validation : 100 exemples',
+    );
+  });
+
   it('shows the metrics of a finished run', () => {
     expect(
       statusLine(
@@ -181,5 +191,9 @@ describe('formatSeconds', () => {
     expect(formatSeconds(1500)).toBe('1,5 s');
     expect(formatSeconds(1250)).toBe('1,3 s');
     expect(formatSeconds(999)).toBe('1,0 s');
+  });
+
+  it('formats the minute boundary', () => {
+    expect(formatSeconds(60000)).toBe('60,0 s');
   });
 });
