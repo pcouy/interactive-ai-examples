@@ -466,6 +466,15 @@ describe('withKernelWeight', () => {
     ).toThrow(/four-item/);
   });
 
+  it('rejects an out-of-range kx and a filters tuple that disagrees with the weights', () => {
+    const weights = initializeMnistCnnWeights(configWith(DEFAULT_FILTER_COUNTS), 5);
+    expect(() => withKernelWeight(weights, DEFAULT_FILTER_COUNTS, 1, 0, 0, 0, 3, 1)).toThrow(/kx/);
+    // Les poids par défaut attendent 27 valeurs pour conv1, le tuple [1, 1, 1, 1] en attend 9.
+    expect(() => withKernelWeight(weights, [1, 1, 1, 1], 1, 0, 0, 0, 0, 1)).toThrow(
+      /conv1 kernel must have 9/,
+    );
+  });
+
   it('keeps the edited weights valid for forwardMnistCnn and changes the probabilities', () => {
     const filters: MnistCnnFilters = [1, 1, 1, 1];
     const config = configWith(filters);
@@ -549,6 +558,20 @@ describe('contributingTaps', () => {
       [2, 2],
     ]);
     expect(contributingTaps(2, 1, 26, 0, 0)).toHaveLength(4);
+  });
+
+  it('truncates only the ky axis for the real conv2 edge cell (0, 12)', () => {
+    // conv2 : pas 2, padding 1, entrée 26, sortie 13. Cellule (0, 12) :
+    // ky = 0 lit la ligne −1 (hors carte), ky = 1 et 2 restent ; les trois kx restent.
+    expect(contributingTaps(2, 1, 26, 0, 12)).toEqual([
+      [1, 0],
+      [1, 1],
+      [1, 2],
+      [2, 0],
+      [2, 1],
+      [2, 2],
+    ]);
+    expect(contributingTaps(2, 1, 26, 0, 12)).toHaveLength(6);
   });
 
   it('returns no tap for a cell far outside the map', () => {
