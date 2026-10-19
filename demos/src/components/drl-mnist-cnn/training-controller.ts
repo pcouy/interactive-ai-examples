@@ -43,6 +43,7 @@ import {
   onRunCancelled,
   onRunCompleted,
   onRunStarted,
+  onWeightsEdited,
   onWeightsReset,
   type TrainingState,
 } from './training-state.js';
@@ -70,7 +71,11 @@ export interface MnistTrainingPorts {
   onProgress(progress: MnistTrainingProgress): void;
   /** Signale des poids d'inférence rafraîchis depuis l'entraîneur. */
   onWeightsChanged(weights: MnistCnnWeights): void;
-  /** Signale une réinitialisation des poids vers les poids initiaux. */
+  /**
+   * Signale des poids à afficher : réinitialisation (`resetWeights`) ou
+   * édition manuelle (`notifyWeightsEdited`). Le port unique évite d'ajouter
+   * un gestionnaire côté composant pour un même effet.
+   */
   onWeightsReset(weights: MnistCnnWeights): void;
   /** Signale une erreur d'entraînement (une seule fois par run). */
   onError(message: string): void;
@@ -252,6 +257,20 @@ export class MnistTrainingController {
     this.ports.onWeightsReset(weights);
     this.currentState = onWeightsReset(this.currentState, this.manifestMatches, origin);
     this.ports.onStateChanged(this.currentState);
+  }
+
+  /**
+   * Poids édités à la main : la run courante s'arrête et est libérée sans
+   * rafraîchir les poids d'inférence (les poids édités sont déjà ceux
+   * affichés). Les poids édités sont retenus comme poids de départ de la
+   * prochaine run et rapportés par `onWeightsReset` pour être affichés.
+   */
+  async notifyWeightsEdited(weights: MnistCnnWeights): Promise<void> {
+    await this.settleRun(false);
+    this.lastTrainedWeights = weights;
+    this.currentState = onWeightsEdited(this.currentState, this.manifestMatches);
+    this.ports.onStateChanged(this.currentState);
+    this.ports.onWeightsReset(weights);
   }
 
   /**

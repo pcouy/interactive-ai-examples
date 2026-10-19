@@ -90,7 +90,7 @@ class FakeTrainer {
 
   private runResolve: ((progress: MnistTrainingProgress) => void) | null = null;
   private lastOnProgress: ((progress: MnistTrainingProgress) => void) | null = null;
-  private exportCount = 0;
+  exportCount = 0;
 
   async applyWeights(weights: MnistCnnWeights): Promise<void> {
     this.appliedWeights.push(weights);
@@ -529,6 +529,57 @@ describe('MnistTrainingController reset and manifest', () => {
     expect(controller.state).toBe('pretrained');
     controller.notifyManifestChanged(false);
     expect(controller.state).toBe('deterministic');
+  });
+});
+
+describe('MnistTrainingController weights edited by hand', () => {
+  it('notifyWeightsEdited stores the edited weights for the next run when idle', async () => {
+    const ports = new FakePorts();
+    const controller = new MnistTrainingController(ports);
+    const edited = makeWeights(42);
+    await controller.notifyWeightsEdited(edited);
+    // La prochaine run repart des poids édités, pas des poids initiaux.
+    const request = makeRequest({ initialWeights: makeWeights(1) });
+    await controller.startRun(request);
+    expect(ports.trainers[0].appliedWeights[0]).toBe(edited);
+    expect(ports.weightsResets).toEqual([edited]);
+  });
+
+  it('notifyWeightsEdited cancels, disposes and does not refresh weights during a run', async () => {
+    const ports = new FakePorts();
+    const controller = new MnistTrainingController(ports);
+    configureNextTrainer(ports, { nextTrainerHoldRun: true });
+    const pending = controller.startRun(makeRequest());
+    await flushMicrotasks();
+    expect(controller.state).toBe('training');
+    const trainer = ports.trainers[0];
+    const changesBefore = ports.weightsChanges.length;
+    const edited = makeWeights(9);
+    await controller.notifyWeightsEdited(edited);
+    expect(trainer.cancelCount).toBe(1);
+    expect(trainer.disposeCount).toBe(1);
+    expect(trainer.disposed).toBe(true);
+    // Aucun rafraîchissement des poids d'inférence pendant l'arrêt.
+    expect(ports.weightsChanges.length).toBe(changesBefore);
+    expect(trainer.exportCount).toBe(0);
+    expect(ports.errors).toHaveLength(0);
+    // La prochaine run repart des poids édités.
+    const pendingSecond = controller.startRun(makeRequest({ initialWeights: makeWeights(1) }));
+    await flushMicrotasks();
+    expect(ports.trainers[1].appliedWeights[0]).toBe(edited);
+    await controller.notifyDisconnected();
+    await pendingSecond;
+    await pending;
+  });
+
+  it('leaves an inactive state and no active run after an edit', async () => {
+    const ports = new FakePorts();
+    const controller = new MnistTrainingController(ports);
+    await controller.startRun(makeRequest());
+    expect(controller.state).toBe('trained');
+    await controller.notifyWeightsEdited(makeWeights(3));
+    expect(controller.state).not.toBe('training');
+    expect(controller.isRunActive()).toBe(false);
   });
 });
 
