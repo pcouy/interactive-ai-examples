@@ -4,15 +4,18 @@ import type {
   MnistCnnLayerWeights,
   MnistCnnWeights,
 } from '../../core/mnist-cnn.js';
-import type { WeightEditorEvent, WeightSelection } from './drl-mnist-cnn.js';
+import type { WeightEditorEvent } from './drl-mnist-cnn.js';
 import {
   applyWeightEditorEvent,
   argmaxIndex,
   brushStrength,
+  convLayerGeometry,
   describeLinkLabel,
   describeWeightSelection,
+  filterCanvasInputChannel,
   filterKernelMean,
   filterKernelSlice,
+  filterKernelValues,
   filterViewMode,
   formatLoss,
   formatPercent,
@@ -24,7 +27,6 @@ import {
   parseWeightInput,
   pointerToCell,
   pointerToGrid,
-  pointerToMapCell,
   selectedWeightValue,
   stratifiedExampleCountEstimate,
 } from './drl-mnist-cnn.js';
@@ -54,28 +56,6 @@ function pointer(clientX: number, clientY: number): PointerEvent {
   return { clientX, clientY } as PointerEvent;
 }
 
-/**
- * Toile de carte simulée : dimensions propres en cellules (26×26 pour `conv1`)
- * plus rectangle affiché, pour tester `pointerToMapCell` sans DOM.
- */
-function mockMapCanvas(width: number, height: number, left = 0, top = 0): HTMLCanvasElement {
-  return {
-    width,
-    height,
-    getBoundingClientRect: () => ({
-      left,
-      top,
-      width,
-      height,
-      right: left + width,
-      bottom: top + height,
-      x: left,
-      y: top,
-      toJSON: () => ({}),
-    }),
-  } as unknown as HTMLCanvasElement;
-}
-
 /** Couche de convolution minimale : noyau plus biais de `outputChannels` zéros. */
 function convLayer(kernel: Float32Array, outputChannels: number): MnistCnnLayerWeights {
   return { kernel, bias: new Float32Array(outputChannels) };
@@ -96,41 +76,6 @@ function weightsWithConv2(kernel: Float32Array, outputChannels: number): MnistCn
 /** Géométrie d'une couche : `conv1` stride 1 sans remplissage, `conv2` stride 2 remplissage 1. */
 const CONV1_GEOMETRY = { stride: 1, padding: 0, inputSize: 28 } as const;
 const CONV2_GEOMETRY = { stride: 2, padding: 1, inputSize: 26 } as const;
-
-/** Les neuf taps d'un noyau 3×3, en ordre ligne-major. */
-const ALL_TAPS: ReadonlyArray<readonly [number, number]> = [
-  [0, 0],
-  [0, 1],
-  [0, 2],
-  [1, 0],
-  [1, 1],
-  [1, 2],
-  [2, 0],
-  [2, 1],
-  [2, 2],
-];
-
-/** Événement de carte avec sa géométrie de couche. */
-function mapEvent(
-  layer: number,
-  channel: number,
-  y: number,
-  x: number,
-  geometry: { stride: number; padding: number; inputSize: number },
-): WeightEditorEvent {
-  return { kind: 'map', layer, channel, y, x, ...geometry };
-}
-
-/** Sélection de carte avec ses taps. */
-function mapSelection(
-  layer: number,
-  channel: number,
-  y: number,
-  x: number,
-  taps: ReadonlyArray<readonly [number, number]> = ALL_TAPS,
-): WeightSelection {
-  return { kind: 'map', layer, channel, y, x, taps };
-}
 
 /** Événement de case de noyau, avec le canal d'entrée de la liaison concernée. */
 function filterCellEvent(
@@ -334,32 +279,6 @@ describe('pointerToGrid', () => {
   });
 });
 
-describe('pointerToMapCell', () => {
-  it('maps the canvas corners to the feature-map corners', () => {
-    const canvas = mockMapCanvas(26, 26);
-    expect(pointerToMapCell(canvas, pointer(0, 0))).toEqual([0, 0]);
-    expect(pointerToMapCell(canvas, pointer(26, 26))).toEqual([25, 25]);
-  });
-
-  it('floors the fractional coordinates at the canvas center', () => {
-    const canvas = mockMapCanvas(26, 26);
-    expect(pointerToMapCell(canvas, pointer(13, 13))).toEqual([13, 13]);
-    expect(pointerToMapCell(canvas, pointer(13.9, 13.1))).toEqual([13, 13]);
-  });
-
-  it('clamps pointers outside the canvas to the edge cells', () => {
-    const canvas = mockMapCanvas(26, 26);
-    expect(pointerToMapCell(canvas, pointer(100, 100))).toEqual([25, 25]);
-    expect(pointerToMapCell(canvas, pointer(-40, -40))).toEqual([0, 0]);
-  });
-
-  it('returns null for a zero-size canvas', () => {
-    expect(pointerToMapCell(mockMapCanvas(0, 0), pointer(5, 5))).toBeNull();
-    expect(pointerToMapCell(mockMapCanvas(0, 26), pointer(5, 5))).toBeNull();
-    expect(pointerToMapCell(mockMapCanvas(26, 0), pointer(5, 5))).toBeNull();
-  });
-});
-
 describe('filterKernelSlice', () => {
   it('returns the exact 3×3 kernel of one input and output channel pair', () => {
     // HWIO flat layout: 9 positions × 2 input channels × 2 output channels.
@@ -415,48 +334,6 @@ describe('applyWeightEditorEvent', () => {
     expect(applyWeightEditorEvent(selection, event)).toBeNull();
   });
 
-  it('selects a map cell and toggles it off on a second click', () => {
-    const event = mapEvent(1, 1, 0, 0, CONV2_GEOMETRY);
-    const selection = applyWeightEditorEvent(null, event);
-    expect(selection).toEqual(
-      mapSelection(1, 1, 0, 0, [
-        [1, 1],
-        [1, 2],
-        [2, 1],
-        [2, 2],
-      ]),
-    );
-    expect(applyWeightEditorEvent(selection, event)).toBeNull();
-  });
-
-  it('computes the contributing taps of a map cell', () => {
-    // Cellule intérieure de conv1 : les neuf taps contribuent.
-    expect(applyWeightEditorEvent(null, mapEvent(0, 0, 13, 13, CONV1_GEOMETRY))).toEqual(
-      mapSelection(0, 0, 13, 13, ALL_TAPS),
-    );
-    // Coin bas droit de conv1, stride 1 sans remplissage : un seul tap.
-    expect(applyWeightEditorEvent(null, mapEvent(0, 0, 27, 27, CONV1_GEOMETRY))).toEqual(
-      mapSelection(0, 0, 27, 27, [[0, 0]]),
-    );
-    // Cellule de bord de conv1 : trois taps sur la première ligne du noyau.
-    expect(applyWeightEditorEvent(null, mapEvent(0, 0, 27, 13, CONV1_GEOMETRY))).toEqual(
-      mapSelection(0, 0, 27, 13, [
-        [0, 0],
-        [0, 1],
-        [0, 2],
-      ]),
-    );
-    // Coin de conv2, stride 2 remplissage 1 : quatre taps.
-    expect(applyWeightEditorEvent(null, mapEvent(1, 0, 0, 0, CONV2_GEOMETRY))).toEqual(
-      mapSelection(1, 0, 0, 0, [
-        [1, 1],
-        [1, 2],
-        [2, 1],
-        [2, 2],
-      ]),
-    );
-  });
-
   it('turns a filter cell click under a matching link into a weight selection', () => {
     const selection = applyWeightEditorEvent(null, {
       kind: 'link',
@@ -474,31 +351,8 @@ describe('applyWeightEditorEvent', () => {
     });
   });
 
-  it('turns a contributing filter cell click under a map selection into a weight selection', () => {
-    const selection = applyWeightEditorEvent(null, mapEvent(1, 1, 0, 0, CONV2_GEOMETRY));
-    expect(applyWeightEditorEvent(selection, filterCellEvent(1, 0, 1, 1, 2))).toEqual({
-      kind: 'weight',
-      boundary: 0,
-      inputChannel: 0,
-      outputChannel: 1,
-      ky: 1,
-      kx: 2,
-    });
-  });
-
-  it('refuses a non-contributing filter cell click under a map selection', () => {
-    const selection = applyWeightEditorEvent(null, mapEvent(1, 1, 0, 0, CONV2_GEOMETRY));
-    // Le tap [0, 0] lit la ligne −1 de la carte d'entrée : il ne contribue pas.
-    expect(applyWeightEditorEvent(selection, filterCellEvent(1, 0, 1, 0, 0))).toEqual(selection);
-  });
-
-  it('ignores a filter cell click without a link or map selection', () => {
+  it('ignores a filter cell click without a link selection', () => {
     expect(applyWeightEditorEvent(null, filterCellEvent(2, 0, 2, 1, 0))).toBeNull();
-  });
-
-  it('ignores a filter cell click under a map selection of another channel', () => {
-    const selection = applyWeightEditorEvent(null, mapEvent(1, 1, 0, 0, CONV2_GEOMETRY));
-    expect(applyWeightEditorEvent(selection, filterCellEvent(1, 0, 0, 1, 2))).toEqual(selection);
   });
 
   it('ignores a filter cell click under a link of another boundary', () => {
@@ -511,30 +365,57 @@ describe('applyWeightEditorEvent', () => {
     expect(applyWeightEditorEvent(selection, filterCellEvent(2, 0, 2, 1, 0))).toEqual(selection);
   });
 
-  it('replaces a map selection with a link selection', () => {
-    const selection = applyWeightEditorEvent(null, mapEvent(2, 1, 4, 3, CONV1_GEOMETRY));
+  it('replaces a weight selection with a link selection', () => {
+    const selection = applyWeightEditorEvent(
+      { kind: 'link', boundary: 1, inputChannel: 0, outputChannel: 2 },
+      filterCellEvent(2, 0, 2, 1, 0),
+    );
+    expect(selection).toEqual({
+      kind: 'weight',
+      boundary: 1,
+      inputChannel: 0,
+      outputChannel: 2,
+      ky: 1,
+      kx: 0,
+    });
     expect(
       applyWeightEditorEvent(selection, {
         kind: 'link',
-        boundary: 1,
-        inputChannel: 0,
-        outputChannel: 1,
+        boundary: 2,
+        inputChannel: 2,
+        outputChannel: 0,
       }),
-    ).toEqual({ kind: 'link', boundary: 1, inputChannel: 0, outputChannel: 1 });
+    ).toEqual({ kind: 'link', boundary: 2, inputChannel: 2, outputChannel: 0 });
+  });
+
+  it('ignores a filter cell click under a weight selection', () => {
+    const selection = applyWeightEditorEvent(
+      { kind: 'link', boundary: 1, inputChannel: 0, outputChannel: 2 },
+      filterCellEvent(2, 0, 2, 1, 0),
+    );
+    // La frontière 1 et le canal de sortie 2 correspondent : seul le genre de la
+    // sélection (poids, pas liaison) fait ignorer le clic.
+    expect(applyWeightEditorEvent(selection, filterCellEvent(2, 0, 2, 2, 2))).toEqual(selection);
   });
 });
 
 describe('filterViewMode', () => {
   it('is mean by default', () => {
-    expect(filterViewMode(null, 1, 0, 0)).toEqual({ mode: 'mean' });
-    expect(filterViewMode(mapSelection(1, 0, 0, 0, []), 2, 0, 0)).toEqual({ mode: 'mean' });
+    expect(filterViewMode(null, 1, 0)).toEqual({ mode: 'mean' });
+    expect(
+      filterViewMode(
+        { kind: 'weight', boundary: 1, inputChannel: 0, outputChannel: 0, ky: 0, kx: 0 },
+        1,
+        0,
+      ),
+    ).toEqual({ mode: 'mean' });
   });
 
   it('is kernel only for the canvas matching a link selection', () => {
     const selection = { kind: 'link', boundary: 1, inputChannel: 2, outputChannel: 0 } as const;
-    expect(filterViewMode(selection, 2, 0, 0)).toEqual({ mode: 'kernel', inputChannel: 2 });
-    expect(filterViewMode(selection, 1, 0, 0)).toEqual({ mode: 'mean' });
-    expect(filterViewMode(selection, 2, 1, 0)).toEqual({ mode: 'mean' });
+    expect(filterViewMode(selection, 2, 0)).toEqual({ mode: 'kernel', inputChannel: 2 });
+    expect(filterViewMode(selection, 1, 0)).toEqual({ mode: 'mean' });
+    expect(filterViewMode(selection, 2, 1)).toEqual({ mode: 'mean' });
   });
 
   it('is kernel only for the canvas matching a weight selection', () => {
@@ -546,35 +427,99 @@ describe('filterViewMode', () => {
       ky: 2,
       kx: 2,
     } as const;
-    expect(filterViewMode(selection, 1, 1, 0)).toEqual({ mode: 'kernel', inputChannel: 0 });
-    expect(filterViewMode(selection, 1, 0, 0)).toEqual({ mode: 'mean' });
+    expect(filterViewMode(selection, 1, 1)).toEqual({ mode: 'kernel', inputChannel: 0 });
+    expect(filterViewMode(selection, 1, 0)).toEqual({ mode: 'mean' });
+  });
+});
+
+describe('convLayerGeometry', () => {
+  it('reads the stride, padding and input size of every layer', () => {
+    expect(convLayerGeometry(0)).toEqual(CONV1_GEOMETRY);
+    expect(convLayerGeometry(1)).toEqual(CONV2_GEOMETRY);
+    expect(convLayerGeometry(2)).toEqual({ stride: 1, padding: 0, inputSize: 13 });
+    expect(convLayerGeometry(3)).toEqual({ stride: 2, padding: 0, inputSize: 11 });
   });
 
-  it('returns the tap set for the selected channel under a map selection', () => {
-    const taps: ReadonlyArray<readonly [number, number]> = [
-      [1, 1],
-      [1, 2],
-      [2, 1],
-      [2, 2],
-    ];
-    const selection = mapSelection(1, 1, 0, 0, taps);
-    expect(filterViewMode(selection, 1, 1, 0)).toEqual({
-      mode: 'mapKernel',
+  it('rejects a layer outside the architecture', () => {
+    expect(() => convLayerGeometry(-1)).toThrow(RangeError);
+    expect(() => convLayerGeometry(4)).toThrow(RangeError);
+    expect(() => convLayerGeometry(1.5)).toThrow(RangeError);
+  });
+});
+
+describe('filterCanvasInputChannel', () => {
+  it('returns null when nothing is selected', () => {
+    expect(filterCanvasInputChannel(null, 1, 2)).toBeNull();
+  });
+
+  it('returns the input channel of the link that designates the canvas', () => {
+    const selection = { kind: 'link', boundary: 1, inputChannel: 0, outputChannel: 2 } as const;
+    expect(filterCanvasInputChannel(selection, 2, 2)).toBe(0);
+    expect(filterCanvasInputChannel(selection, 2, 1)).toBeNull();
+    expect(filterCanvasInputChannel(selection, 1, 2)).toBeNull();
+    expect(filterCanvasInputChannel(selection, 3, 2)).toBeNull();
+  });
+
+  it('returns null for a weight selection, which refines a link', () => {
+    const selection = {
+      kind: 'weight',
+      boundary: 1,
       inputChannel: 0,
-      taps,
-    });
-    expect(filterViewMode(selection, 1, 1, 1)).toEqual({
-      mode: 'mapKernel',
-      inputChannel: 1,
-      taps,
-    });
+      outputChannel: 2,
+      ky: 1,
+      kx: 1,
+    } as const;
+    expect(filterCanvasInputChannel(selection, 1, 2)).toBeNull();
+  });
+});
+
+describe('filterKernelValues', () => {
+  /**
+   * Noyau de `conv2` (2 canaux d'entrée, 3 canaux de sortie) où la valeur d'un
+   * poids est `position × 10 + ic × 3 + oc` : la tranche d'un canal se lit
+   * directement, la moyenne sur les canaux d'entrée d'un canal de sortie `oc`
+   * vaut `position × 10 + oc + 1,5`.
+   */
+  function conv2Kernel(): Float32Array {
+    const kernel = new Float32Array(54);
+    for (let position = 0; position < 9; position += 1) {
+      for (let ic = 0; ic < 2; ic += 1) {
+        for (let oc = 0; oc < 3; oc += 1) {
+          kernel[position * 6 + ic * 3 + oc] = position * 10 + ic * 3 + oc;
+        }
+      }
+    }
+    return kernel;
+  }
+
+  it('averages the input channels for a mean view', () => {
+    const values = filterKernelValues({ mode: 'mean' }, conv2Kernel(), 2, 1);
+    expect(Array.from(values)).toEqual([2.5, 12.5, 22.5, 32.5, 42.5, 52.5, 62.5, 72.5, 82.5]);
   });
 
-  it('keeps the mean for the other canvases under a map selection', () => {
-    const selection = mapSelection(1, 1, 0, 0, [[1, 1]]);
-    expect(filterViewMode(selection, 0, 1, 0)).toEqual({ mode: 'mean' });
-    expect(filterViewMode(selection, 1, 0, 0)).toEqual({ mode: 'mean' });
-    expect(filterViewMode(selection, 2, 1, 0)).toEqual({ mode: 'mean' });
+  it('slices the displayed input channel for a kernel view', () => {
+    const kernel = conv2Kernel();
+    const slice = filterKernelValues({ mode: 'kernel', inputChannel: 0 }, kernel, 2, 1);
+    expect(Array.from(slice)).toEqual([1, 11, 21, 31, 41, 51, 61, 71, 81]);
+    const other = filterKernelValues({ mode: 'kernel', inputChannel: 1 }, kernel, 2, 2);
+    expect(Array.from(other)).toEqual([5, 15, 25, 35, 45, 55, 65, 75, 85]);
+  });
+
+  it('falls back to the mean when the displayed input channel is out of range', () => {
+    // 2 canaux d'entrée mais 5 canaux de sortie : la toile du canal de sortie 4
+    // n'a pas de canal d'entrée 4.
+    const kernel = new Float32Array(90);
+    for (let index = 0; index < kernel.length; index += 1) {
+      kernel[index] = index;
+    }
+    const values = filterKernelValues({ mode: 'kernel', inputChannel: 4 }, kernel, 2, 4);
+    expect(Array.from(values)).toEqual(Array.from(filterKernelMean(kernel, 2, 4)));
+  });
+
+  it('falls back to the mean for a kernel view with an out-of-range input channel', () => {
+    const kernel = conv2Kernel();
+    const values = filterKernelValues({ mode: 'kernel', inputChannel: 2 }, kernel, 2, 1);
+    expect(Array.from(values)).toEqual(Array.from(filterKernelMean(kernel, 2, 1)));
   });
 });
 
@@ -589,18 +534,25 @@ describe('linkLineState', () => {
     expect(linkLineState(selection, 1, 0, 1)).toBe('dimmed');
   });
 
-  it('highlights every link entering the map-selected channel', () => {
-    const selection = mapSelection(2, 1, 3, 4, [[0, 0]]);
-    expect(linkLineState(selection, 1, 0, 1)).toBe('highlighted');
-    expect(linkLineState(selection, 1, 2, 1)).toBe('highlighted');
-    expect(linkLineState(selection, 1, 0, 0)).toBe('dimmed');
-    expect(linkLineState(selection, 0, 0, 1)).toBe('dimmed');
-    expect(linkLineState(selection, 2, 0, 1)).toBe('dimmed');
+  it('is selected for the line of a weight selection', () => {
+    const selection = {
+      kind: 'weight',
+      boundary: 1,
+      inputChannel: 0,
+      outputChannel: 2,
+      ky: 1,
+      kx: 1,
+    } as const;
+    expect(linkLineState(selection, 1, 0, 2)).toBe('selected');
+    expect(linkLineState(selection, 1, 0, 1)).toBe('dimmed');
+    expect(linkLineState(selection, 1, 1, 2)).toBe('dimmed');
   });
 
-  it('dims every link when the selected map cell has no upstream boundary', () => {
-    const selection = mapSelection(0, 0, 0, 0, ALL_TAPS);
-    expect(linkLineState(selection, 0, 0, 0)).toBe('dimmed');
+  it('dims every link as soon as a selection exists', () => {
+    const selection = { kind: 'link', boundary: 1, inputChannel: 0, outputChannel: 2 } as const;
+    expect(linkLineState(selection, 0, 0, 1)).toBe('dimmed');
+    expect(linkLineState(selection, 1, 0, 1)).toBe('dimmed');
+    expect(linkLineState(selection, 2, 0, 1)).toBe('dimmed');
   });
 });
 
@@ -614,22 +566,6 @@ describe('describeWeightSelection', () => {
         filters,
       ),
     ).toBe('conv2 — entrée 1, sortie 3, position (3, 2)');
-  });
-
-  it('describes a map selection with its contributing count', () => {
-    expect(
-      describeWeightSelection(
-        mapSelection(2, 1, 4, 3, [
-          [0, 0],
-          [0, 1],
-          [0, 2],
-        ]),
-        filters,
-      ),
-    ).toBe('conv3 — canal 2, position (5, 4) · 3 poids sur 9');
-    expect(describeWeightSelection(mapSelection(0, 0, 13, 13, ALL_TAPS), filters)).toBe(
-      'conv1 — canal 1, position (14, 14) · 9 poids sur 9',
-    );
   });
 
   it('describes a link selection', () => {
@@ -669,25 +605,6 @@ describe('describeLinkLabel', () => {
         filters,
       ),
     ).toBe('conv2 — entrée 1, sortie 3');
-    expect(describeLinkLabel(mapSelection(0, 0, 0, 0, ALL_TAPS), 1, 0, 2, filters)).toBe(
-      'conv2 — entrée 1, sortie 3',
-    );
-  });
-
-  it('states the contributing count for the lines of a map selection', () => {
-    const selection = mapSelection(2, 1, 0, 0, [
-      [1, 1],
-      [1, 2],
-      [2, 1],
-      [2, 2],
-    ]);
-    expect(describeLinkLabel(selection, 1, 0, 1, filters)).toBe(
-      'conv2 — entrée 1, sortie 2 · 4 poids sur 9',
-    );
-    expect(describeLinkLabel(selection, 1, 2, 1, filters)).toBe(
-      'conv2 — entrée 3, sortie 2 · 4 poids sur 9',
-    );
-    expect(describeLinkLabel(selection, 1, 0, 0, filters)).toBe('conv2 — entrée 1, sortie 1');
   });
 
   it('states a single weight for the line of a weight selection', () => {
@@ -736,7 +653,6 @@ describe('selectedWeightValue', () => {
         outputChannel: 0,
       }),
     ).toBeNull();
-    expect(selectedWeightValue(weights, mapSelection(1, 0, 0, 0, ALL_TAPS))).toBeNull();
   });
 
   it('returns null for out-of-range indices', () => {
@@ -771,6 +687,8 @@ describe('parseWeightInput', () => {
     expect(parseWeightInput('-0.25')).toBe(-0.25);
     expect(parseWeightInput('+2')).toBe(2);
     expect(parseWeightInput('0')).toBe(0);
+    expect(parseWeightInput('-0')).toBe(0);
+    expect(Object.is(parseWeightInput('-0'), -0)).toBe(false);
   });
 
   it('rejects anything else', () => {
@@ -782,5 +700,9 @@ describe('parseWeightInput', () => {
     expect(parseWeightInput('.5')).toBeNull();
     expect(parseWeightInput(' 1.5')).toBeNull();
     expect(parseWeightInput('1 5')).toBeNull();
+    expect(parseWeightInput('1,')).toBeNull();
+    expect(parseWeightInput(',')).toBeNull();
+    expect(parseWeightInput(',5')).toBeNull();
+    expect(parseWeightInput('-')).toBeNull();
   });
 });

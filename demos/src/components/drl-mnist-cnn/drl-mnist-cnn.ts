@@ -8,7 +8,7 @@ import {
   CONV_LAYER_NAMES,
   CONV_PADDINGS,
   CONV_STRIDES,
-  contributingTaps,
+  convKernelIndex,
   convOutputLength,
   DEFAULT_FILTER_COUNTS,
   forwardMnistCnn,
@@ -68,6 +68,12 @@ import { isTrainingActive, type TrainingState, trainingStateBadge } from './trai
  * La galerie et les jeux IDX ne sont téléchargés ni à l'affichage ni au
  * chargement : seule la première ouverture du sélecteur d'exemples ou le premier
  * clic sur « Entraîner » les déclenche.
+ *
+ * Éditeur de poids : un clic sur une liaison sélectionne le couple (canal d'entrée,
+ * canal de sortie) à une frontière entre couches ; un second clic sur la même
+ * liaison désélectionne. La toile de filtre du couple montre le noyau 3×3 exact
+ * plutôt que la moyenne des canaux ; un clic sur une case de cette toile ouvre
+ * l'éditeur sur le poids exact.
  */
 
 /** Graine de l'initialisation déterministe des poids et des sélections. */
@@ -190,29 +196,6 @@ export function pointerToCell(
 }
 
 /**
- * Convertit un événement pointeur en cellule entière d'une carte de
- * caractéristiques, ou null si la toile est vide. La grille a pour dimensions les
- * dimensions propres de la toile, qui doivent valoir le nombre de cellules de la
- * carte (la mise à l'échelle éventuelle est laissée au CSS) ; le rectangle
- * affiché sert de repli quand la toile n'expose pas ses dimensions. Les
- * coordonnées sont plancher puis bornées à [0, taille − 1].
- */
-export function pointerToMapCell(
-  canvas: HTMLCanvasElement,
-  event: PointerEvent,
-): [number, number] | null {
-  const rect = canvas.getBoundingClientRect();
-  const sizeX = canvas.width > 0 ? canvas.width : rect.width;
-  const sizeY = canvas.height > 0 ? canvas.height : rect.height;
-  if (rect.width === 0 || rect.height === 0 || sizeX <= 0 || sizeY <= 0) {
-    return null;
-  }
-  const gx = ((event.clientX - rect.left) / rect.width) * sizeX;
-  const gy = ((event.clientY - rect.top) / rect.height) * sizeY;
-  return [clamp(Math.floor(gx), 0, sizeX - 1), clamp(Math.floor(gy), 0, sizeY - 1)];
-}
-
-/**
  * Moyenne des canaux d'entrée d'un noyau de convolution pour un canal de sortie
  * donné. Les noyaux sont stockés à plat en HWIO ; pour les couches à plusieurs
  * canaux d'entrée, la moyenne donne une vue 3×3 lisible.
@@ -284,25 +267,14 @@ export function filterKernelSlice(
 
 /**
  * Sélection de l'éditeur de poids : une liaison (canal d'entrée, canal de sortie)
- * à une frontière entre couches, une cellule de carte de caractéristiques, un
- * poids exact de noyau, ou null quand rien n'est sélectionné.
+ * à une frontière entre couches, un poids exact de noyau, ou null quand rien
+ * n'est sélectionné.
  *
  * Une frontière `boundary` relie la sortie de la couche `boundary` à l'entrée de
  * la couche `boundary + 1` ; la frontière 0 relie l'image d'entrée à `conv1`.
- * Une sélection de carte emporte les taps `taps` qui contribuent à la cellule :
- * ils bornent les poids affichés sur les liaisons en amont, tous canaux d'entrée
- * confondus (la condition ne dépend pas du canal).
  */
 export type WeightSelection =
   | { kind: 'link'; boundary: number; inputChannel: number; outputChannel: number }
-  | {
-      kind: 'map';
-      layer: number;
-      channel: number;
-      y: number;
-      x: number;
-      taps: ReadonlyArray<readonly [number, number]>;
-    }
   | {
       kind: 'weight';
       boundary: number;
@@ -314,23 +286,10 @@ export type WeightSelection =
   | null;
 
 /**
- * Événement de l'éditeur de poids : clic sur une liaison, une carte ou une case de
- * noyau. L'événement de carte porte la géométrie de la couche (`stride`,
- * `padding`, `inputSize`) : c'est elle qui permet de calculer les taps, ce qui
- * garde ce calcul à un seul endroit.
+ * Événement de l'éditeur de poids : clic sur une liaison ou une case de noyau.
  */
 export type WeightEditorEvent =
   | { kind: 'link'; boundary: number; inputChannel: number; outputChannel: number }
-  | {
-      kind: 'map';
-      layer: number;
-      channel: number;
-      y: number;
-      x: number;
-      stride: number;
-      padding: number;
-      inputSize: number;
-    }
   | {
       kind: 'filterCell';
       layer: number;
@@ -342,12 +301,10 @@ export type WeightEditorEvent =
 
 /**
  * Applique un événement de l'éditeur à la sélection courante. Un clic sur une
- * liaison ou une cellule de carte sélectionne puis désélectionne (toggle) ; un
- * clic sur une case de noyau ne produit une sélection de poids que si la
- * sélection courante est la liaison de la frontière immédiatement en amont de la
- * couche, ou une cellule de carte de la même couche et du même canal dont le tap
- * contribue, et ne fait rien sinon. Un clic sur une liaison remplace une
- * sélection de carte ou de poids.
+ * liaison sélectionne puis désélectionne (toggle) ; un clic sur une case de noyau
+ * ne produit une sélection de poids que si la sélection courante est la liaison de
+ * la frontière immédiatement en amont de la couche, et ne fait rien sinon. Un
+ * clic sur une liaison remplace une sélection de poids.
  */
 export function applyWeightEditorEvent(
   selection: WeightSelection,
@@ -370,26 +327,6 @@ export function applyWeightEditorEvent(
         inputChannel: event.inputChannel,
         outputChannel: event.outputChannel,
       };
-    case 'map': {
-      if (
-        selection !== null &&
-        selection.kind === 'map' &&
-        selection.layer === event.layer &&
-        selection.channel === event.channel &&
-        selection.y === event.y &&
-        selection.x === event.x
-      ) {
-        return null;
-      }
-      return {
-        kind: 'map',
-        layer: event.layer,
-        channel: event.channel,
-        y: event.y,
-        x: event.x,
-        taps: contributingTaps(event.stride, event.padding, event.inputSize, event.y, event.x),
-      };
-    }
     case 'filterCell': {
       if (
         selection !== null &&
@@ -406,22 +343,6 @@ export function applyWeightEditorEvent(
           kx: event.kx,
         };
       }
-      if (
-        selection !== null &&
-        selection.kind === 'map' &&
-        selection.layer === event.layer &&
-        selection.channel === event.outputChannel &&
-        selection.taps.some(([ky, kx]) => ky === event.ky && kx === event.kx)
-      ) {
-        return {
-          kind: 'weight',
-          boundary: selection.layer - 1,
-          inputChannel: event.inputChannel,
-          outputChannel: event.outputChannel,
-          ky: event.ky,
-          kx: event.kx,
-        };
-      }
       return selection;
     }
   }
@@ -429,33 +350,16 @@ export function applyWeightEditorEvent(
 
 /**
  * Mode de rendu d'une toile de filtre : `kernel` (tranche 3×3 du canal d'entrée)
- * pour la toile désignée par une sélection de liaison ou de poids, `mapKernel`
- * (même tranche plus les taps qui contribuent, pour éteindre les autres) pour la
- * toile de la couche et du canal d'une sélection de carte, `mean` (moyenne des
- * canaux d'entrée) pour toutes les autres.
+ * pour la toile désignée par une sélection de liaison ou de poids, `mean`
+ * (moyenne des canaux d'entrée) pour toutes les autres.
  */
-export type FilterView =
-  | { mode: 'mean' }
-  | { mode: 'kernel'; inputChannel: number }
-  | { mode: 'mapKernel'; inputChannel: number; taps: ReadonlyArray<readonly [number, number]> };
+export type FilterView = { mode: 'mean' } | { mode: 'kernel'; inputChannel: number };
 
 export function filterViewMode(
   selection: WeightSelection,
   layer: number,
   outputChannel: number,
-  inputChannel: number,
 ): FilterView {
-  if (selection !== null && selection.kind === 'map') {
-    if (
-      selection.layer === layer &&
-      selection.channel === outputChannel &&
-      Number.isInteger(inputChannel) &&
-      inputChannel >= 0
-    ) {
-      return { mode: 'mapKernel', inputChannel, taps: selection.taps };
-    }
-    return { mode: 'mean' };
-  }
   if (
     selection !== null &&
     (selection.kind === 'link' || selection.kind === 'weight') &&
@@ -468,34 +372,98 @@ export function filterViewMode(
 }
 
 /**
- * État d'une ligne de liaison : `selected` pour la liaison sélectionnée,
- * `highlighted` pour les liaisons qui alimentent le canal de la cellule de carte
- * sélectionnée (frontière immédiatement en amont), `dimmed` pour les autres
- * lignes dès qu'une sélection existe, `normal` quand rien n'est sélectionné.
+ * Géométrie de convolution d'une couche : pas, remplissage et taille de la carte
+ * d'entrée. La frontière 0 relie l'image 28×28 à `conv1` ; les autres relient la
+ * carte de la couche précédente. C'est cette géométrie qui permet de calculer
+ * les taps d'une cellule de carte.
+ */
+export function convLayerGeometry(layer: number): {
+  stride: number;
+  padding: number;
+  inputSize: number;
+} {
+  if (!Number.isInteger(layer) || layer < 0 || layer >= CONV_STRIDES.length) {
+    throw new RangeError(
+      `convLayerGeometry: layer must be an integer from 0 to ${String(CONV_STRIDES.length - 1)}, received ${String(layer)}.`,
+    );
+  }
+  return {
+    stride: CONV_STRIDES[layer],
+    padding: CONV_PADDINGS[layer],
+    inputSize: layer === 0 ? MNIST_INPUT_SIZE : FEATURE_MAP_SIZES[layer - 1],
+  };
+}
+
+/**
+ * Canal d'entrée affiché par une toile de filtre de `(layer, outputChannel)` : le
+ * canal de la liaison désignée par une sélection de liaison. Null quand aucune
+ * sélection ne désigne cette toile.
+ */
+export function filterCanvasInputChannel(
+  selection: WeightSelection,
+  layer: number,
+  outputChannel: number,
+): number | null {
+  if (selection === null) {
+    return null;
+  }
+  if (selection.kind === 'link') {
+    return selection.boundary + 1 === layer && selection.outputChannel === outputChannel
+      ? selection.inputChannel
+      : null;
+  }
+  return null;
+}
+
+/**
+ * Noyau 3×3 affiché par une toile de filtre pour un mode de vue donné : la tranche
+ * du canal d'entrée pour `kernel`, la moyenne des canaux d'entrée pour `mean`. Un
+ * canal d'entrée hors bornes — sélection plus ancienne que l'architecture
+ * courante — retombe sur la moyenne.
+ */
+export function filterKernelValues(
+  view: FilterView,
+  kernel: Float32Array,
+  inputChannels: number,
+  outputChannel: number,
+): Float32Array {
+  const outputChannels = kernel.length / (CONV_KERNEL_SIZE * CONV_KERNEL_SIZE * inputChannels);
+  const sliced =
+    view.mode !== 'mean' &&
+    Number.isInteger(outputChannels) &&
+    outputChannels > 0 &&
+    Number.isInteger(outputChannel) &&
+    outputChannel >= 0 &&
+    outputChannel < outputChannels &&
+    view.inputChannel >= 0 &&
+    view.inputChannel < inputChannels;
+  return sliced
+    ? filterKernelSlice(kernel, inputChannels, outputChannel, view.inputChannel)
+    : filterKernelMean(kernel, inputChannels, outputChannel);
+}
+
+/**
+ * État d'une ligne de liaison : `selected` pour la liaison sélectionnée (une
+ * sélection de poids l'est aussi, sur la même frontière et les mêmes canaux),
+ * `dimmed` pour les autres lignes dès qu'une sélection existe, `normal` quand
+ * rien n'est sélectionné.
  */
 export function linkLineState(
   selection: WeightSelection,
   boundary: number,
   inputChannel: number,
   outputChannel: number,
-): 'selected' | 'highlighted' | 'dimmed' | 'normal' {
+): 'selected' | 'dimmed' | 'normal' {
   if (selection === null) {
     return 'normal';
   }
   if (
-    selection.kind === 'link' &&
+    (selection.kind === 'link' || selection.kind === 'weight') &&
     selection.boundary === boundary &&
     selection.inputChannel === inputChannel &&
     selection.outputChannel === outputChannel
   ) {
     return 'selected';
-  }
-  if (
-    selection.kind === 'map' &&
-    boundary === selection.layer - 1 &&
-    outputChannel === selection.channel
-  ) {
-    return 'highlighted';
   }
   return 'dimmed';
 }
@@ -535,16 +503,6 @@ function selectionIsInArchitecture(
   if (selection === null) {
     return false;
   }
-  if (selection.kind === 'map') {
-    return (
-      Number.isInteger(selection.layer) &&
-      selection.layer >= 0 &&
-      selection.layer < filters.length &&
-      Number.isInteger(selection.channel) &&
-      selection.channel >= 0 &&
-      selection.channel < filters[selection.layer]
-    );
-  }
   return (
     lineInArchitecture(
       selection.boundary,
@@ -565,8 +523,7 @@ function selectionIsInArchitecture(
 /**
  * Libellé français de la sélection pour l'éditeur de poids, ou null si rien n'est
  * sélectionné ou si la sélection ne correspond pas à l'architecture. Les indices
- * sont affichés en base 1 ; une sélection de carte précise le nombre de taps qui
- * contribuent à la cellule.
+ * sont affichés en base 1.
  */
 export function describeWeightSelection(
   selection: WeightSelection,
@@ -574,9 +531,6 @@ export function describeWeightSelection(
 ): string | null {
   if (!selectionIsInArchitecture(selection, filters)) {
     return null;
-  }
-  if (selection.kind === 'map') {
-    return `conv${selection.layer + 1} — canal ${selection.channel + 1}, position (${selection.y + 1}, ${selection.x + 1}) · ${selection.taps.length} poids sur ${CONV_KERNEL_SIZE * CONV_KERNEL_SIZE}`;
   }
   const link = `conv${selection.boundary + 1} — entrée ${selection.inputChannel + 1}, sortie ${selection.outputChannel + 1}`;
   if (selection.kind === 'link') {
@@ -588,8 +542,8 @@ export function describeWeightSelection(
 /**
  * Libellé français d'une ligne de liaison : le nom du couple (couche, canal
  * d'entrée, canal de sortie) quand rien ne la restreint, suivi du nombre de poids
- * qui comptent quand une sélection la restreint — les taps contribuant d'une
- * cellule de carte, le poids unique d'une sélection de poids.
+ * qui comptent quand une sélection la restreint — le poids unique d'une sélection
+ * de poids.
  */
 export function describeLinkLabel(
   selection: WeightSelection,
@@ -600,12 +554,6 @@ export function describeLinkLabel(
 ): string {
   const name = `conv${boundary + 1} — entrée ${inputChannel + 1}, sortie ${outputChannel + 1}`;
   if (selection === null || !lineInArchitecture(boundary, inputChannel, outputChannel, filters)) {
-    return name;
-  }
-  if (selection.kind === 'map') {
-    if (boundary === selection.layer - 1 && outputChannel === selection.channel) {
-      return `${name} · ${selection.taps.length} poids sur ${CONV_KERNEL_SIZE * CONV_KERNEL_SIZE}`;
-    }
     return name;
   }
   if (
@@ -653,11 +601,16 @@ export function selectedWeightValue(
   ) {
     return null;
   }
-  const index =
-    (selection.ky * CONV_KERNEL_SIZE + selection.kx) * inputChannels * outputChannels +
-    selection.inputChannel * outputChannels +
-    selection.outputChannel;
-  return layer.kernel[index];
+  return layer.kernel[
+    convKernelIndex(
+      inputChannels,
+      outputChannels,
+      selection.ky,
+      selection.kx,
+      selection.inputChannel,
+      selection.outputChannel,
+    )
+  ];
 }
 
 /** Motif d'un nombre décimal saisi au clavier : signe, chiffres, un séparateur `.` ou `,`. */
@@ -666,14 +619,17 @@ const WEIGHT_INPUT_PATTERN = /^[+-]?\d+([.,]\d+)?$/;
 /**
  * Analyse un poids saisi au clavier : accepte un signe initial, des chiffres et un
  * séparateur décimal `.` ou `,`. Retourne null pour toute autre forme ou un
- * résultat non fini.
+ * résultat non fini. Un signe seul sur zéro (`-0`) vaut 0.
  */
 export function parseWeightInput(text: string): number | null {
   if (!WEIGHT_INPUT_PATTERN.test(text)) {
     return null;
   }
   const value = Number.parseFloat(text.replace(',', '.'));
-  return Number.isFinite(value) ? value : null;
+  if (!Number.isFinite(value)) {
+    return null;
+  }
+  return value === 0 ? 0 : value;
 }
 
 /** Index du maximum d'un tableau (premier index en cas d'égalité). */
@@ -847,10 +803,15 @@ export class MnistCnn extends LitElement {
         touch-action: none;
       }
 
-      .drl-canvas--filter,
-      .drl-canvas--map {
+      .drl-canvas--filter {
         width: auto;
         height: auto;
+      }
+
+      /* La toile fait la taille réelle de la carte en pixels :
+         image-rendering pixelated garde les cellules nettes. */
+      .drl-canvas--map {
+        image-rendering: pixelated;
       }
 
       .drl-hint {
@@ -1093,6 +1054,22 @@ export class MnistCnn extends LitElement {
   /** Dessin des toiles reporté après la prochaine mise à jour du DOM Lit. */
   private canvasesDirty = true;
 
+  /** Sélection de l'éditeur de poids : liaison ou poids exact. */
+  @state()
+  private selection: WeightSelection = null;
+
+  /** Vrai tant qu'un poids a été édité à la main depuis le dernier remplacement. */
+  @state()
+  private weightsEdited = false;
+
+  /** Valeur saisie au clavier pour le poids sélectionné (remplie par la suite). */
+  @state()
+  private weightDraft = '';
+
+  /** Erreur de saisie du poids, ou null (remplie par la suite). */
+  @state()
+  private weightError: string | null = null;
+
   /** Image courante : 784 valeurs d'encre en [0,1], ligne-major. */
   private readonly inputPixels = new Float32Array(MNIST_INPUT_LENGTH);
 
@@ -1125,6 +1102,8 @@ export class MnistCnn extends LitElement {
       this.applyProgress(progress);
     },
     onWeightsChanged: (weights) => {
+      // Poids remplacés par l'entraînement : la sélection ne désigne plus rien.
+      this.clearSelection();
       this.weights = weights;
       this.runInference();
     },
@@ -1259,6 +1238,7 @@ export class MnistCnn extends LitElement {
       return;
     }
     this.weights = this.pretrainedAssets.weights;
+    this.clearSelection();
     this.runInference();
   }
 
@@ -1357,6 +1337,7 @@ export class MnistCnn extends LitElement {
 
   /** Réinitialise les poids : l'entraînement s'arrête et les poids sont restaurés. */
   private readonly handleResetWeights = (): void => {
+    this.clearSelection();
     void this.controller.resetWeights(this.weightsForCurrentFilters());
   };
 
@@ -1367,6 +1348,7 @@ export class MnistCnn extends LitElement {
   private readonly handleRandomResetWeights = (): void => {
     const seed = Math.floor(Math.random() * 0xffffffff);
     const weights = initializeMnistCnnWeights({ filters: this.filterCounts }, seed);
+    this.clearSelection();
     void this.controller.resetWeights(weights, 'random');
   };
 
@@ -1416,6 +1398,7 @@ export class MnistCnn extends LitElement {
     }
     this.filterCounts = next;
     this.weights = this.weightsForCurrentFilters();
+    this.clearSelection();
     this.runInference();
     this.resetMetrics();
     void this.controller.notifySliderChanged(this.manifestMatches, true);
@@ -1552,6 +1535,83 @@ export class MnistCnn extends LitElement {
     this.runInference();
   };
 
+  /**
+   * Applique un événement de l'éditeur à la sélection courante : la sélection est
+   * recalculée, la saisie numérique est effacée — elle visait l'ancienne sélection
+   * — et les toiles sont redessinées.
+   */
+  private applySelectionEvent(event: WeightEditorEvent): void {
+    this.selection = applyWeightEditorEvent(this.selection, event);
+    this.weightDraft = '';
+    this.weightError = null;
+    this.canvasesDirty = true;
+  }
+
+  /**
+   * Efface la sélection de l'éditeur et l'indicateur d'édition manuelle : appelée
+   * dès que des poids sont remplacés par une source autre que l'édition manuelle,
+   * une sélection plus ancienne ne désignant plus rien de valide.
+   */
+  private clearSelection(): void {
+    this.selection = null;
+    this.weightsEdited = false;
+    this.weightDraft = '';
+    this.weightError = null;
+    this.canvasesDirty = true;
+  }
+
+  /**
+   * Clic sur une ligne de liaison : sélectionne la liaison entre les deux canaux
+   * (ou la désélectionne). Les lignes n'existent pas encore dans le gabarit : le
+   * prochain panneau des liaisons branchera ce gestionnaire.
+   */
+  private readonly handleLinkClick = (
+    boundary: number,
+    inputChannel: number,
+    outputChannel: number,
+  ): void => {
+    this.applySelectionEvent({ kind: 'link', boundary, inputChannel, outputChannel });
+  };
+
+  /**
+   * Clic sur une case d'une toile de filtres : ne produit une sélection de poids
+   * que si la sélection courante est la liaison de la frontière immédiatement en
+   * amont désignant cette toile. Sinon le clic est ignoré : le canal d'entrée
+   * affiché par la toile est alors indéterminé.
+   */
+  private readonly handleFilterCellClick = (
+    event: PointerEvent,
+    canvas?: HTMLCanvasElement,
+  ): void => {
+    const target = (canvas ?? event.currentTarget) as HTMLCanvasElement | null;
+    if (!(target instanceof HTMLCanvasElement)) {
+      return;
+    }
+    const layer = Number(target.dataset.layer);
+    const channel = Number(target.dataset.channel);
+    if (!Number.isInteger(layer) || !Number.isInteger(channel)) {
+      return;
+    }
+    const cell = pointerToGrid(target, event, CONV_KERNEL_SIZE);
+    if (!cell) {
+      return;
+    }
+    const kx = clamp(Math.floor(cell[0]), 0, CONV_KERNEL_SIZE - 1);
+    const ky = clamp(Math.floor(cell[1]), 0, CONV_KERNEL_SIZE - 1);
+    const inputChannel = filterCanvasInputChannel(this.selection, layer, channel);
+    if (inputChannel === null) {
+      return;
+    }
+    this.applySelectionEvent({
+      kind: 'filterCell',
+      layer,
+      outputChannel: channel,
+      inputChannel,
+      ky,
+      kx,
+    });
+  };
+
   private filterPalette(): {
     positive: readonly [number, number, number];
     negative: readonly [number, number, number];
@@ -1648,9 +1708,10 @@ export class MnistCnn extends LitElement {
       this.weights.conv3,
       this.weights.conv4,
     ];
-    const means = filterKernelMean(convWeights[layer].kernel, inputChannels, channel);
+    const view = filterViewMode(this.selection, layer, channel);
+    const values = filterKernelValues(view, convWeights[layer].kernel, inputChannels, channel);
     let maxAbs = 0;
-    for (const value of means) {
+    for (const value of values) {
       maxAbs = Math.max(maxAbs, Math.abs(value));
     }
     if (this.scratch.width !== CONV_KERNEL_SIZE || this.scratch.height !== CONV_KERNEL_SIZE) {
@@ -1665,11 +1726,11 @@ export class MnistCnn extends LitElement {
     const image = scratch.createImageData(CONV_KERNEL_SIZE, CONV_KERNEL_SIZE);
     for (let ky = 0; ky < CONV_KERNEL_SIZE; ky += 1) {
       for (let kx = 0; kx < CONV_KERNEL_SIZE; kx += 1) {
-        const value = means[ky * CONV_KERNEL_SIZE + kx];
+        const index = (ky * CONV_KERNEL_SIZE + kx) * 4;
+        const value = values[ky * CONV_KERNEL_SIZE + kx];
         const t = maxAbs > 1e-9 ? clamp(value / maxAbs, -1, 1) : 0;
         const rgb =
           t >= 0 ? mixRgb(WHITE_RGB, palette.positive, t) : mixRgb(WHITE_RGB, palette.negative, -t);
-        const index = (ky * CONV_KERNEL_SIZE + kx) * 4;
         image.data[index] = rgb[0];
         image.data[index + 1] = rgb[1];
         image.data[index + 2] = rgb[2];
@@ -1952,6 +2013,7 @@ export class MnistCnn extends LitElement {
                               height=${FILTER_CANVAS_SIZE}
                               role="img"
                               aria-label="Filtre ${name}, canal de sortie ${channel + 1}"
+                              @pointerdown=${this.handleFilterCellClick}
                             ></canvas>
                             <figcaption>sortie ${channel + 1}</figcaption>
                           </figure>
