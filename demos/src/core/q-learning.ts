@@ -1,3 +1,10 @@
+/**
+ * One experience tuple for a tabular Q-learning update.
+ *
+ * Extensions wrap this type instead of changing it: a variant can add fields
+ * such as `nextLegalActions` for algorithms that restrict the bootstrap to a
+ * per-state legal action set.
+ */
 export interface Transition<O, A> {
   readonly observation: O;
   readonly action: A;
@@ -6,11 +13,33 @@ export interface Transition<O, A> {
   readonly done: boolean;
 }
 
+/** Constructor options for {@link QLearningAgent}. */
 export interface QLearningOptions {
+  /**
+   * Step size applied to the temporal-difference error. Default 0.1. The agent
+   * does not clamp this value, so any real number is accepted.
+   */
   learningRate?: number;
+  /**
+   * Discount factor applied to the bootstrapped next-state value. Default 0.99.
+   * The agent does not clamp this value, so any real number is accepted.
+   */
   discountFactor?: number;
+  /**
+   * Probability of exploring instead of acting greedily. Default 0.1. The agent
+   * does not clamp this value, so it must be in [0, 1] for the usual behaviour.
+   */
   epsilon?: number;
+  /**
+   * Value returned for an unseen observation-action pair. Default 0. The agent
+   * does not clamp this value, so any real number is accepted.
+   */
   initialValue?: number;
+  /**
+   * Random source used for exploration and greedy tie-breaks. Default
+   * `Math.random`. It must return a number in `[0, 1)`. Inject a seeded source
+   * for deterministic runs.
+   */
   rng?: () => number;
 }
 
@@ -19,6 +48,21 @@ const DEFAULT_DISCOUNT_FACTOR = 0.99;
 const DEFAULT_EPSILON = 0.1;
 const DEFAULT_INITIAL_VALUE = 0;
 
+/**
+ * Tabular Q-learning agent. The action space is fixed at construction, so a
+ * state can use any subset of it.
+ *
+ * Per-state legal actions go through the optional `legalActions` parameter of
+ * `selectAction`, `greedyAction`, `maxValue` and `policyAction`. When the
+ * parameter is omitted, the whole action space is legal.
+ *
+ * Observation keys use object identity. A rebuilt observation object therefore
+ * never matches an earlier one and accumulates a new row every time, so pass
+ * stable keys: a number, a string, or one reused object per state.
+ *
+ * Inject `rng` for deterministic runs. The `update` bootstrap uses `maxValue`
+ * over the full action space, not over a per-state legal set.
+ */
 export class QLearningAgent<O, A> {
   learningRate: number;
 
@@ -46,14 +90,39 @@ export class QLearningAgent<O, A> {
     this.rng = options.rng ?? Math.random;
   }
 
-  selectAction(observation: O): A {
-    if (this.rng() < this.epsilon) {
-      const index = Math.floor(this.rng() * this.actions.length);
-      return this.actions[index];
+  /**
+   * Returns the legal action set for a call: the explicit `legalActions` when
+   * given, otherwise the full action space. Throws when the set is empty.
+   */
+  private legalFrom(legalActions?: readonly A[]): readonly A[] {
+    const actions = legalActions ?? this.actions;
+    if (actions.length === 0) {
+      throw new Error('QLearningAgent needs at least one legal action.');
     }
-    return this.greedyAction(observation);
+    return actions;
   }
 
+  /**
+   * Picks an action for `observation`. With probability `epsilon` it explores:
+   * it returns a uniformly random action from the legal set. Otherwise it
+   * returns `greedyAction`, which can consume an rng draw to break a tie.
+   */
+  selectAction(observation: O, legalActions?: readonly A[]): A {
+    const actions = this.legalFrom(legalActions);
+    if (this.rng() < this.epsilon) {
+      const index = Math.floor(this.rng() * actions.length);
+      return actions[index];
+    }
+    return this.greedyAction(observation, actions);
+  }
+
+  /**
+   * Applies one Q-learning update.
+   *
+   * The action must be in the agent's action space. The bootstrap uses
+   * `maxValue` over the full action space. Pass `done: true` at a terminal
+   * transition so the bootstrap is 0.
+   */
   update(transition: Transition<O, A>): void {
     const bootstrap = transition.done
       ? 0
@@ -69,16 +138,19 @@ export class QLearningAgent<O, A> {
     }
   }
 
+  /** Current value of `observation` and `action`, or `initialValue` if unseen. */
   valueOf(observation: O, action: A): number {
     return this.table.get(observation)?.get(action) ?? this.initialValue;
   }
 
-  maxValue(observation: O): number {
-    if (this.actions.length === 0) {
-      return 0;
-    }
+  /**
+   * Highest value over the legal set. The legal set defaults to the full action
+   * space and must not be empty.
+   */
+  maxValue(observation: O, legalActions?: readonly A[]): number {
+    const actions = this.legalFrom(legalActions);
     let best = -Infinity;
-    for (const action of this.actions) {
+    for (const action of actions) {
       const value = this.valueOf(observation, action);
       if (value > best) {
         best = value;
@@ -89,13 +161,16 @@ export class QLearningAgent<O, A> {
 
   /**
    * Returns a greedy action for `observation`.
-   * Every action whose value equals the maximal value is a candidate.
-   * The candidates are tied, so one is picked uniformly at random with `this.rng()`.
+   * Every legal action whose value equals the maximal value is a candidate.
+   * The candidates are tied, so one is picked uniformly at random with
+   * `this.rng()`. It consumes one training rng draw when the top value is tied.
+   * Use `policyAction` to inspect the policy without changing training.
    */
-  greedyAction(observation: O): A {
-    const bestValue = this.maxValue(observation);
+  greedyAction(observation: O, legalActions?: readonly A[]): A {
+    const actions = this.legalFrom(legalActions);
+    const bestValue = this.maxValue(observation, actions);
     const tied: A[] = [];
-    for (const action of this.actions) {
+    for (const action of actions) {
       if (this.valueOf(observation, action) === bestValue) {
         tied.push(action);
       }
@@ -108,13 +183,15 @@ export class QLearningAgent<O, A> {
   }
 
   /**
-   * Greedy action for `observation` with a deterministic tie-break: the
-   * first action in the space wins. Does not consume the rng. For display.
+   * Greedy action for `observation` over the legal set with a deterministic
+   * tie-break: the first action in the set wins. Does not consume the rng.
+   * For display.
    */
-  policyAction(observation: O): A {
-    let bestAction: A = this.actions[0];
+  policyAction(observation: O, legalActions?: readonly A[]): A {
+    const actions = this.legalFrom(legalActions);
+    let bestAction: A = actions[0];
     let bestValue = -Infinity;
-    for (const action of this.actions) {
+    for (const action of actions) {
       const value = this.valueOf(observation, action);
       if (value > bestValue) {
         bestValue = value;
@@ -124,10 +201,12 @@ export class QLearningAgent<O, A> {
     return bestAction;
   }
 
+  /** Read-only view of the Q table, keyed by observation identity. */
   get qTable(): ReadonlyMap<O, ReadonlyMap<A, number>> {
     return this.table;
   }
 
+  /** Clears every learned value. The public options keep their values. */
   reset(): void {
     this.table.clear();
   }
