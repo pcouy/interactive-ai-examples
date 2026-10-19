@@ -1,0 +1,49 @@
+<!doctype html>
+<html lang="fr">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>MNIST CNN — démonstration interactive</title>
+    <style>
+      body {
+        margin: 0;
+        padding: 2rem;
+        background: #f8fafc;
+        color: #0f172a;
+        font-family: system-ui, sans-serif;
+      }
+
+      main {
+        display: grid;
+        gap: 1rem;
+        max-width: 1080px;
+        margin: 0 auto;
+      }
+
+      a {
+        color: #2563eb;
+      }
+    </style>
+  </head>
+  <body>
+    <main>
+      <p><a href="./index.html">← Playground</a></p>
+      <drl-card heading="MNIST CNN — démonstration interactive">
+        <p>
+          Dessinez un chiffre sur la surface 28×28 : le réseau à quatre couches de
+          convolution 3×3 suivies d'une sigmoïde, puis dense 8 + sigmoïde et dix logits,
+          fait un passage avant en pur TypeScript (sans TensorFlow.js) et met à jour
+          les probabilités, les filtres et les cartes de caractéristiques.
+        </p>
+        <drl-mnist-cnn speed="1"></drl-mnist-cnn>
+        <p>
+          Les poids initiaux sont déterministes (graine 42) et reconstruits à chaque
+          changement de filtres. L'entraînement TensorFlow.js et les exemples MNIST
+          locaux (fichiers IDX, voir <code>mnist-data.ts</code>) seront branchés quand
+          l'adaptateur sera prêt ; le sélecteur d'exemples reste un espace réservé.
+        </p>
+      </drl-card>
+    </main>
+    <script type="module" src="/src/index.ts"></script>
+  </body>
+</html>
