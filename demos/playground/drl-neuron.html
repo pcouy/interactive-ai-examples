@@ -94,10 +94,12 @@
           affiche la prédiction actuelle ŷ du neurone sur tout le carré d'entrée, avec la même
           échelle de couleurs : à mesure que l'entraînement progresse, la grille prend peu à peu
           les couleurs des points. La vue 3D montre la surface de loss moyenne sur tout le jeu de
-          données, la bille suivant la descente : les deux vues sont synchronisées.
+          données, la bille suivant la descente : les deux vues avancent ensemble — la vue 2D montre
+          la prédiction sur le plan des entrées, la vue 3D la loss sur le plan des poids. La bille
+          suit le gradient moyen de la batch, une estimation bruitée du gradient de la surface.
         </p>
         <p>
-          La loss L1 est l'erreur absolue moyenne ; la loss L2 est l'erreur quadratique moyenne.
+          La loss L1 est l'erreur absolue moyenne ; la loss L2 vaut la moitié du carré de l'erreur.
           L2 pénalise plus fortement les grandes erreurs et dessine un bol plus lisse ; L1 est plus
           robuste aux valeurs extrêmes.
         </p>
@@ -107,7 +109,7 @@
           réinitialiser.
         </p>
         <drl-neuron speed="0.033333"></drl-neuron>
-        <p id="diverged" class="drl-error" hidden>Divergé — réinitialisez.</p>
+        <p id="diverged" class="drl-error" hidden aria-live="polite">Divergé — utilisez le bouton Reset.</p>
         <div class="sliders">
           <drl-slider
             id="lr"
@@ -125,6 +127,7 @@
             step="1"
             value="4"
           ></drl-slider>
+          <!-- 200 max, pas 500 : un grand jeu coûte cher à afficher (le cœur accepte 500). -->
           <drl-slider
             id="count"
             label="Nombre d'exemples"
@@ -141,7 +144,7 @@
             <button id="apply-expression" type="button">Appliquer</button>
             <button id="new-dataset" type="button">Nouveau jeu de données</button>
           </div>
-          <p id="expression-error" class="drl-error" hidden></p>
+          <p id="expression-error" class="drl-error" hidden aria-live="polite"></p>
         </div>
         <div class="drl-field">
           <label for="loss-kind">Loss</label>
@@ -182,8 +185,23 @@
       bind('batch-size', (element, value) => {
         element.batchSize = value;
       });
-      bind('count', (element, value) => {
-        element.count = value;
+      // Writing `count` rebuilds the dataset and the 71x71 landscape (5041 height
+      // samples). drl-slider fires on every native input event, so a drag would
+      // trigger dozens of rebuilds. Debounce: one rebuild after the slider
+      // settles. The trailing value is always applied.
+      let countTimer = 0;
+      const countSlider = document.getElementById('count');
+      countSlider?.addEventListener('drl-input', (event) => {
+        if (demo === null) {
+          return;
+        }
+        clearTimeout(countTimer);
+        const value = event.detail;
+        countTimer = setTimeout(() => {
+          if (demo !== null) {
+            demo.count = value;
+          }
+        }, 150);
       });
 
       function applyExpression() {
