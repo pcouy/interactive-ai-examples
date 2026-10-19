@@ -1,11 +1,16 @@
 import { describe, expect, it } from 'vitest';
 import {
+  loadIdxDataset,
   loadMnistDataset,
   MNIST_PIXELS_PER_IMAGE,
   type MnistDataset,
+  type MnistIdxDataset,
+  materializeBatch,
+  materializeSample,
   parseIdxImages,
   parseIdxLabels,
   sampleBalanced,
+  selectStratifiedIndices,
 } from './mnist-data.js';
 
 const IMAGE_MAGIC = 2051;
@@ -47,6 +52,19 @@ function buildDataset(labels: number[]): MnistDataset {
     offset === 0 ? labels[image] * 25 : (image * 7 + offset) % 256,
   );
   return loadMnistDataset(imageFile, buildLabelFile(labels));
+}
+
+/** Jeu IDX brut équivalent à `buildDataset`, plus les buffers d'origine. */
+function buildRawIdxDataset(labels: number[]): {
+  dataset: MnistIdxDataset;
+  imageFile: Uint8Array;
+  labelFile: Uint8Array;
+} {
+  const imageFile = buildImageFile(labels.length, 28, 28, (image, offset) =>
+    offset === 0 ? labels[image] * 25 : (image * 7 + offset) % 256,
+  );
+  const labelFile = buildLabelFile(labels);
+  return { dataset: loadIdxDataset(imageFile, labelFile), imageFile, labelFile };
 }
 
 function balancedLabels(repeats: number): number[] {
@@ -328,6 +346,253 @@ describe('mnist-data input immutability', () => {
     expect(new Uint8Array(dataset.labels)).toEqual(labelsSnapshot);
     const again = sampleBalanced(dataset, { perClass: 2, seed: 3 });
     expect(again.images).toEqual(sampleImages);
+    expect(again.images[0]).toBeGreaterThanOrEqual(0);
+  });
+});
+
+describe('loadIdxDataset', () => {
+  it('keeps raw IDX bytes without converting pixels to float32', () => {
+    const labels = balancedLabels(2);
+    const { dataset, imageFile } = buildRawIdxDataset(labels);
+    expect(dataset.count).toBe(labels.length);
+    expect(dataset.images).toBeInstanceOf(Uint8Array);
+    expect(dataset.labels).toBeInstanceOf(Uint8Array);
+    expect(dataset.images).toHaveLength(labels.length * MNIST_PIXELS_PER_IMAGE);
+    expect(dataset.labels).toEqual(new Uint8Array(labels));
+    expect(Array.from(dataset.images.subarray(0, 5))).toEqual(
+      Array.from(imageFile.subarray(16, 21)),
+    );
+    expect(dataset.images[0]).toBe(labels[0] * 25);
+  });
+
+  it('loads an empty pair with zero counts', () => {
+    const { dataset } = buildRawIdxDataset([]);
+    expect(dataset.count).toBe(0);
+    expect(dataset.images).toHaveLength(0);
+    expect(dataset.labels).toHaveLength(0);
+  });
+
+  it('rejects mismatched image and label counts', () => {
+    expect(() => loadIdxDataset(buildImageFile(2), buildLabelFile([1]))).toThrow(
+      /2 images vs 1 labels/,
+    );
+  });
+
+  it('rejects a wrong image magic or dimensions', () => {
+    expect(() => loadIdxDataset(buildLabelFile(balancedLabels(2)), buildLabelFile([1, 2]))).toThrow(
+      /magic 2049/,
+    );
+    expect(() => loadIdxDataset(buildImageFile(1, 27, 28), buildLabelFile([1]))).toThrow(/27x28/);
+  });
+
+  it('rejects a truncated or over-long image payload', () => {
+    const full = buildImageFile(2);
+    expect(() => loadIdxDataset(full.subarray(0, full.length - 1), buildLabelFile([1, 2]))).toThrow(
+      /truncated image payload/,
+    );
+    expect(() =>
+      loadIdxDataset(buildImageFile(1, 28, 28, undefined, 1), buildLabelFile([1])),
+    ).toThrow(/extra bytes after image payload/);
+  });
+
+  it('rejects a truncated label payload and out-of-range labels', () => {
+    const full = buildLabelFile([1, 2, 3]);
+    expect(() => loadIdxDataset(buildImageFile(3), full.subarray(0, full.length - 1))).toThrow(
+      /truncated label payload/,
+    );
+    expect(() => loadIdxDataset(buildImageFile(3), buildLabelFile([0, 1, 10]))).toThrow(
+      /invalid label 10 at index 2/,
+    );
+  });
+
+  it('leaves the IDX input buffers byte-identical', () => {
+    const { dataset, imageFile, labelFile } = buildRawIdxDataset(balancedLabels(2));
+    const imageCopy = new Uint8Array(imageFile);
+    const labelCopy = new Uint8Array(labelFile);
+    selectStratifiedIndices(dataset, { fraction: 0.5, seed: 5 });
+    materializeSample(dataset, Uint32Array.from([0, 1, 2]));
+    expect(new Uint8Array(imageFile)).toEqual(imageCopy);
+    expect(new Uint8Array(labelFile)).toEqual(labelCopy);
+  });
+});
+
+describe('selectStratifiedIndices', () => {
+  const { dataset } = buildRawIdxDataset(balancedLabels(3)); // 3 examples per class
+
+  function classCounts(indices: Uint32Array, source: MnistIdxDataset): number[] {
+    const counts = new Array<number>(10).fill(0);
+    for (const index of indices) {
+      counts[source.labels[index]] += 1;
+    }
+    return counts;
+  }
+
+  it('returns every example exactly once for fraction 1', () => {
+    const indices = selectStratifiedIndices(dataset, { fraction: 1, seed: 7 });
+    expect(indices).toBeInstanceOf(Uint32Array);
+    expect(indices).toHaveLength(30);
+    expect([...indices].sort((a, b) => a - b)).toEqual([...Array(30).keys()]);
+  });
+
+  it('keeps the per-class balance for a small fraction', () => {
+    const indices = selectStratifiedIndices(dataset, { fraction: 0.1, seed: 7 });
+    // round(3 × 0.1) = 0, ramené à 1 par classe : 10 exemples au total.
+    expect(indices).toHaveLength(10);
+    expect(classCounts(indices, dataset)).toEqual(new Array<number>(10).fill(1));
+    const half = selectStratifiedIndices(dataset, { fraction: 2 / 3, seed: 7 });
+    expect(half).toHaveLength(20);
+    expect(classCounts(half, dataset)).toEqual(new Array<number>(10).fill(2));
+  });
+
+  it('keeps every returned index inside the dataset bounds', () => {
+    const indices = selectStratifiedIndices(dataset, { fraction: 0.5, seed: 3 });
+    for (const index of indices) {
+      expect(index).toBeGreaterThanOrEqual(0);
+      expect(index).toBeLessThan(dataset.count);
+    }
+  });
+
+  it('is deterministic for equal seeds and varies across seeds', () => {
+    const first = selectStratifiedIndices(dataset, { fraction: 0.5, seed: 7 });
+    const second = selectStratifiedIndices(dataset, { fraction: 0.5, seed: 7 });
+    expect(first).toEqual(second);
+    const other = selectStratifiedIndices(dataset, { fraction: 0.5, seed: 8 });
+    expect(other).not.toEqual(first);
+  });
+
+  it('interleaves classes instead of returning class blocks', () => {
+    const indices = selectStratifiedIndices(dataset, { fraction: 1, seed: 7 });
+    const labels = [...indices].map((index) => dataset.labels[index]);
+    const sorted = [...labels].sort((a, b) => a - b);
+    expect(labels).not.toEqual(sorted);
+  });
+
+  it('rejects invalid fractions', () => {
+    for (const fraction of [0, -0.5, 1.5, Number.NaN, Number.POSITIVE_INFINITY]) {
+      expect(() => selectStratifiedIndices(dataset, { fraction, seed: 7 })).toThrow(
+        /invalid fraction/,
+      );
+    }
+  });
+
+  it('rejects invalid seeds', () => {
+    for (const seed of [-1, 1.5, Number.NaN, Number.POSITIVE_INFINITY]) {
+      expect(() => selectStratifiedIndices(dataset, { fraction: 0.5, seed })).toThrow(
+        /invalid seed/,
+      );
+    }
+  });
+
+  it('rejects a class without any example', () => {
+    const sparse = buildRawIdxDataset([0, 0, 0, 1, 1, 1, 2, 2, 2, 3, 3, 3, 4, 4, 4]).dataset;
+    expect(() => selectStratifiedIndices(sparse, { fraction: 0.5, seed: 7 })).toThrow(
+      /class 5 has no examples/,
+    );
+  });
+
+  it('rejects a dataset whose shape disagrees with its labels', () => {
+    const wrongCount: MnistIdxDataset = {
+      count: 1,
+      images: new Uint8Array(MNIST_PIXELS_PER_IMAGE),
+      labels: new Uint8Array([0, 1]),
+    };
+    expect(() => selectStratifiedIndices(wrongCount, { fraction: 0.5, seed: 7 })).toThrow(
+      /count 1 does not match label count 2/,
+    );
+    const wrongBytes: MnistIdxDataset = {
+      count: 2,
+      images: new Uint8Array(MNIST_PIXELS_PER_IMAGE),
+      labels: new Uint8Array([0, 1]),
+    };
+    expect(() => selectStratifiedIndices(wrongBytes, { fraction: 0.5, seed: 7 })).toThrow(
+      /image bytes .* do not match label count/,
+    );
+  });
+});
+
+describe('materializeSample and materializeBatch', () => {
+  const { dataset } = buildRawIdxDataset(balancedLabels(3));
+
+  it('converts only the selected images and keeps labels aligned', () => {
+    const indices = selectStratifiedIndices(dataset, { fraction: 0.5, seed: 11 });
+    const sample = materializeSample(dataset, indices);
+    expect(sample.count).toBe(indices.length);
+    expect(sample.images).toBeInstanceOf(Float32Array);
+    expect(sample.images).toHaveLength(indices.length * MNIST_PIXELS_PER_IMAGE);
+    expect(sample.labels).toHaveLength(indices.length);
+    for (let position = 0; position < sample.count; position += 1) {
+      const firstPixel = sample.images[position * MNIST_PIXELS_PER_IMAGE];
+      expect(Math.round((firstPixel * 255) / 25)).toBe(sample.labels[position]);
+      expect(firstPixel).toBeGreaterThanOrEqual(0);
+      expect(firstPixel).toBeLessThanOrEqual(1);
+    }
+  });
+
+  it('materializes only the requested batch slice', () => {
+    const indices = selectStratifiedIndices(dataset, { fraction: 1, seed: 7 });
+    const batch = materializeBatch(dataset, indices, 5, 9);
+    expect(batch.count).toBe(4);
+    expect(batch.images).toHaveLength(4 * MNIST_PIXELS_PER_IMAGE);
+    const expected = materializeSample(dataset, indices.slice(5, 9));
+    expect(batch.images).toEqual(expected.images);
+    expect(batch.labels).toEqual(expected.labels);
+  });
+
+  it('converts only a middle range from the raw bytes at 1/255', () => {
+    const indices = selectStratifiedIndices(dataset, { fraction: 1, seed: 7 });
+    const start = 6;
+    const end = 13;
+    const bytesBefore = new Uint8Array(dataset.images);
+    const labelsBefore = new Uint8Array(dataset.labels);
+
+    const batch = materializeBatch(dataset, indices, start, end);
+
+    // Seule la tranche demandée est convertie.
+    expect(batch.count).toBe(end - start);
+    expect(batch.images).toHaveLength((end - start) * MNIST_PIXELS_PER_IMAGE);
+    expect(batch.labels).toHaveLength(end - start);
+    for (let position = 0; position < batch.count; position += 1) {
+      const sourceIndex = indices[start + position];
+      const source = sourceIndex * MNIST_PIXELS_PER_IMAGE;
+      const target = position * MNIST_PIXELS_PER_IMAGE;
+      for (let pixel = 0; pixel < MNIST_PIXELS_PER_IMAGE; pixel += 1) {
+        expect(batch.images[target + pixel]).toBe(
+          Math.fround(dataset.images[source + pixel] / 255),
+        );
+      }
+      expect(batch.labels[position]).toBe(dataset.labels[sourceIndex]);
+    }
+
+    // Le jeu source reste inchangé.
+    expect(new Uint8Array(dataset.images)).toEqual(bytesBefore);
+    expect(new Uint8Array(dataset.labels)).toEqual(labelsBefore);
+  });
+
+  it('rejects indices outside the dataset bounds', () => {
+    expect(() => materializeSample(dataset, Uint32Array.from([dataset.count]))).toThrow(
+      /outside 0 to/,
+    );
+    expect(() => materializeSample(dataset, [-1])).toThrow(/outside 0 to/);
+    expect(() => materializeSample(dataset, [1.5])).toThrow(/outside 0 to/);
+  });
+
+  it('rejects invalid batch ranges', () => {
+    const indices = Uint32Array.from([0, 1, 2, 3]);
+    expect(() => materializeBatch(dataset, indices, 3, 2)).toThrow(/invalid batch range/);
+    expect(() => materializeBatch(dataset, indices, -1, 2)).toThrow(/invalid batch range/);
+    expect(() => materializeBatch(dataset, indices, 0, 5)).toThrow(/invalid batch range/);
+    expect(() => materializeBatch(dataset, indices, 0.5, 2)).toThrow(/invalid batch range/);
+  });
+
+  it('does not mutate the raw dataset', () => {
+    const imagesSnapshot = new Uint8Array(dataset.images);
+    const labelsSnapshot = new Uint8Array(dataset.labels);
+    const indices = selectStratifiedIndices(dataset, { fraction: 1, seed: 4 });
+    const sample = materializeSample(dataset, indices);
+    sample.images[0] = -1;
+    expect(new Uint8Array(dataset.images)).toEqual(imagesSnapshot);
+    expect(new Uint8Array(dataset.labels)).toEqual(labelsSnapshot);
+    const again = materializeSample(dataset, indices);
     expect(again.images[0]).toBeGreaterThanOrEqual(0);
   });
 });
