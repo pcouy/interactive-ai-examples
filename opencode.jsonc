@@ -4,4 +4,36 @@
   // servers; in this repo the relevant one is `typescript` (demos/ has a
   // tsconfig.json and a `typescript` dependency in demos/package.json).
   "lsp": true,
+
+  // Model aliases for the `opencode` provider. Agents reference `opencode/weak`
+  // and `opencode/strong`, so changing a `modelID` here repoints every agent
+  // that uses the alias. Capabilities and limits come from models.dev.
+  "providers": {
+    "opencode": {
+      "models": {
+        "weak": {
+          "modelID": "deepseek-v4.1-flash",
+          "name": "Weak (DeepSeek V4.1 Flash)",
+          "capabilities": {
+            "tools": true,
+            "input": ["text", "image"],
+            "output": ["text"],
+            "reasoning": { "supported": true, "effort": ["low", "high", "max"] },
+          },
+          "limit": { "context": 1000000, "output": 384000 },
+        },
+        "strong": {
+          "modelID": "gpt-6-luna",
+          "name": "Strong (GPT-6 Luna)",
+          "capabilities": {
+            "tools": true,
+            "input": ["text", "image", "pdf"],
+            "output": ["text"],
+            "reasoning": { "supported": true, "effort": ["none", "low", "medium", "high", "xhigh", "max"] },
+          },
+          "limit": { "context": 1050000, "input": 922000, "output": 128000 },
+        },
+      },
+    },
+  },
 }
