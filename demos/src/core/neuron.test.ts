@@ -466,6 +466,7 @@ describe('phase machine', () => {
       core.advance(learningRate);
       core.advance(learningRate, { detailed: false });
       expect(core.advanceBatch(learningRate)).toBeNull();
+      expect(core.lastMove).toBeNull();
       expect(core.phase).toBe('idle');
       expect(core.w1).toBe(0.5);
       expect(core.w2).toBe(-0.3);
@@ -476,6 +477,7 @@ describe('phase machine', () => {
 
     core.advanceBatch(0.1);
     expect(core.epoch).toBe(1);
+    expect(core.lastMove).not.toBeNull();
     expect(core.advanceBatch(NaN)).toBeNull();
     expect(core.epoch).toBe(1);
     expect(core.phase).toBe('present');
@@ -542,6 +544,13 @@ describe('domain', () => {
 
     const empty = makeCore({ expression: 'x1 < 0 ? x1 : Infinity', count: 1, seed: 1 });
     expect(empty.domain).toBe(5);
+  });
+
+  it('gives the minimum domain for a constant target', () => {
+    const core = makeCore({ expression: '1', count: 40, bias: true });
+    expect(core.domain).toBe(5);
+    const noBias = makeCore({ expression: '1', count: 40, bias: false });
+    expect(noBias.domain).toBe(5);
   });
 });
 
