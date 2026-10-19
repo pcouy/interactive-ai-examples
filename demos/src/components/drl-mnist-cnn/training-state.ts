@@ -105,18 +105,22 @@ export function onFiltersChanged(_state: TrainingState, manifestMatches: boolean
 
 /**
  * Manifeste chargé : ne s'applique qu'avant la première run. Une run active
- * ou terminée n'est jamais dérangée par une réponse tardive.
+ * ou terminée, ou des poids tirés au hasard, ne sont jamais dérangés par une
+ * réponse tardive.
  */
 export function onManifestLoaded(state: TrainingState, manifestMatches: boolean): TrainingState {
-  if (state === 'training' || state === 'paused' || state === 'trained') {
+  if (state === 'training' || state === 'paused' || state === 'trained' || state === 'random') {
     return state;
   }
   return initialTrainingState(manifestMatches);
 }
 
-/** Manifeste en échec : poids déterministes, sauf si une run a déjà eu lieu. */
+/**
+ * Manifeste en échec : poids déterministes, sauf si une run a déjà eu lieu ou si
+ * des poids ont été tirés au hasard.
+ */
 export function onManifestFailed(state: TrainingState): TrainingState {
-  if (state === 'training' || state === 'paused' || state === 'trained') {
+  if (state === 'training' || state === 'paused' || state === 'trained' || state === 'random') {
     return state;
   }
   return 'deterministic';

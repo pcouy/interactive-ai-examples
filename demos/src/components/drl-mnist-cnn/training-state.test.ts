@@ -144,6 +144,11 @@ describe('onManifestLoaded', () => {
       expect(onManifestLoaded(state, false)).toBe(state);
     }
   });
+
+  it('never disturbs a random reset', () => {
+    expect(onManifestLoaded('random', true)).toBe('random');
+    expect(onManifestLoaded('random', false)).toBe('random');
+  });
 });
 
 describe('onManifestFailed', () => {
@@ -156,6 +161,10 @@ describe('onManifestFailed', () => {
     for (const state of ['training', 'paused', 'trained'] as const) {
       expect(onManifestFailed(state)).toBe(state);
     }
+  });
+
+  it('never disturbs a random reset', () => {
+    expect(onManifestFailed('random')).toBe('random');
   });
 });
 
