@@ -134,3 +134,26 @@ describe('ReplayBuffer sampling', () => {
     expect(buffer.sample(100)).toHaveLength(8);
   });
 });
+
+describe('ReplayBuffer configuration', () => {
+  it('exposes the configured capacity and defaults it to 1000', () => {
+    expect(new ReplayBuffer<number, string>({ capacity: 7 }).capacity).toBe(7);
+    expect(new ReplayBuffer<number, string>().capacity).toBe(1000);
+  });
+
+  it('reports isEmpty before and after the first store', () => {
+    const buffer = new ReplayBuffer<number, string>({ capacity: 2 });
+    expect(buffer.isEmpty).toBe(true);
+    const [transition] = makeTransitions(1);
+    buffer.store(transition);
+    expect(buffer.isEmpty).toBe(false);
+    buffer.clear();
+    expect(buffer.isEmpty).toBe(true);
+  });
+
+  it('throws when the capacity is not a positive integer', () => {
+    const message = 'ReplayBuffer capacity must be a positive integer.';
+    expect(() => new ReplayBuffer<number, string>({ capacity: 0 })).toThrowError(message);
+    expect(() => new ReplayBuffer<number, string>({ capacity: 2.5 })).toThrowError(message);
+  });
+});

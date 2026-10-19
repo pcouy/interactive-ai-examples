@@ -1,19 +1,42 @@
 import type { Transition } from './q-learning.js';
 
+/** Constructor options for {@link ReplayBuffer}. */
 export interface ReplayBufferOptions {
-  capacity?: number; // default 1000
-  rng?: () => number; // default Math.random
+  /**
+   * Maximum number of stored transitions. Default 1000. It must be a positive
+   * integer.
+   */
+  capacity?: number;
+  /**
+   * Random source used to draw a batch. Default `Math.random`. It must return a
+   * number in `[0, 1)`. Inject a seeded source for deterministic runs.
+   */
+  rng?: () => number;
 }
 
+/**
+ * Fixed-capacity experience buffer.
+ *
+ * `store` appends a transition and evicts the oldest entry when the capacity is
+ * full. `sample` returns a newest-anchored batch: the newest transition is
+ * always last, and the rest are drawn uniformly WITHOUT replacement from the
+ * older entries, so the batch length is `min(max(1, batchSize), size)`.
+ *
+ * Inject `rng` for deterministic runs. It must return a number in `[0, 1)`.
+ */
 export class ReplayBuffer<O, A> {
-  private readonly capacity: number;
+  private readonly capacityLimit: number;
 
   private readonly rng: () => number;
 
   private readonly entries: Transition<O, A>[] = [];
 
   constructor(options: ReplayBufferOptions = {}) {
-    this.capacity = options.capacity ?? 1000;
+    const capacity = options.capacity ?? 1000;
+    if (!Number.isInteger(capacity) || capacity <= 0) {
+      throw new Error('ReplayBuffer capacity must be a positive integer.');
+    }
+    this.capacityLimit = capacity;
     this.rng = options.rng ?? Math.random;
   }
 
@@ -21,9 +44,19 @@ export class ReplayBuffer<O, A> {
     return this.entries.length;
   }
 
+  /** Maximum number of stored transitions. */
+  get capacity(): number {
+    return this.capacityLimit;
+  }
+
+  /** True when the buffer holds no transition. */
+  get isEmpty(): boolean {
+    return this.entries.length === 0;
+  }
+
   store(transition: Transition<O, A>): void {
     this.entries.push(transition);
-    while (this.entries.length > this.capacity) {
+    while (this.entries.length > this.capacityLimit) {
       this.entries.shift();
     }
   }
