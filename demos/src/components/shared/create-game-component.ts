@@ -34,6 +34,7 @@ import { createRandomAgent } from '../../core/search/random-agent.js';
 import {
   createTranspositionTable,
   SOLVED_DEPTH,
+  type TranspositionSnapshotEntry,
   type TranspositionTable,
 } from '../../core/search/transposition.js';
 import { drlTokens } from '../../styles/tokens.js';
@@ -46,7 +47,14 @@ const DEFAULT_EVALUATOR: string = 'windows';
 const DEFAULT_ROLLOUT_SAMPLES = 1;
 const AGENT_STEPS_PER_SPEED_UNIT = 32;
 const AGENT_STEP_CAP = 256;
-const TT_BROWSER_ROW_LIMIT = 200;
+/** Nombre de lignes affichées par page dans le navigateur de table. */
+const TT_BROWSER_PAGE_SIZE = 50;
+
+/** Colonnes numériques triables du navigateur : les identifiants servent de
+ * clé d'état et d'attribut `data-tt-sort` sur les en-têtes. */
+type TtSortColumn = 'score' | 'depth' | 'samples' | 'exact' | 'turn' | 'pieces';
+
+type TtSortDirection = 'asc' | 'desc';
 
 function formatScoreValue(value: number): string {
   return value.toFixed(2).replace('.', ',');
@@ -57,6 +65,67 @@ function formatDepth(value: number): string {
   return value === SOLVED_DEPTH ? '∞' : String(value);
 }
 const STEP_TURN_STEP_CAP = 100_000;
+
+function isTtSortColumn(value: string | null): value is TtSortColumn {
+  return (
+    value === 'score' ||
+    value === 'depth' ||
+    value === 'samples' ||
+    value === 'exact' ||
+    value === 'turn' ||
+    value === 'pieces'
+  );
+}
+
+/** Valeur numérique d'une entrée pour le tri. Les colonnes optionnelles
+ * absentes (`samples`, `pieces`) passent avant toute valeur présente. */
+function ttSortValue(row: TranspositionSnapshotEntry, column: TtSortColumn): number {
+  switch (column) {
+    case 'score':
+      return row.score;
+    case 'depth':
+      return row.depth;
+    case 'samples':
+      return row.samples ?? -1;
+    case 'exact':
+      return row.exact ? 1 : 0;
+    case 'turn':
+      return row.turn;
+    case 'pieces':
+      return row.pieces ?? -1;
+  }
+}
+
+/** Filtre d'abord les clés, avant tout tri ou pagination. */
+function ttFilterRows(
+  rows: readonly TranspositionSnapshotEntry[],
+  filter: string,
+): readonly TranspositionSnapshotEntry[] {
+  const needle = filter.trim().toLowerCase();
+  return needle === '' ? rows : rows.filter((row) => row.key.toLowerCase().includes(needle));
+}
+
+/** Trie ensuite la liste filtrée. `column` à `null` conserve l'ordre de
+ * `snapshot()` (par clé) : le tri par défaut du navigateur. */
+function ttSortRows(
+  rows: readonly TranspositionSnapshotEntry[],
+  column: TtSortColumn | null,
+  direction: TtSortDirection,
+): readonly TranspositionSnapshotEntry[] {
+  if (column === null) {
+    return rows;
+  }
+  const sign = direction === 'desc' ? -1 : 1;
+  // Tri stable : à valeur égale, l'ordre de `snapshot()` est conservé.
+  return [...rows].sort((a, b) => {
+    const left = ttSortValue(a, column);
+    const right = ttSortValue(b, column);
+    if (left === right) {
+      return 0;
+    }
+    return (left < right ? -1 : 1) * sign;
+  });
+}
 
 export interface GameComponentConfig<S, M> {
   readonly game: Game<S, M>;
@@ -70,6 +139,12 @@ export interface GameComponentConfig<S, M> {
   readonly heuristic: Evaluator<S, M>;
 }
 
+/** Bilan cumulé d'une série de parties : victoires par joueur puis parties nulles. */
+export interface SeriesScore {
+  readonly wins: readonly [number, number];
+  readonly draws: number;
+}
+
 export interface GameComponentApi<S, M> extends LitElement {
   readonly game: Game<S, M>;
   readonly title: string;
@@ -79,6 +154,7 @@ export interface GameComponentApi<S, M> extends LitElement {
   readonly currentState: S | null;
   readonly history: readonly S[];
   readonly gameOutcome: GameOutcome;
+  readonly seriesScore: SeriesScore;
   readonly searchStats: SearchStats | null;
   recorder: TreeRecorder<S> | null;
   players: string;
@@ -292,6 +368,11 @@ export function createGameComponent<S, M>(
           font-variant-numeric: tabular-nums;
         }
 
+        .drl-series {
+          color: var(--drl-muted);
+          font-variant-numeric: tabular-nums;
+        }
+
         .drl-banner {
           display: inline-block;
           padding: var(--drl-space-1) var(--drl-space-2);
@@ -451,6 +532,28 @@ export function createGameComponent<S, M>(
           font-size: 0.9em;
         }
 
+        .drl-tt-sort {
+          font: inherit;
+          padding: 0;
+          border: none;
+          background: none;
+          color: inherit;
+          font-weight: 700;
+          cursor: pointer;
+        }
+
+        .drl-tt-sort:hover {
+          color: var(--drl-accent);
+        }
+
+        .drl-tt-pager {
+          display: flex;
+          align-items: center;
+          gap: var(--drl-space-2);
+          padding: var(--drl-space-2) var(--drl-space-3) 0;
+          color: var(--drl-muted);
+        }
+
         .drl-tt-note {
           margin: 0 var(--drl-space-3) var(--drl-space-3);
           color: var(--drl-muted);
@@ -498,6 +601,18 @@ export function createGameComponent<S, M>(
     @state()
     private ttKeyFilter = '';
 
+    // Tri courant du navigateur de table. `null` = ordre par défaut de
+    // `snapshot()` (par clé).
+    @state()
+    private ttSortColumn: TtSortColumn | null = null;
+
+    @state()
+    private ttSortDir: TtSortDirection = 'asc';
+
+    // Page courante, base 0, appliquée après le filtre et le tri.
+    @state()
+    private ttPage = 0;
+
     private readonly tt: TranspositionTable = createTranspositionTable();
 
     // Mémo clé d'état → état, uniquement pour l'affichage des minis-plateaux
@@ -513,6 +628,12 @@ export function createGameComponent<S, M>(
     private pending: PendingSearch<S, M> | null = null;
 
     private outcome: GameOutcome = null;
+
+    // Bilan de la série en cours. Il survit aux relances automatiques ; seul le
+    // bouton Réinitialiser ou un changement d'adversaires repart de zéro.
+    private seriesWins: [number, number] = [0, 0];
+
+    private seriesDraws = 0;
 
     private lastStats: SearchStats | null = null;
 
@@ -548,6 +669,10 @@ export function createGameComponent<S, M>(
 
     get gameOutcome(): GameOutcome {
       return this.outcome;
+    }
+
+    get seriesScore(): SeriesScore {
+      return { wins: [this.seriesWins[0], this.seriesWins[1]], draws: this.seriesDraws };
     }
 
     get searchStats(): SearchStats | null {
@@ -640,9 +765,15 @@ export function createGameComponent<S, M>(
 
     protected override onReset(): void {
       this.pending = null;
+      this.resetSeries();
       this.resetGameState();
       this.emitEvent<DrlGameResetDetail<S>>('drl-game-reset', { state: this.currentState as S });
       this.requestUpdate();
+    }
+
+    private resetSeries(): void {
+      this.seriesWins = [0, 0];
+      this.seriesDraws = 0;
     }
 
     private resetGameState(): void {
@@ -654,6 +785,10 @@ export function createGameComponent<S, M>(
 
     protected override willUpdate(changed: PropertyValues<this>): void {
       super.willUpdate(changed);
+      if (changed.has('players')) {
+        // Changer d'adversaires entame une nouvelle série : le bilan repart de zéro.
+        this.resetSeries();
+      }
       if (
         changed.has('players') ||
         changed.has('depth') ||
@@ -687,6 +822,7 @@ export function createGameComponent<S, M>(
                 `
               : html`<span class="drl-banner">${this.outcomeLabel(outcome)}</span>${this.renderTtCount()}`
           }
+          ${this.renderSeriesScore()}
         </div>
         <div class="drl-toolbar">
           <button
@@ -816,16 +952,48 @@ export function createGameComponent<S, M>(
       );
     }
 
+    /** En-tête de colonne triable : le clic applique ou inverse le tri et
+     * affiche la flèche du sens actif. */
+    private renderTtSortHeader(label: string, column: TtSortColumn, title: string): TemplateResult {
+      const active = this.ttSortColumn === column;
+      const marker = active ? (this.ttSortDir === 'desc' ? ' ▼' : ' ▲') : '';
+      const ariaSort = active ? (this.ttSortDir === 'desc' ? 'descending' : 'ascending') : 'none';
+      return html`
+        <th scope="col" aria-sort=${ariaSort}>
+          <button
+            type="button"
+            class="drl-tt-sort"
+            data-tt-sort=${column}
+            title=${title}
+            @click=${this.onTtSortClick}
+          >
+            ${label}${marker}
+          </button>
+        </th>
+      `;
+    }
+
     private renderTtDialog(): TemplateResult | typeof nothing {
       if (!this.transposition) {
         return nothing;
       }
       const all = this.tt.snapshot();
-      const filter = this.ttKeyFilter.trim().toLowerCase();
-      const rows = (
-        filter === '' ? all : all.filter((row) => row.key.toLowerCase().includes(filter))
-      ).slice(0, TT_BROWSER_ROW_LIMIT);
-      const totalRows = filter === '' ? all.length : undefined;
+      // Ordre imposé : filtre, puis tri, puis tranche de page.
+      const filtered = ttFilterRows(all, this.ttKeyFilter);
+      const sorted = ttSortRows(filtered, this.ttSortColumn, this.ttSortDir);
+      // Page haute par défaut 1 : la vue reste cohérente même si la table
+      // rétrécit pendant que le dialogue est ouvert.
+      const pageCount = Math.max(1, Math.ceil(sorted.length / TT_BROWSER_PAGE_SIZE));
+      const page = Math.min(this.ttPage, pageCount - 1);
+      const start = page * TT_BROWSER_PAGE_SIZE;
+      const rows = sorted.slice(start, start + TT_BROWSER_PAGE_SIZE);
+      // Note de bas de dialogue : plage affichée et total retenu (filtré).
+      const note =
+        sorted.length === 0
+          ? 'Aucune entrée correspondante.'
+          : `Entrées ${start + 1}–${start + rows.length} sur ${sorted.length}` +
+            (sorted.length === all.length ? '' : ` (filtrées sur ${all.length})`) +
+            '.';
       return html`
         <dialog class="drl-tt-dialog" @close=${this.onCloseTtClick}>
           <header class="drl-tt-head">
@@ -863,11 +1031,20 @@ export function createGameComponent<S, M>(
                 <tr>
                   <th scope="col">Position</th>
                   <th scope="col">Clé</th>
-                  <th scope="col">Score</th>
-                  <th scope="col">Profondeur eff.</th>
-                  <th scope="col">Éch.</th>
-                  <th scope="col">Exact</th>
-                  <th scope="col">Tour</th>
+                  ${this.renderTtSortHeader('Score', 'score', 'Trier par score')}
+                  ${this.renderTtSortHeader(
+                    'Profondeur eff.',
+                    'depth',
+                    'Trier par profondeur effective',
+                  )}
+                  ${this.renderTtSortHeader('Éch.', 'samples', 'Trier par échantillons')}
+                  ${this.renderTtSortHeader('Exact', 'exact', 'Trier par exactitude')}
+                  ${this.renderTtSortHeader('Tour', 'turn', 'Trier par tour de recherche')}
+                  ${this.renderTtSortHeader(
+                    'Pièces',
+                    'pieces',
+                    'Tour intra-partie : nombre de pièces sur le plateau. Cliquer pour trier.',
+                  )}
                 </tr>
               </thead>
               <tbody>
@@ -881,24 +1058,33 @@ export function createGameComponent<S, M>(
                       <td>${row.samples ?? '–'}</td>
                       <td>${row.exact ? 'oui' : 'non'}</td>
                       <td>${row.turn}</td>
+                      <td>${row.pieces ?? '–'}</td>
                     </tr>
                   `,
                 )}
               </tbody>
             </table>
           </div>
-          ${
-            rows.length === 0
-              ? html`<p class="drl-tt-note">Aucune entrée correspondante.</p>`
-              : totalRows !== undefined && totalRows > rows.length
-                ? html`
-                    <p class="drl-tt-note">
-                      ${rows.length} sur ${totalRows} entrées affichées (limite
-                      ${TT_BROWSER_ROW_LIMIT}).
-                    </p>
-                  `
-                : nothing
-          }
+          <div class="drl-tt-pager">
+            <button
+              type="button"
+              class="drl-button"
+              ?disabled=${page === 0}
+              @click=${this.onTtPrevPage}
+            >
+              Précédent
+            </button>
+            <span>Page ${page + 1} / ${pageCount}</span>
+            <button
+              type="button"
+              class="drl-button"
+              ?disabled=${page >= pageCount - 1}
+              @click=${this.onTtNextPage}
+            >
+              Suivant
+            </button>
+          </div>
+          <p class="drl-tt-note">${note}</p>
         </dialog>
       `;
     }
@@ -906,7 +1092,8 @@ export function createGameComponent<S, M>(
     private readonly onBrowseTtClick = (): void => {
       const dialog = this.renderRoot.querySelector<HTMLDialogElement>('.drl-tt-dialog');
       if (dialog !== null && !dialog.open) {
-        this.ttKeyFilter = '';
+        // Réouverture : on repart d'un navigateur vierge (filtre, tri, page).
+        this.resetTtBrowser();
         dialog.showModal();
         // Les lignes étaient hors-champ tant que le dialogue était fermé :
         // l'observateur d'intersection est (re)créé maintenant qu'il est ouvert.
@@ -921,12 +1108,73 @@ export function createGameComponent<S, M>(
       }
     };
 
+    /** Remet le navigateur dans son état d'ouverture : aucun filtre, ordre
+     * par défaut (clé), première page. */
+    private resetTtBrowser(): void {
+      this.ttKeyFilter = '';
+      this.ttSortColumn = null;
+      this.ttSortDir = 'asc';
+      this.ttPage = 0;
+    }
+
+    /** Clic sur un en-tête triable : même colonne ⇒ sens inversé, sinon
+     * tri ascendant de la nouvelle colonne. */
+    private applyTtSort(column: TtSortColumn): void {
+      if (this.ttSortColumn === column) {
+        this.ttSortDir = this.ttSortDir === 'asc' ? 'desc' : 'asc';
+      } else {
+        this.ttSortColumn = column;
+        this.ttSortDir = 'asc';
+      }
+      // Le tri réordonne toute la liste : retour à la première page.
+      this.ttPage = 0;
+    }
+
+    private readonly onTtSortClick = (event: Event): void => {
+      const target = event.currentTarget;
+      if (!(target instanceof HTMLElement)) {
+        return;
+      }
+      const column = target.getAttribute('data-tt-sort');
+      if (isTtSortColumn(column)) {
+        this.applyTtSort(column);
+      }
+    };
+
     private readonly onTtFilterInput = (event: Event): void => {
       const input = event.target;
       if (input instanceof HTMLInputElement) {
-        this.ttKeyFilter = input.value;
+        this.setTtFilter(input.value);
       }
     };
+
+    private setTtFilter(value: string): void {
+      this.ttKeyFilter = value;
+      // Le filtre change le nombre d'entrées retenues : retour page 1.
+      this.ttPage = 0;
+    }
+
+    private readonly onTtPrevPage = (): void => {
+      // La vue borne déjà l'affichage : on borne aussi l'état pour que les
+      // deux ne divergent pas si la table rétrécit sous la page courante.
+      const page = Math.min(this.ttPage, this.ttPageCount() - 1);
+      this.ttPage = Math.max(0, page - 1);
+    };
+
+    private readonly onTtNextPage = (): void => {
+      const pageCount = this.ttPageCount();
+      const page = Math.min(this.ttPage, pageCount - 1);
+      this.ttPage = Math.min(page + 1, pageCount - 1);
+    };
+
+    private ttPageCount(): number {
+      const sorted = ttSortRows(
+        ttFilterRows(this.tt.snapshot(), this.ttKeyFilter),
+        this.ttSortColumn,
+        this.ttSortDir,
+      );
+      return Math.max(1, Math.ceil(sorted.length / TT_BROWSER_PAGE_SIZE));
+    }
 
     private readonly onCellClick = (event: DrlCellClickEvent): void => {
       const state = this.currentState;
@@ -1024,6 +1272,9 @@ export function createGameComponent<S, M>(
         return;
       }
       this.pending = null;
+      // Bilan avant l'annulation : si la partie était terminée et ne l'est plus,
+      // le résultat compté doit sortir de la série.
+      const previous = this.outcome;
       const kinds = this.playerKinds;
       const hasHuman = kinds[0] === 'human' || kinds[1] === 'human';
       let plies = 0;
@@ -1043,6 +1294,9 @@ export function createGameComponent<S, M>(
         return;
       }
       this.outcome = game.winner(state);
+      if (previous !== null && this.outcome === null) {
+        this.unrecordSeriesResult(previous);
+      }
       this.rejected = null;
       this.lastStats = null;
       // L'annulation ouvre un nouveau contexte de tour : les entrées à
@@ -1065,6 +1319,9 @@ export function createGameComponent<S, M>(
       this.states.push(next);
       this.rejected = null;
       this.outcome = game.winner(next);
+      if (this.outcome !== null) {
+        this.recordSeriesResult(this.outcome);
+      }
       this.emitEvent<DrlMovePlayedDetail<S, M>>('drl-move-played', { move, state: next, player });
       if (this.outcome === null) {
         this.startTurn();
@@ -1073,6 +1330,27 @@ export function createGameComponent<S, M>(
         this.maybeAutoRestart();
       }
       this.requestUpdate();
+    }
+
+    /** Une partie terminée alimente la série : victoire du gagnant, ou partie nulle. */
+    private recordSeriesResult(outcome: Exclude<GameOutcome, null>): void {
+      if (outcome === 'draw') {
+        this.seriesDraws += 1;
+        return;
+      }
+      this.seriesWins[outcome] += 1;
+    }
+
+    /**
+     * Inverse de `recordSeriesResult` : annuler le coup final d'une partie
+     * terminée retire son résultat de la série. Le compteur ne passe pas sous zéro.
+     */
+    private unrecordSeriesResult(outcome: Exclude<GameOutcome, null>): void {
+      if (outcome === 'draw') {
+        this.seriesDraws = Math.max(0, this.seriesDraws - 1);
+        return;
+      }
+      this.seriesWins[outcome] = Math.max(0, this.seriesWins[outcome] - 1);
     }
 
     /**
@@ -1225,6 +1503,22 @@ export function createGameComponent<S, M>(
       const count = this.ttSize;
       const plural = count > 1 ? 's' : '';
       return html`<span class="drl-search">TT : ${count} entrée${plural}</span>`;
+    }
+
+    /** Série affichée uniquement en agent contre agent (aucune attente humaine). */
+    private renderSeriesScore(): TemplateResult | typeof nothing {
+      const kinds = this.playerKinds;
+      if (kinds[0] !== 'agent' || kinds[1] !== 'agent') {
+        return nothing;
+      }
+      const { wins, draws } = this.seriesScore;
+      const [first, second] = this.playerNames;
+      return html`<span
+        class="drl-series"
+        title="Total des parties terminées de la série : victoires de chaque adversaire et parties nulles."
+      >
+        Série — ${first} ${wins[0]} · ${second} ${wins[1]} · Nulles ${draws}
+      </span>`;
     }
 
     private renderAutoRestartField(): TemplateResult | typeof nothing {

@@ -554,6 +554,196 @@ describe('persistent transposition table', () => {
   });
 });
 
+describe('TT browser sort and pagination', () => {
+  /** Ordre d'apparition des clés dans le texte aplati du dialogue. */
+  function keysInOrder(text: string, keys: readonly string[]): string[] {
+    return [...keys].sort((a, b) => text.indexOf(a) - text.indexOf(b));
+  }
+
+  /** Remplit la table avec `count` entrées aux clés ordonnées k000, k001… */
+  function fillTable(element: TicTacToeElement, count: number): void {
+    for (let index = 0; index < count; index += 1) {
+      const key = `k${String(index).padStart(3, '0')}`;
+      element.transpositionTable.store(key, { score: index, depth: index, exact: false });
+    }
+  }
+
+  it('sorts numeric columns in both directions and shows the direction marker', () => {
+    const element = createTicTacToeElement();
+    element.transposition = true;
+    element.transpositionTable.store('kc', { score: 1, depth: 2, exact: false });
+    element.transpositionTable.store('ka', { score: 3, depth: 1, exact: true });
+    element.transpositionTable.store('kb', { score: 2, depth: SOLVED_DEPTH, exact: false });
+    const keys = ['ka', 'kb', 'kc'];
+    const internals = element as unknown as {
+      renderTtDialog(): unknown;
+      ttSortColumn: string | null;
+      ttSortDir: string;
+    };
+
+    // Ordre par défaut : celui de snapshot(), trié par clé.
+    expect(keysInOrder(renderTemplateTextFlat(internals.renderTtDialog()), keys)).toEqual([
+      'ka',
+      'kb',
+      'kc',
+    ]);
+
+    internals.ttSortColumn = 'score';
+    internals.ttSortDir = 'asc';
+    let text = renderTemplateTextFlat(internals.renderTtDialog());
+    expect(keysInOrder(text, keys)).toEqual(['kc', 'kb', 'ka']);
+    expect(text).toContain('Score ▲');
+
+    internals.ttSortDir = 'desc';
+    text = renderTemplateTextFlat(internals.renderTtDialog());
+    expect(keysInOrder(text, keys)).toEqual(['ka', 'kb', 'kc']);
+    expect(text).toContain('Score ▼');
+
+    // Profondeur : ka=1, kc=2, kb=∞ (SOLVED_DEPTH).
+    internals.ttSortColumn = 'depth';
+    internals.ttSortDir = 'asc';
+    expect(keysInOrder(renderTemplateTextFlat(internals.renderTtDialog()), keys)).toEqual([
+      'ka',
+      'kc',
+      'kb',
+    ]);
+
+    internals.ttSortDir = 'desc';
+    expect(keysInOrder(renderTemplateTextFlat(internals.renderTtDialog()), keys)).toEqual([
+      'kb',
+      'kc',
+      'ka',
+    ]);
+  });
+
+  it('resets the page to 0 on a sort change, a filter change, and a browser reset', () => {
+    const element = createTicTacToeElement();
+    element.transposition = true;
+    fillTable(element, 120);
+    const internals = element as unknown as {
+      applyTtSort(column: string): void;
+      setTtFilter(value: string): void;
+      resetTtBrowser(): void;
+      ttPage: number;
+      ttSortColumn: string | null;
+      ttSortDir: string;
+      ttKeyFilter: string;
+    };
+
+    internals.ttPage = 2;
+    internals.applyTtSort('score');
+    expect(internals.ttPage).toBe(0);
+    expect(internals.ttSortColumn).toBe('score');
+    expect(internals.ttSortDir).toBe('asc');
+
+    // Deuxième clic sur la même colonne : le sens s'inverse, la page reste 0.
+    internals.applyTtSort('score');
+    expect(internals.ttSortDir).toBe('desc');
+    expect(internals.ttPage).toBe(0);
+
+    internals.ttPage = 2;
+    internals.setTtFilter('k1');
+    expect(internals.ttPage).toBe(0);
+
+    internals.ttSortColumn = 'depth';
+    internals.ttSortDir = 'desc';
+    internals.ttKeyFilter = 'k1';
+    internals.ttPage = 1;
+    internals.resetTtBrowser();
+    expect(internals.ttPage).toBe(0);
+    expect(internals.ttSortColumn).toBeNull();
+    expect(internals.ttSortDir).toBe('asc');
+    expect(internals.ttKeyFilter).toBe('');
+  });
+
+  it('paginates the rows without gap or overlap and disables the bounds', () => {
+    const element = createTicTacToeElement();
+    element.transposition = true;
+    fillTable(element, 120);
+    const internals = element as unknown as {
+      renderTtDialog(): unknown;
+      onTtPrevPage(): void;
+      onTtNextPage(): void;
+      ttPage: number;
+    };
+
+    // Page 1 : k000..k049, « Précédent » désactivé.
+    let text = renderTemplateTextFlat(internals.renderTtDialog());
+    expect(text).toContain('Page 1 / 3');
+    expect(text).toContain('k000');
+    expect(text).toContain('k049');
+    expect(text).not.toContain('k050');
+    expect(text).toContain('?disabled=true');
+    internals.onTtPrevPage();
+    expect(internals.ttPage).toBe(0);
+
+    // Page 2 : k050..k099, aucune borne atteinte.
+    internals.onTtNextPage();
+    text = renderTemplateTextFlat(internals.renderTtDialog());
+    expect(text).toContain('Page 2 / 3');
+    expect(text).toContain('k050');
+    expect(text).toContain('k099');
+    expect(text).not.toContain('k049');
+    expect(text).not.toContain('k100');
+    expect(text).not.toContain('?disabled=true');
+
+    // Page 3 : k100..k119, « Suivant » désactivé.
+    internals.onTtNextPage();
+    text = renderTemplateTextFlat(internals.renderTtDialog());
+    expect(text).toContain('Page 3 / 3');
+    expect(text).toContain('k100');
+    expect(text).toContain('k119');
+    expect(text).not.toContain('k099');
+    expect(text).toContain('?disabled=true');
+    internals.onTtNextPage();
+    expect(internals.ttPage).toBe(2);
+  });
+
+  it('clamps the page to the last one when the table shrinks under it', () => {
+    const element = createTicTacToeElement();
+    element.transposition = true;
+    fillTable(element, 120);
+    const internals = element as unknown as {
+      onTtPrevPage(): void;
+      onTtNextPage(): void;
+      ttPage: number;
+    };
+
+    // La table rétrécit à une seule page sous la page courante : l'état doit
+    // suivre la vue bornée pour que les boutons ne semblent pas morts.
+    internals.ttPage = 2;
+    element.clearTranspositionTable();
+    internals.onTtPrevPage();
+    expect(internals.ttPage).toBe(0);
+
+    internals.ttPage = 5;
+    internals.onTtNextPage();
+    expect(internals.ttPage).toBe(0);
+  });
+
+  it('shows the piece count in the Pièces column and a dash when absent', () => {
+    const element = createTicTacToeElement();
+    element.transposition = true;
+    element.transpositionTable.store('ka', {
+      score: 0,
+      depth: 0,
+      exact: true,
+      samples: 0,
+      pieces: 7,
+    });
+    element.transpositionTable.store('kb', { score: 0, depth: 0, exact: true, samples: 0 });
+
+    const internals = element as unknown as { renderTtDialog(): unknown };
+    const text = renderTemplateTextFlat(internals.renderTtDialog());
+    expect(text).toContain('Pièces');
+    // L'infobulle explique le tour intra-partie.
+    expect(text).toContain('Tour intra-partie');
+    // Cellule « Pièces » : 7 pour ka, « – » pour kb (donnée absente).
+    expect(text).toContain('<td>7</td>');
+    expect(text).toContain('<td>–</td>');
+  });
+});
+
 describe('alpha-beta vs minimax pruning', () => {
   const baseOptions = {
     mode: 'windows' as const,
@@ -700,5 +890,138 @@ describe('GameComponent auto-restart', () => {
     element.stepTurn();
     expect(element.history).toHaveLength(stalledLength);
     expect(events()).toHaveLength(0);
+  });
+});
+
+describe('GameComponent series score', () => {
+  /** Joue une suite fixe de coups pour obtenir une fin de partie déterministe. */
+  function playMoves(element: TicTacToeElement, indices: readonly number[]): void {
+    for (const index of indices) {
+      expect(element.applyMove({ index })).toBe(true);
+    }
+  }
+
+  /**
+   * Le banc neutralise `performUpdate` : on rejoue la phase `willUpdate` de Lit
+   * pour simuler la réaction du cycle réactif à un changement de propriété.
+   */
+  function runWillUpdate(element: TicTacToeElement, property: string): void {
+    const internals = element as unknown as {
+      willUpdate(changed: Map<PropertyKey, unknown>): void;
+    };
+    internals.willUpdate(new Map([[property, undefined]]));
+  }
+
+  it('counts a win for each side and a draw across finished games', () => {
+    const element = createTicTacToeElement();
+    element.players = '["agent","agent"]';
+    element.autoRestart = true;
+
+    // Croix (joueur 0) aligne la rangée du haut : 0, 1, 2.
+    playMoves(element, [0, 3, 1, 4, 2]);
+    expect(element.seriesScore).toEqual({ wins: [1, 0], draws: 0 });
+
+    // Cercles (joueur 1) aligne la rangée du milieu : 3, 4, 5.
+    playMoves(element, [0, 3, 1, 4, 8, 5]);
+    expect(element.seriesScore).toEqual({ wins: [1, 1], draws: 0 });
+
+    // Plateau plein sans alignement : partie nulle.
+    playMoves(element, [0, 4, 8, 2, 6, 3, 5, 7, 1]);
+    expect(element.seriesScore).toEqual({ wins: [1, 1], draws: 1 });
+  });
+
+  it('resets the series score on reset()', () => {
+    const element = createTicTacToeElement();
+    element.players = '["agent","agent"]';
+    element.autoRestart = true;
+    playMoves(element, [0, 3, 1, 4, 2]);
+    expect(element.seriesScore).toEqual({ wins: [1, 0], draws: 0 });
+
+    element.reset();
+    expect(element.seriesScore).toEqual({ wins: [0, 0], draws: 0 });
+  });
+
+  it('resets the series score when the players property changes', () => {
+    const element = createTicTacToeElement();
+    element.players = '["agent","agent"]';
+    element.autoRestart = true;
+    playMoves(element, [0, 3, 1, 4, 2]);
+    expect(element.seriesScore).toEqual({ wins: [1, 0], draws: 0 });
+
+    element.players = '["agent","human"]';
+    runWillUpdate(element, 'players');
+    expect(element.seriesScore).toEqual({ wins: [0, 0], draws: 0 });
+  });
+
+  it('removes the result from the series when the final move is undone', () => {
+    const element = createTicTacToeElement();
+    element.players = '["agent","agent"]';
+    playMoves(element, [0, 3, 1, 4, 2]);
+    expect(element.seriesScore).toEqual({ wins: [1, 0], draws: 0 });
+
+    const internals = element as unknown as { onUndoClick(): void };
+    internals.onUndoClick();
+    expect(element.gameOutcome).toBeNull();
+    expect(element.seriesScore).toEqual({ wins: [0, 0], draws: 0 });
+  });
+
+  it('counts a game re-finished after an undo only once', () => {
+    const element = createTicTacToeElement();
+    element.players = '["agent","agent"]';
+    playMoves(element, [0, 3, 1, 4, 2]);
+    const internals = element as unknown as { onUndoClick(): void };
+    internals.onUndoClick();
+    expect(element.seriesScore).toEqual({ wins: [0, 0], draws: 0 });
+
+    // La même partie est rejouée jusqu'au même coup gagnant : un seul résultat.
+    expect(element.applyMove({ index: 2 })).toBe(true);
+    expect(element.seriesScore).toEqual({ wins: [1, 0], draws: 0 });
+  });
+
+  it('keeps the series score across automatic restarts', () => {
+    const element = createTicTacToeElement();
+    element.players = '["agent","agent"]';
+    element.autoRestart = true;
+    playMoves(element, [0, 3, 1, 4, 2]);
+    // La relance automatique a remis le plateau à l'état initial...
+    expect(element.gameOutcome).toBeNull();
+    expect(element.history).toHaveLength(1);
+    // ... sans effacer la victoire déjà comptée.
+    expect(element.seriesScore).toEqual({ wins: [1, 0], draws: 0 });
+  });
+
+  it('accumulates one result per finished game played by the agents', () => {
+    const element = createTicTacToeElement();
+    element.players = '["agent","agent"]';
+    element.depth = 1;
+    element.autoRestart = true;
+    let finished = 0;
+    element.addEventListener('drl-game-over', () => {
+      finished += 1;
+    });
+    let guard = 200;
+    while (finished < 3 && guard > 0) {
+      element.stepTurn();
+      guard -= 1;
+    }
+    expect(guard).toBeGreaterThan(0);
+    const { wins, draws } = element.seriesScore;
+    expect(wins[0] + wins[1] + draws).toBe(3);
+  });
+
+  it('shows the series line only when both players are agents', () => {
+    const element = createTicTacToeElement();
+    const internals = element as unknown as { renderContent(): unknown };
+
+    element.players = '["agent","agent"]';
+    let text = renderTemplateTextFlat(internals.renderContent());
+    expect(text).toContain('Série');
+    expect(text).toContain('Croix 0');
+    expect(text).toContain('Cercles 0');
+    expect(text).toContain('Nulles 0');
+
+    element.players = '["human","agent"]';
+    text = renderTemplateTextFlat(internals.renderContent());
+    expect(text).not.toContain('Série');
   });
 });
