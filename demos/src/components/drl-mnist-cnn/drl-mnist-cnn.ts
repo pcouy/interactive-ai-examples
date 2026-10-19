@@ -42,6 +42,7 @@ import {
 import {
   enumerateLinks,
   filterCanvasSelector,
+  insetSegment,
   isUsableRect,
   type LineGeometry,
   type LinkEndpoint,
@@ -139,6 +140,11 @@ const MAP_CANVAS_MAX = 192;
 
 /** Rayon du pinceau de dessin, en cellules 28×28. */
 const BRUSH_RADIUS = 1.6;
+
+/** Retrait de la zone de clic transparente à chaque bout d'une liaison : la
+ * ligne visible garde ses extrémités sur les toiles, la zone de clic s'arrête
+ * avant leur bord pour ne pas capter les clics sur les toiles elles-mêmes. */
+const HIT_LINE_INSET = 6;
 
 const WHITE_RGB: readonly [number, number, number] = [255, 255, 255];
 
@@ -338,9 +344,10 @@ export function describeLinkLabel(
 /**
  * Sélecteurs des deux toiles de filtres reliées par une liaison : la toile amont
  * est le canal de sortie `inputChannel` de la couche précédente, la toile aval le
- * canal d'entrée `outputChannel` de la couche de la frontière. `filterCanvasSelector`
- * lève une `RangeError` pour des indices négatifs : la frontière 0, sans couche
- * amont, n'énumère aucune liaison.
+ * canal d'entrée `outputChannel` de la couche de la frontière.
+ * `filterCanvasSelector` lève une `RangeError` pour des indices négatifs : la
+ * frontière 0, sans couche amont, n'énumère aucune liaison, et c'est
+ * `linkGroupIndices` qui la refuse avant tout appel.
  */
 export function linkCanvasSelectors(link: LinkEndpoint): { source: string; target: string } {
   return {
@@ -352,8 +359,10 @@ export function linkCanvasSelectors(link: LinkEndpoint): { source: string; targe
 /**
  * Indices de la liaison portée par un `<g>` de ligne, lus depuis ses attributs de
  * données, ou null s'ils ne désignent pas une frontière et deux canaux valides.
- * `filterCanvasSelector` lève une `RangeError` pour un indice négatif, d'où ce
- * filtrage préalable.
+ * Une frontière plus basse que 1 est refusée : la frontière 0 relie l'image
+ * d'entrée à `conv1` et n'a pas de toile amont, donc `linkCanvasSelectors` lèverait
+ * une `RangeError` en dehors de toute protection. `filterCanvasSelector` lève
+ * aussi pour des indices négatifs ou non entiers, d'où ce filtrage préalable.
  */
 export function linkGroupIndices(group: Element): LinkEndpoint | null {
   const read = (name: string): number | null => {
@@ -367,7 +376,7 @@ export function linkGroupIndices(group: Element): LinkEndpoint | null {
   const boundary = read('data-boundary');
   const inputChannel = read('data-input-channel');
   const outputChannel = read('data-output-channel');
-  if (boundary === null || inputChannel === null || outputChannel === null) {
+  if (boundary === null || boundary < 1 || inputChannel === null || outputChannel === null) {
     return null;
   }
   return { boundary, inputChannel, outputChannel };
@@ -1027,7 +1036,8 @@ export class MnistCnn extends LitElement {
     void this.loadManifest();
     const panel = this.renderRoot.querySelector<HTMLElement>('.drl-panel--filters');
     // Le redimensionnement du panneau déplace les toiles : un `ResizeObserver`
-    // repositionne les lignes, tracées en pixels relatifs à ce panneau.
+    // repositionne les lignes, tracées en pixels relatifs au SVG qui couvre le
+    // panneau.
     if (panel && typeof ResizeObserver !== 'undefined') {
       const observer = new ResizeObserver(() => {
         this.positionFilterLinks();
@@ -1051,10 +1061,14 @@ export class MnistCnn extends LitElement {
 
   /**
    * Positionne les lignes de liaison : pour chaque `<g>`, lit les rectangles de la
-   * toile amont et de la toile aval, relatifs au panneau, puis écrit `x1`, `y1`,
+   * toile amont et de la toile aval, relatifs au SVG, puis écrit `x1`, `y1`,
    * `x2`, `y2` sur ses deux lignes. Une ligne dont un rectangle n'est pas
    * utilisable — toile absente, panneau masqué — est laissée en l'état. Ne lève
    * jamais : le rendu ne dépend pas de cette méthode.
+   *
+   * Le conteneur est le SVG, pas le panneau : le SVG est positionné sur la boîte
+   * de remplissage du panneau, pas sur sa boîte de bordure. Prendre le rectangle
+   * du panneau décalerait chaque ligne de la largeur de sa bordure.
    */
   private positionFilterLinks(): void {
     const panel = this.renderRoot.querySelector<HTMLElement>('.drl-panel--filters');
@@ -1062,34 +1076,45 @@ export class MnistCnn extends LitElement {
     if (!panel || !svg) {
       return;
     }
-    const container = panel.getBoundingClientRect();
+    const container = svg.getBoundingClientRect();
     if (!isUsableRect(container)) {
       return;
     }
     for (const group of Array.from(svg.querySelectorAll<SVGGElement>('g.drl-filter-link-group'))) {
-      const indices = linkGroupIndices(group);
-      if (!indices) {
-        continue;
-      }
-      const selectors = linkCanvasSelectors(indices);
-      const source = panel.querySelector<HTMLElement>(selectors.source);
-      const target = panel.querySelector<HTMLElement>(selectors.target);
-      if (!source || !target) {
-        continue;
-      }
-      const geometry = filterLinkGeometry(
-        source.getBoundingClientRect(),
-        target.getBoundingClientRect(),
-        container,
-      );
-      if (!geometry) {
-        continue;
-      }
-      for (const line of Array.from(group.querySelectorAll<SVGLineElement>('line'))) {
-        line.setAttribute('x1', String(geometry.x1));
-        line.setAttribute('y1', String(geometry.y1));
-        line.setAttribute('x2', String(geometry.x2));
-        line.setAttribute('y2', String(geometry.y2));
+      try {
+        const indices = linkGroupIndices(group);
+        if (!indices) {
+          continue;
+        }
+        // `linkGroupIndices` refuse désormais la frontière 0, donc cette appel ne
+        // lève plus ; le `try` garde la promesse « ne lève jamais » de la méthode.
+        const selectors = linkCanvasSelectors(indices);
+        const source = panel.querySelector<HTMLElement>(selectors.source);
+        const target = panel.querySelector<HTMLElement>(selectors.target);
+        if (!source || !target) {
+          continue;
+        }
+        const geometry = filterLinkGeometry(
+          source.getBoundingClientRect(),
+          target.getBoundingClientRect(),
+          container,
+        );
+        if (!geometry) {
+          continue;
+        }
+        for (const line of Array.from(group.querySelectorAll<SVGLineElement>('line'))) {
+          // Seule la zone de clic est raccourcie : la ligne visible garde ses
+          // extrémités exactes sur les bords des toiles.
+          const segment = line.classList.contains('drl-filter-link-hit')
+            ? insetSegment(geometry, HIT_LINE_INSET)
+            : geometry;
+          line.setAttribute('x1', String(segment.x1));
+          line.setAttribute('y1', String(segment.y1));
+          line.setAttribute('x2', String(segment.x2));
+          line.setAttribute('y2', String(segment.y2));
+        }
+      } catch {
+        // Une ligne qui ne peut pas être tracée reste dans son état courant.
       }
     }
   }

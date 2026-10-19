@@ -3,7 +3,9 @@ import type { MnistCnnFilters } from '../../core/mnist-cnn.js';
 import {
   enumerateLinks,
   filterCanvasSelector,
+  insetSegment,
   isUsableRect,
+  type LineGeometry,
   linkGeometry,
   type RectLike,
 } from './filter-links.js';
@@ -137,6 +139,67 @@ describe('linkGeometry', () => {
     // Le message nomme le rectangle fautif.
     expect(() => linkGeometry({ ...rect, width: 0 }, rect, CONTAINER)).toThrow(/source/);
     expect(() => linkGeometry(rect, { ...rect, width: 0 }, CONTAINER)).toThrow(/target/);
+  });
+});
+
+describe('insetSegment', () => {
+  it('shortens a horizontal segment at each end', () => {
+    expect(insetSegment({ x1: 0, y1: 0, x2: 100, y2: 0 }, 6)).toEqual({
+      x1: 6,
+      y1: 0,
+      x2: 94,
+      y2: 0,
+    });
+  });
+
+  it('shortens a diagonal segment along its own direction', () => {
+    // Longueur 50 : un retrait de 10 à chaque bout laisse 30.
+    expect(insetSegment({ x1: 0, y1: 0, x2: 30, y2: 40 }, 10)).toEqual({
+      x1: 6,
+      y1: 8,
+      x2: 24,
+      y2: 32,
+    });
+  });
+
+  it('shortens a reversed segment the same way, towards its own source', () => {
+    // `fromNarrow` de `linkGeometry` : la cible est à gauche de la source.
+    // Chaque extrémité recule le long du segment, sans suivre les axes.
+    const reversed: LineGeometry = { x1: 100, y1: 0, x2: 0, y2: 0 };
+    expect(insetSegment(reversed, 10)).toEqual({ x1: 90, y1: 0, x2: 10, y2: 0 });
+    // Longueur 50 : un retrait de 10 à chaque bout laisse 30.
+    const diagonal: LineGeometry = { x1: 30, y1: 40, x2: 0, y2: 0 };
+    expect(insetSegment(diagonal, 10)).toEqual({ x1: 24, y1: 32, x2: 6, y2: 8 });
+  });
+
+  it('returns a zero-length segment at the midpoint of a too short segment', () => {
+    // Moins de deux fois le retrait : les deux bouts se croisent.
+    expect(insetSegment({ x1: 10, y1: 10, x2: 15, y2: 10 }, 6)).toEqual({
+      x1: 12.5,
+      y1: 10,
+      x2: 12.5,
+      y2: 10,
+    });
+    // Exactement deux fois le retrait : les deux bouts se rejoignent au milieu.
+    expect(insetSegment({ x1: 0, y1: 0, x2: 12, y2: 0 }, 6)).toEqual({
+      x1: 6,
+      y1: 0,
+      x2: 6,
+      y2: 0,
+    });
+    // Un segment déjà nul reste nul en son milieu.
+    expect(insetSegment({ x1: 4, y1: 4, x2: 4, y2: 4 }, 6)).toEqual({
+      x1: 4,
+      y1: 4,
+      x2: 4,
+      y2: 4,
+    });
+  });
+
+  it('leaves the given segment untouched', () => {
+    const segment: LineGeometry = { x1: 3, y1: 7, x2: 33, y2: 47 };
+    insetSegment(segment, 6);
+    expect(segment).toEqual({ x1: 3, y1: 7, x2: 33, y2: 47 });
   });
 });
 

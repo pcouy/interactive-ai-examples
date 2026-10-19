@@ -605,6 +605,24 @@ describe('linkGroupIndices', () => {
       expect(linkGroupIndices(mockGroup(group))).toBeNull();
     }
   });
+
+  it('returns null for the boundary 0, which has no upstream canvas', () => {
+    // `linkCanvasSelectors(0, …)` lèverait une `RangeError` : un `<g>` qui
+    // porterait `data-boundary="0"` doit être ignoré plutôt que tracé.
+    const group = validGroup();
+    group['data-boundary'] = '0';
+    expect(linkGroupIndices(mockGroup(group))).toBeNull();
+    // Les frontières 1 à 3 restent acceptées, avec leurs deux canaux.
+    for (const boundary of [1, 2, 3]) {
+      const valid = validGroup();
+      valid['data-boundary'] = String(boundary);
+      expect(linkGroupIndices(mockGroup(valid))).toEqual({
+        boundary,
+        inputChannel: 2,
+        outputChannel: 0,
+      });
+    }
+  });
 });
 
 describe('describeWeightSelection', () => {

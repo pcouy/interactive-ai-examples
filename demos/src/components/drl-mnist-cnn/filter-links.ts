@@ -117,6 +117,33 @@ export function linkGeometry(
 }
 
 /**
+ * Raccourcit un segment de `distance` à chaque extrémité, le long du segment
+ * lui-même : les deux extrémités se rapprochent de son milieu, que la cible soit
+ * à droite ou à gauche de la source. Sert à écarter une zone de clic des bords
+ * des toiles qu'elle relie, sans déplacer la ligne visible. Un segment plus
+ * court que deux fois `distance` — y compris un point — devient un segment nul
+ * en son milieu. Renvoie un nouveau segment : `geometry` n'est pas modifié.
+ */
+export function insetSegment(geometry: LineGeometry, distance: number): LineGeometry {
+  const dx = geometry.x2 - geometry.x1;
+  const dy = geometry.y2 - geometry.y1;
+  const length = Math.hypot(dx, dy);
+  // `!(... >= ...)` couvre aussi une longueur infinie ou NaN.
+  if (!(length >= 2 * distance)) {
+    const midX = (geometry.x1 + geometry.x2) / 2;
+    const midY = (geometry.y1 + geometry.y2) / 2;
+    return { x1: midX, y1: midY, x2: midX, y2: midY };
+  }
+  const ratio = distance / length;
+  return {
+    x1: geometry.x1 + dx * ratio,
+    y1: geometry.y1 + dy * ratio,
+    x2: geometry.x2 - dx * ratio,
+    y2: geometry.y2 - dy * ratio,
+  };
+}
+
+/**
  * Sélecteur DOM stable de la toile de filtre d'une couche et d'un canal, par
  * exemple `canvas.drl-canvas--filter[data-layer="1"][data-channel="2"]`. Le
  * gabarit pose ces deux attributs de données. Lève une `RangeError` quand
