@@ -6,7 +6,7 @@
  * filtre en aval produit une sélection de poids. Ce module transforme cette
  * sélection en vue de formulaire, formate la valeur courante et applique une
  * saisie au clavier. Il n'importe ni Lit ni le DOM : il ne dépend que des types
- * du cœur `core/mnist-cnn.ts` et des aides exportées par le composant.
+ * du cœur `core/mnist-cnn.ts` et des aides du module pur `weight-selection.ts`.
  */
 
 import {
@@ -19,7 +19,7 @@ import {
   parseWeightInput,
   selectedWeightValue,
   type WeightSelection,
-} from './drl-mnist-cnn.js';
+} from './weight-selection.js';
 
 /** Vue du formulaire pour une sélection : libellé, valeur courante et texte saisi. */
 export interface WeightEditorView {
