@@ -109,8 +109,9 @@ export function filterKernelSlice(
  * à une frontière entre couches, un poids exact de noyau, ou null quand rien
  * n'est sélectionné.
  *
- * Une frontière `boundary` relie la sortie de la couche `boundary` à l'entrée de
- * la couche `boundary + 1` ; la frontière 0 relie l'image d'entrée à `conv1`.
+ * Une frontière `boundary` est l'indice de la couche de convolution aval
+ * (conv1 = 0) : la frontière `boundary` relie la couche `boundary - 1` à la
+ * couche `boundary`. La frontière 0 n'est pas produite par `enumerateLinks`.
  */
 export type WeightSelection =
   | { kind: 'link'; boundary: number; inputChannel: number; outputChannel: number }
@@ -170,7 +171,7 @@ export function applyWeightEditorEvent(
       if (
         selection !== null &&
         selection.kind === 'link' &&
-        selection.boundary === event.layer - 1 &&
+        selection.boundary === event.layer &&
         selection.outputChannel === event.outputChannel
       ) {
         return {
@@ -202,7 +203,7 @@ export function filterViewMode(
   if (
     selection !== null &&
     (selection.kind === 'link' || selection.kind === 'weight') &&
-    selection.boundary + 1 === layer &&
+    selection.boundary === layer &&
     selection.outputChannel === outputChannel
   ) {
     return { mode: 'kernel', inputChannel: selection.inputChannel };
@@ -247,7 +248,7 @@ export function filterCanvasInputChannel(
     return null;
   }
   if (selection.kind === 'link') {
-    return selection.boundary + 1 === layer && selection.outputChannel === outputChannel
+    return selection.boundary === layer && selection.outputChannel === outputChannel
       ? selection.inputChannel
       : null;
   }

@@ -314,7 +314,7 @@ describe('applyWeightEditorEvent', () => {
       inputChannel: 0,
       outputChannel: 2,
     });
-    expect(applyWeightEditorEvent(selection, filterCellEvent(2, 0, 2, 1, 0))).toEqual({
+    expect(applyWeightEditorEvent(selection, filterCellEvent(1, 0, 2, 1, 0))).toEqual({
       kind: 'weight',
       boundary: 1,
       inputChannel: 0,
@@ -325,7 +325,7 @@ describe('applyWeightEditorEvent', () => {
   });
 
   it('ignores a filter cell click without a link selection', () => {
-    expect(applyWeightEditorEvent(null, filterCellEvent(2, 0, 2, 1, 0))).toBeNull();
+    expect(applyWeightEditorEvent(null, filterCellEvent(1, 0, 2, 1, 0))).toBeNull();
   });
 
   it('ignores a filter cell click under a link of another boundary', () => {
@@ -341,7 +341,7 @@ describe('applyWeightEditorEvent', () => {
   it('replaces a weight selection with a link selection', () => {
     const selection = applyWeightEditorEvent(
       { kind: 'link', boundary: 1, inputChannel: 0, outputChannel: 2 },
-      filterCellEvent(2, 0, 2, 1, 0),
+      filterCellEvent(1, 0, 2, 1, 0),
     );
     expect(selection).toEqual({
       kind: 'weight',
@@ -364,11 +364,11 @@ describe('applyWeightEditorEvent', () => {
   it('ignores a filter cell click under a weight selection', () => {
     const selection = applyWeightEditorEvent(
       { kind: 'link', boundary: 1, inputChannel: 0, outputChannel: 2 },
-      filterCellEvent(2, 0, 2, 1, 0),
+      filterCellEvent(1, 0, 2, 1, 0),
     );
     // La frontière 1 et le canal de sortie 2 correspondent : seul le genre de la
     // sélection (poids, pas liaison) fait ignorer le clic.
-    expect(applyWeightEditorEvent(selection, filterCellEvent(2, 0, 2, 2, 2))).toEqual(selection);
+    expect(applyWeightEditorEvent(selection, filterCellEvent(1, 0, 2, 2, 2))).toEqual(selection);
   });
 });
 
@@ -378,7 +378,7 @@ describe('filterViewMode', () => {
     expect(
       filterViewMode(
         { kind: 'weight', boundary: 1, inputChannel: 0, outputChannel: 0, ky: 0, kx: 0 },
-        1,
+        2,
         0,
       ),
     ).toEqual({ mode: 'mean' });
@@ -386,9 +386,9 @@ describe('filterViewMode', () => {
 
   it('is kernel only for the canvas matching a link selection', () => {
     const selection = { kind: 'link', boundary: 1, inputChannel: 2, outputChannel: 0 } as const;
-    expect(filterViewMode(selection, 2, 0)).toEqual({ mode: 'kernel', inputChannel: 2 });
-    expect(filterViewMode(selection, 1, 0)).toEqual({ mode: 'mean' });
-    expect(filterViewMode(selection, 2, 1)).toEqual({ mode: 'mean' });
+    expect(filterViewMode(selection, 1, 0)).toEqual({ mode: 'kernel', inputChannel: 2 });
+    expect(filterViewMode(selection, 2, 0)).toEqual({ mode: 'mean' });
+    expect(filterViewMode(selection, 1, 1)).toEqual({ mode: 'mean' });
   });
 
   it('is kernel only for the canvas matching a weight selection', () => {
@@ -400,8 +400,8 @@ describe('filterViewMode', () => {
       ky: 2,
       kx: 2,
     } as const;
-    expect(filterViewMode(selection, 1, 1)).toEqual({ mode: 'kernel', inputChannel: 0 });
-    expect(filterViewMode(selection, 1, 0)).toEqual({ mode: 'mean' });
+    expect(filterViewMode(selection, 0, 1)).toEqual({ mode: 'kernel', inputChannel: 0 });
+    expect(filterViewMode(selection, 1, 1)).toEqual({ mode: 'mean' });
   });
 });
 
@@ -427,9 +427,9 @@ describe('filterCanvasInputChannel', () => {
 
   it('returns the input channel of the link that designates the canvas', () => {
     const selection = { kind: 'link', boundary: 1, inputChannel: 0, outputChannel: 2 } as const;
-    expect(filterCanvasInputChannel(selection, 2, 2)).toBe(0);
-    expect(filterCanvasInputChannel(selection, 2, 1)).toBeNull();
-    expect(filterCanvasInputChannel(selection, 1, 2)).toBeNull();
+    expect(filterCanvasInputChannel(selection, 1, 2)).toBe(0);
+    expect(filterCanvasInputChannel(selection, 1, 1)).toBeNull();
+    expect(filterCanvasInputChannel(selection, 2, 2)).toBeNull();
     expect(filterCanvasInputChannel(selection, 3, 2)).toBeNull();
   });
 
