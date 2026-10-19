@@ -35,6 +35,29 @@ describe('QLearningAgent action selection', () => {
     expect(agent.selectAction('s')).toBe('right'); // floor(0.5 * 3) = 1
     expect(agent.selectAction('s')).toBe('jump'); // floor(0.999999 * 3) = 2
   });
+
+  it('selectAction with epsilon 0 matches greedyAction once one action is strictly best', () => {
+    const make = (): QLearningAgent<string, number> =>
+      new QLearningAgent<string, number>([0, 1, 2], { epsilon: 0, rng: mulberry32(7) });
+    const a = make();
+    const b = make();
+    const observations = ['s0', 's1', 's2'];
+    for (const observation of observations) {
+      const transition: Transition<string, number> = {
+        observation,
+        action: 0,
+        reward: 1,
+        nextObservation: observation,
+        done: true,
+      };
+      a.update(transition);
+      b.update(transition);
+    }
+    for (let step = 0; step < 20; step += 1) {
+      const observation = observations[step % observations.length];
+      expect(a.selectAction(observation)).toBe(b.greedyAction(observation));
+    }
+  });
 });
 
 describe('QLearningAgent update', () => {
@@ -68,12 +91,36 @@ describe('QLearningAgent update', () => {
 });
 
 describe('QLearningAgent table access', () => {
-  it('returns 0 for unseen pairs and the first action for a greedy tie', () => {
+  it('returns 0 for unseen pairs', () => {
     const agent = new QLearningAgent<string, string>(['first', 'second']);
     expect(agent.valueOf('unknown', 'first')).toBe(0);
     expect(agent.maxValue('unknown')).toBe(0);
-    expect(agent.greedyAction('unknown')).toBe('first');
     expect(agent.qTable.size).toBe(0);
+  });
+
+  it('breaks an empty-table tie towards the first action when the rng is 0', () => {
+    const agent = new QLearningAgent<string, string>(['first', 'second'], { rng: () => 0 });
+    expect(agent.greedyAction('unknown')).toBe('first');
+  });
+
+  it('breaks an empty-table tie towards the last action when the rng is near 1', () => {
+    const agent = new QLearningAgent<string, string>(['first', 'second'], {
+      rng: () => 0.999999,
+    });
+    expect(agent.greedyAction('unknown')).toBe('second');
+  });
+
+  it('returns the strictly best action regardless of the rng', () => {
+    const agent = new QLearningAgent<string, number>([0, 1, 2], { rng: () => 0.999999 });
+    agent.update({ observation: 's', action: 1, reward: 1, nextObservation: 's', done: true });
+    expect(agent.greedyAction('s')).toBe(1);
+  });
+
+  it('breaks a partial tie uniformly at random', () => {
+    const agent = new QLearningAgent<string, number>([0, 1, 2], { rng: () => 0.999999 });
+    agent.update({ observation: 's', action: 2, reward: 1, nextObservation: 's', done: true });
+    agent.update({ observation: 's', action: 1, reward: 1, nextObservation: 's', done: true });
+    expect(agent.greedyAction('s')).toBe(2);
   });
 
   it('reset clears the table', () => {

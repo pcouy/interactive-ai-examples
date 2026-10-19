@@ -79,17 +79,27 @@ export class QLearningAgent<O, A> {
     return best;
   }
 
+  /**
+   * Returns a greedy action for `observation`.
+   * Every action whose value equals the maximal value is a candidate.
+   * The candidates are tied, so one is picked uniformly at random with `this.rng()`.
+   */
   greedyAction(observation: O): A {
-    let bestAction: A = this.actions[0];
-    let bestValue = -Infinity;
+    if (this.actions.length === 0) {
+      return this.actions[0];
+    }
+    const bestValue = this.maxValue(observation);
+    const tied: A[] = [];
     for (const action of this.actions) {
-      const value = this.valueOf(observation, action);
-      if (value > bestValue) {
-        bestValue = value;
-        bestAction = action;
+      if (this.valueOf(observation, action) === bestValue) {
+        tied.push(action);
       }
     }
-    return bestAction;
+    // A lone candidate is forced, so it is returned without consuming a draw.
+    if (tied.length === 1) {
+      return tied[0];
+    }
+    return tied[Math.floor(this.rng() * tied.length)];
   }
 
   get qTable(): ReadonlyMap<O, ReadonlyMap<A, number>> {
