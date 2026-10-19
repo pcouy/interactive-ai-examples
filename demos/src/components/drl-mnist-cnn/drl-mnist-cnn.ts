@@ -997,8 +997,14 @@ export class MnistCnn extends LitElement {
       this.runInference();
     },
     onWeightsReset: (weights) => {
-      this.weights = weights;
-      this.runInference();
+      // Une édition manuelle a déjà calculé le passage avant sur ce même
+      // objet : relancer l'inférence ici doublerait le travail sans changer
+      // le résultat. Les réinitialisations et les poids aléatoires passent
+      // un objet neuf, donc recalculent bien l'inférence.
+      if (weights !== this.weights) {
+        this.weights = weights;
+        this.runInference();
+      }
     },
     onError: (message) => {
       this.trainingError = message;
@@ -1252,9 +1258,10 @@ export class MnistCnn extends LitElement {
    */
   private readonly handleStartTraining = (): void => {
     this.trainingError = null;
-    // La run qui s'apprête à démarrer remplacera les poids affichés : toute
-    // édition manuelle antérieure cesse d'être l'origine des poids.
-    this.weightsEdited = false;
+    // L'indicateur d'édition manuelle n'est levé que si la run remplace
+    // réellement les poids affichés : `onWeightsChanged` efface l'indicateur
+    // via `clearSelection`. Si la préparation échoue, les poids ne sont pas
+    // remplacés et l'origine « Modifié » doit rester affichée.
     const initialWeights = this.manifestMatches
       ? (this.pretrainedAssets?.weights ?? this.weights)
       : this.weights;
