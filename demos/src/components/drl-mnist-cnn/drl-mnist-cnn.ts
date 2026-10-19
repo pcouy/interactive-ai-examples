@@ -1,8 +1,7 @@
 import type { TemplateResult } from 'lit';
-import { css, html } from 'lit';
+import { css, html, LitElement, nothing } from 'lit';
 import { customElement, state } from 'lit/decorators.js';
 import { repeat } from 'lit/directives/repeat.js';
-import { DemoElement } from '../../base/demo-element.js';
 import '../../ui/drl-slider.js';
 import {
   CONV_KERNEL_SIZE,
@@ -24,20 +23,67 @@ import {
   type MnistCnnWeights,
   mnistCnnParameterCount,
 } from '../../core/mnist-cnn.js';
+import { type MnistCnnAssets, parseMnistCnnManifestJson } from '../../core/mnist-cnn-assets.js';
+import {
+  createMnistCnnTfjsTrainer,
+  type MnistCnnTfjsTrainer,
+  type MnistTrainingProgress,
+} from '../../core/mnist-cnn-tfjs.js';
+import {
+  MNIST_CLASS_COUNT,
+  type MnistSample,
+  selectStratifiedIndices,
+} from '../../core/mnist-data.js';
+import { createIdxTrainSource } from '../../core/mnist-train-source.js';
 import { drlTokens } from '../../styles/tokens.js';
+import { fetchMnistCnnManifest, loadMnistGallery, loadMnistSplits } from './mnist-assets.js';
+import {
+  initialTrainingState,
+  isTrainingActive,
+  onComponentDisconnected,
+  onFiltersChanged,
+  onManifestFailed,
+  onManifestLoaded,
+  onPauseRequested,
+  onProgressReceived,
+  onRunCancelled,
+  onRunCompleted,
+  onRunStarted,
+  onWeightsReset,
+  type TrainingState,
+  trainingStateBadge,
+} from './training-state.js';
 
 /**
  * Démonstration interactive du CNN MNIST de référence (`tf-playground/mnist/train.py`) :
  * quatre convolutions 3×3 + sigmoïde, aplatissement, dense 8 + sigmoïde, dix logits.
- * L'inférence est le passage avant pur TypeScript de `core/mnist-cnn.ts` ; aucun
- * TensorFlow.js, aucun asset externe, aucune dépendance 3D. Le rendu est un
- * assemblage de canvas 2D stylés avec les jetons `drlTokens`.
  *
- * Poids : initialisation déterministe (graine fixe) via `initializeMnistCnnWeights`,
- * en attendant le modèle pré-entraîné ou l'adaptateur d'entraînement TFJS.
+ * L'inférence est le passage avant pur TypeScript de `core/mnist-cnn.ts` ; le rendu
+ * est un assemblage de canvas 2D stylés avec les jetons `drlTokens`.
+ *
+ * Poids : au premier affichage, le manifeste pré-entraîné `mnist/model-v1.json`
+ * est téléchargé et appliqué (badge « Pré-entraîné ») ; en cas d'échec, des
+ * poids déterministes (graine fixe) sont utilisés (badge « Poids déterministes »)
+ * et la page reste entièrement fonctionnelle. Le manifeste ne s'applique qu'avant
+ * la première run : une réponse tardive n'écrase jamais des poids entraînés.
+ *
+ * Entraînement : le bouton « Entraîner » charge TensorFlow.js paresseusement
+ * (aucun code TFJS avant ce clic), télécharge les jeux IDX locaux, sélectionne
+ * deux sous-ensembles stratifiés (curseurs de pourcentage) et entraîne le modèle
+ * par lots bornés, en partant des poids pré-entraînés à la première run et des
+ * poids affichés ensuite. « Pause » arrête la boucle au lot suivant ;
+ * « Réinitialiser les poids » restaure les poids initiaux. Les poids
+ * d'inférence TypeScript sont rafraîchis depuis le modèle au plus toutes les
+ * 250 ms, et toujours à la pause et en fin de course.
+ *
+ * La machine à états de l'entraînement vit dans `training-state.ts` : toute
+ * transition qui met fin à une run fait retomber le badge sur un état inactif.
+ * La galerie et les jeux IDX ne sont téléchargés ni à l'affichage ni au
+ * chargement : seule la première ouverture du sélecteur d'exemples ou le premier
+ * clic sur « Entraîner » les déclenche.
  */
 
-/** Graine de l'initialisation déterministe des poids. */
+/** Graine de l'initialisation déterministe des poids et des sélections. */
 const SEED = 42;
 
 /** Échelle d'affichage de la surface de dessin : 28 cellules × 10 px = 280 px. */
@@ -56,6 +102,28 @@ const MAP_CANVAS_MAX = 192;
 const BRUSH_RADIUS = 1.6;
 
 const WHITE_RGB: readonly [number, number, number] = [255, 255, 255];
+
+/** Taille des lots d'entraînement, même valeur que `tf-playground/mnist/train.py`. */
+const TRAIN_BATCH_SIZE = 64;
+
+/** Nombre d'époques par entraînement. */
+const TRAIN_EPOCHS = 1;
+
+/** Intervalle minimal entre deux rafraîchissements des poids d'inférence, en ms. */
+const WEIGHT_REFRESH_INTERVAL_MS = 250;
+
+/** Effectifs officiels des jeux IDX, pour estimer les sélections avant téléchargement. */
+const MNIST_TRAIN_SPLIT_SIZE = 60000;
+const MNIST_TEST_SPLIT_SIZE = 10000;
+
+/** Bornes des curseurs de pourcentage (1 à 100, pas de 1). */
+const MIN_PERCENT = 1;
+const MAX_PERCENT = 100;
+
+/** Bornes du curseur de taux d'apprentissage (pas de 0,0005). */
+const MIN_LEARNING_RATE = 0.0005;
+const MAX_LEARNING_RATE = 0.02;
+const DEFAULT_LEARNING_RATE = 0.003;
 
 const FEATURE_MAP_SIZES: readonly number[] = (() => {
   const sizes: number[] = [];
@@ -188,13 +256,60 @@ export function formatPercent(value: number): string {
   return `${value.toFixed(1).replace('.', ',')} %`;
 }
 
+/** Perte à trois décimales, format français (virgule) ; « – » si absente ou non finie. */
+export function formatLoss(value: number | null): string {
+  return value !== null && Number.isFinite(value) ? value.toFixed(3).replace('.', ',') : '–';
+}
+
+/** Durée en secondes à une décimale, format français (virgule). */
+export function formatSeconds(value: number): string {
+  return `${(value / 1000).toFixed(1).replace('.', ',')} s`;
+}
+
+/**
+ * Estimation déterministe du nombre d'exemples d'une sélection stratifiée (voir
+ * `selectStratifiedIndices`) pour un jeu de `total` exemples répartis en dix
+ * classes équilibrées : chaque classe fournit `max(1, round(total ÷ 10 × fraction))`
+ * exemples. Sert à afficher les effectifs avant le téléchargement des jeux IDX.
+ */
+export function stratifiedExampleCountEstimate(total: number, fraction: number): number {
+  if (!Number.isInteger(total) || total < MNIST_CLASS_COUNT) {
+    throw new RangeError(
+      `stratifiedExampleCountEstimate: total must be an integer of at least ${MNIST_CLASS_COUNT}, received ${String(total)}.`,
+    );
+  }
+  if (typeof fraction !== 'number' || !Number.isFinite(fraction) || fraction <= 0 || fraction > 1) {
+    throw new RangeError(
+      `stratifiedExampleCountEstimate: fraction must be a finite number in (0, 1], received ${String(fraction)}.`,
+    );
+  }
+  const perClass = total / MNIST_CLASS_COUNT;
+  return MNIST_CLASS_COUNT * Math.max(1, Math.round(perClass * fraction));
+}
+
+/** Vrai si deux tuples de filtres décrivent la même architecture. */
+function sameFilters(a: MnistCnnFilters, b: MnistCnnFilters): boolean {
+  return a[0] === b[0] && a[1] === b[1] && a[2] === b[2] && a[3] === b[3];
+}
+
 @customElement('drl-mnist-cnn')
-export class MnistCnn extends DemoElement {
+export class MnistCnn extends LitElement {
   static override styles = [
     drlTokens,
     css`
       :host {
         display: block;
+        color: var(--drl-fg);
+        font-family: var(--drl-font);
+        font-size: var(--drl-font-size);
+      }
+
+      .drl-header {
+        margin-bottom: var(--drl-space-3);
+      }
+
+      .drl-content {
+        margin-top: var(--drl-space-3);
       }
 
       .drl-status {
@@ -332,6 +447,12 @@ export class MnistCnn extends DemoElement {
         cursor: not-allowed;
       }
 
+      .drl-button.drl-primary {
+        background: var(--drl-accent);
+        border-color: var(--drl-accent);
+        color: var(--drl-surface);
+      }
+
       .drl-stats {
         display: grid;
         grid-template-columns: repeat(auto-fit, minmax(110px, minmax(0, 1fr)));
@@ -448,8 +569,77 @@ export class MnistCnn extends DemoElement {
   @state()
   private inputSource = 'Dessin';
 
-  @state()
   private drawing = false;
+
+  /** Manifeste pré-entraîné chargé (null avant la fin du téléchargement). */
+  @state()
+  private pretrainedAssets: MnistCnnAssets | null = null;
+
+  /** Raison de l'échec du manifeste, affichée dans la ligne d'état. */
+  @state()
+  private manifestError: string | null = null;
+
+  /** Galerie de dix exemples MNIST, un par classe (vide avant la fin du chargement). */
+  @state()
+  private gallerySamples: MnistSample[] = [];
+
+  @state()
+  private galleryLoading = false;
+
+  /** Raison de l'échec du chargement de la galerie, affichée sous le sélecteur. */
+  @state()
+  private galleryError: string | null = null;
+
+  /** Libellé du chiffre attendu quand l'entrée est un exemple de la galerie. */
+  private galleryLabel: number | null = null;
+
+  @state()
+  private trainingState: TrainingState = 'deterministic';
+
+  /** Vrai pendant la préparation d'une run (téléchargement, création du modèle). */
+  @state()
+  private startingTraining = false;
+
+  /** Vrai dès qu'une run a démarré : le manifeste ne s'applique plus. */
+  private hasStartedRun = false;
+
+  /** Vrai après `disconnectedCallback` : toute run en préparation est abandonnée. */
+  private disconnected = false;
+
+  /** Dernière erreur d'entraînement, affichée dans le panneau d'entraînement. */
+  @state()
+  private trainingError: string | null = null;
+
+  @state()
+  private batchesProcessed = 0;
+
+  @state()
+  private loss: number | null = null;
+
+  @state()
+  private validationAccuracy: number | null = null;
+
+  @state()
+  private elapsedMs = 0;
+
+  /** Vrai dès le premier évènement de progression : les métriques sont affichées. */
+  @state()
+  private metricsStarted = false;
+
+  @state()
+  private trainPercent = 10;
+
+  @state()
+  private validationPercent = 10;
+
+  @state()
+  private learningRate = DEFAULT_LEARNING_RATE;
+
+  @state()
+  private trainExampleCount = stratifiedExampleCountEstimate(MNIST_TRAIN_SPLIT_SIZE, 10 / 100);
+
+  @state()
+  private validationExampleCount = stratifiedExampleCountEstimate(MNIST_TEST_SPLIT_SIZE, 10 / 100);
 
   /** Dessin des toiles reporté après la prochaine mise à jour du DOM Lit. */
   private canvasesDirty = true;
@@ -468,32 +658,521 @@ export class MnistCnn extends DemoElement {
     negative: readonly [number, number, number];
   } | null = null;
 
+  /** Entraîneur TensorFlow.js de la run courante (null hors entraînement). */
+  private trainer: MnistCnnTfjsTrainer | null = null;
+
+  /** Promesse de la run courante ; rejetée ou non, elle se termine en un lot. */
+  private trainRunPromise: Promise<MnistTrainingProgress> | null = null;
+
+  /** Identifiant de run : incrémenté pour invalider les rappels d'une run arrêtée. */
+  private trainRunId = 0;
+
+  /** Horodatage du dernier rafraîchissement des poids d'inférence. */
+  private lastWeightsRefreshAt = 0;
+
+  /** Jeux IDX chargés (mis en cache par `loadMnistSplits`), ou null. */
+  private splits: Awaited<ReturnType<typeof loadMnistSplits>> | null = null;
+
   private get predictedClass(): number | null {
     return this.result ? argmaxIndex(this.result.probabilities) : null;
+  }
+
+  private get badgeText(): string {
+    return trainingStateBadge(this.trainingState);
+  }
+
+  /** Origine des poids affichée dans les statistiques. */
+  private get weightsOrigin(): string {
+    if (
+      this.metricsStarted &&
+      (this.trainingState === 'training' ||
+        this.trainingState === 'paused' ||
+        this.trainingState === 'trained')
+    ) {
+      return 'Entraîné';
+    }
+    return this.pretrainedAssets !== null ? 'Pré-entraîné' : 'Déterministes';
+  }
+
+  /** Vrai si le manifeste chargé correspond à l'architecture courante. */
+  private get manifestMatches(): boolean {
+    return (
+      this.pretrainedAssets !== null &&
+      sameFilters(this.pretrainedAssets.config.filters, this.filterCounts)
+    );
+  }
+
+  private get inputHint(): string {
+    if (this.galleryLabel === null) {
+      return "Dessinez un chiffre à la souris ou au doigt ; l'inférence se met à jour pendant le tracé.";
+    }
+    return `Exemple de la galerie MNIST : le chiffre attendu est un ${this.galleryLabel}.`;
   }
 
   private get statusLine(): string {
     const predicted = this.predictedClass;
     const parameters = mnistCnnParameterCount(this.filterCounts);
-    const label = predicted === null ? '–' : String(predicted);
-    return `Entrée : ${this.inputSource} · ${parameters} paramètres · classe prédite : ${label}`;
+    const parts = [
+      `Entrée : ${this.inputSource}`,
+      `${parameters} paramètres`,
+      `classe prédite : ${predicted === null ? '–' : String(predicted)}`,
+    ];
+    if (this.metricsStarted) {
+      parts.push(
+        `lots : ${this.batchesProcessed}`,
+        `perte : ${formatLoss(this.loss)}`,
+        `précision validation (sous-ensemble) : ${
+          this.validationAccuracy === null ? '–' : formatPercent(this.validationAccuracy * 100)
+        }`,
+        `temps : ${formatSeconds(this.elapsedMs)}`,
+      );
+    }
+    parts.push(
+      `entraînement : ${this.trainExampleCount} exemples`,
+      `validation : ${this.validationExampleCount} exemples`,
+    );
+    if (this.manifestError !== null) {
+      parts.push(`manifeste inaccessible : ${this.manifestError}`);
+    }
+    return parts.join(' · ');
   }
 
   protected override firstUpdated(): void {
     this.runInference();
+    void this.loadManifest();
   }
 
-  override step(): void {
+  override connectedCallback(): void {
+    super.connectedCallback();
+    this.disconnected = false;
+  }
+
+  override disconnectedCallback(): void {
+    this.disconnected = true;
+    super.disconnectedCallback();
+    this.trainingState = onComponentDisconnected(this.trainingState);
+    // L'arrêt est asynchrone (un lot au plus) ; les rappels de la run sont
+    // invalidés par l'incrément de `trainRunId` dans `settleTraining`.
+    void this.settleTraining();
+  }
+
+  /**
+   * Télécharge le manifeste pré-entraîné et l'applique si l'architecture
+   * courante correspond. Tout échec laisse des poids déterministes et un
+   * message clair : la page reste fonctionnelle. Le manifeste ne s'applique
+   * qu'avant la première run : une réponse tardive n'écrase jamais des poids
+   * entraînés.
+   */
+  private async loadManifest(): Promise<void> {
+    try {
+      const text = await fetchMnistCnnManifest();
+      const assets = parseMnistCnnManifestJson(text);
+      this.pretrainedAssets = assets;
+      this.manifestError = null;
+      const matches = sameFilters(assets.config.filters, this.filterCounts);
+      const next = onManifestLoaded(this.trainingState, matches);
+      if (next !== this.trainingState) {
+        this.trainingState = next;
+        this.applyPretrainedWeights();
+      }
+    } catch (error) {
+      this.manifestError = (error as Error).message;
+      this.trainingState = onManifestFailed(this.trainingState);
+    }
+  }
+
+  /** Applique les poids du manifeste si le tuple de filtres correspond. */
+  private applyPretrainedWeights(): void {
+    if (this.pretrainedAssets === null) {
+      return;
+    }
+    if (!sameFilters(this.pretrainedAssets.config.filters, this.filterCounts)) {
+      return;
+    }
+    this.weights = this.pretrainedAssets.weights;
     this.runInference();
   }
 
-  protected override onReset(): void {
-    // Remise à zéro de l'état d'entraînement : les poids déterministes sont
-    // régénérés avec la graine fixe et l'inférence est recalculée. Le dessin
-    // de l'utilisateur est conservé.
-    this.weights = initializeMnistCnnWeights({ filters: this.filterCounts }, SEED);
-    this.runInference();
+  /**
+   * Charge la galerie de dix exemples (un par classe) et les jeux IDX, qui
+   * servent aussi à afficher les effectifs exacts des sélections. Tout échec
+   * laisse le sélecteur avec l'option de recharger et un message :
+   * l'inférence reste utilisable.
+   */
+  private async loadGallery(): Promise<void> {
+    if (this.galleryLoading) {
+      return;
+    }
+    this.galleryLoading = true;
+    try {
+      this.splits = await loadMnistSplits();
+      const gallery = await loadMnistGallery();
+      const samples: MnistSample[] = [];
+      for (let index = 0; index < gallery.count; index += 1) {
+        samples.push({
+          count: 1,
+          images: gallery.images.subarray(
+            index * MNIST_INPUT_LENGTH,
+            (index + 1) * MNIST_INPUT_LENGTH,
+          ),
+          labels: gallery.labels.subarray(index, index + 1),
+        });
+      }
+      this.gallerySamples = samples;
+      this.galleryError = null;
+      this.updateExampleCounts();
+    } catch (error) {
+      this.galleryError = (error as Error).message;
+    } finally {
+      this.galleryLoading = false;
+    }
   }
+
+  /**
+   * Recalcule les effectifs affichés : exactement depuis les jeux IDX quand ils
+   * sont chargés, par estimation sur les effectifs officiels sinon.
+   */
+  private updateExampleCounts(): void {
+    const trainFraction = this.trainPercent / 100;
+    const validationFraction = this.validationPercent / 100;
+    if (this.splits !== null) {
+      this.trainExampleCount = selectStratifiedIndices(this.splits.train, {
+        fraction: trainFraction,
+        seed: SEED,
+      }).length;
+      this.validationExampleCount = selectStratifiedIndices(this.splits.test, {
+        fraction: validationFraction,
+        seed: SEED,
+      }).length;
+    } else {
+      this.trainExampleCount = stratifiedExampleCountEstimate(
+        MNIST_TRAIN_SPLIT_SIZE,
+        trainFraction,
+      );
+      this.validationExampleCount = stratifiedExampleCountEstimate(
+        MNIST_TEST_SPLIT_SIZE,
+        validationFraction,
+      );
+    }
+  }
+
+  /**
+   * Lance un entraînement : charge les jeux IDX, sélectionne les deux
+   * sous-ensembles stratifiés, crée l'entraîneur (chargement paresseux de
+   * TensorFlow.js), y pousse les poids de départ et démarre la boucle par lots
+   * bornés. La préparation est abandonnée après chaque `await` dès que la
+   * run n'est plus active (pause, curseur changé, déconnexion) ; le premier
+   * abandon possible est la déconnexion, l'état n'étant pas encore `training`.
+   */
+  private async startTraining(): Promise<void> {
+    if (this.startingTraining || this.disconnected) {
+      return;
+    }
+    this.startingTraining = true;
+    this.trainingError = null;
+    try {
+      await this.settleTraining();
+      // Point de départ : le bouton « Entraîner » est désactivé pendant une
+      // run, donc l'état est inactif ici et une run peut démarrer. Seule la
+      // déconnexion peut abandonner à ce point — une assertion « run active »
+      // échouerait ici, l'état ne passe à `training` qu'avec `onRunStarted`,
+      // juste après.
+      if (this.disconnected) {
+        return;
+      }
+      this.trainingState = onRunStarted(this.trainingState);
+      // Poids de départ évalués AVANT le drapeau : la première run part des
+      // poids pré-entraînés du manifeste, les suivantes des poids affichés.
+      const startingWeights = this.initialWeightsForRun();
+      this.hasStartedRun = true;
+      this.resetMetrics();
+      const splits = await loadMnistSplits();
+      this.assertRunActive();
+      this.splits = splits;
+      const trainIndices = selectStratifiedIndices(splits.train, {
+        fraction: this.trainPercent / 100,
+        seed: SEED,
+      });
+      const validationIndices = selectStratifiedIndices(splits.test, {
+        fraction: this.validationPercent / 100,
+        seed: SEED,
+      });
+      this.trainExampleCount = trainIndices.length;
+      this.validationExampleCount = validationIndices.length;
+      const trainer = await createMnistCnnTfjsTrainer({
+        filters: this.filterCounts,
+        learningRate: this.learningRate,
+        batchSize: TRAIN_BATCH_SIZE,
+        seed: SEED,
+      });
+      this.assertRunActive();
+      const runId = ++this.trainRunId;
+      this.trainer = trainer;
+      // Poids de départ : pré-entraînés à la première run, poids affichés ensuite.
+      await trainer.applyWeights(startingWeights);
+      this.assertRunActive();
+      const run = trainer.train({
+        train: createIdxTrainSource(splits.train, trainIndices),
+        validation: createIdxTrainSource(splits.test, validationIndices),
+        epochs: TRAIN_EPOCHS,
+        onProgress: (progress) => this.handleTrainingProgress(runId, progress),
+      });
+      this.trainRunPromise = run;
+      const final = await run;
+      if (runId !== this.trainRunId || this.disconnected) {
+        return;
+      }
+      this.applyProgress(final);
+      // Rafraîchissement systématique en fin de course, quelle que soit la cadence.
+      await this.refreshWeightsFromTrainer();
+      this.trainingState = onRunCompleted(this.trainingState);
+      await this.settleTraining();
+    } catch (error) {
+      if (!isTrainingActive(this.trainingState)) {
+        // Abandon volontaire (pause, curseur, déconnexion) : pas d'erreur
+        // affichée, l'état a déjà été mis à jour par la transition.
+      } else {
+        this.trainingError = (error as Error).message;
+        this.trainingState = this.metricsStarted
+          ? onRunCancelled(this.trainingState)
+          : initialTrainingState(this.manifestMatches);
+      }
+      await this.settleTraining();
+    } finally {
+      this.startingTraining = false;
+    }
+  }
+
+  /** Aborte la préparation si la run n'est plus active (pause, curseur, déconnexion). */
+  private assertRunActive(): void {
+    if (this.disconnected || !isTrainingActive(this.trainingState)) {
+      throw new Error('MNIST training run aborted.');
+    }
+  }
+
+  /**
+   * Poids de départ d'une run : les poids pré-entraînés du manifeste à la
+   * première run (si l'architecture correspond), les poids affichés ensuite.
+   */
+  private initialWeightsForRun(): MnistCnnWeights {
+    if (!this.hasStartedRun && this.manifestMatches) {
+      return this.pretrainedAssets?.weights ?? this.weights;
+    }
+    return this.weights;
+  }
+
+  /**
+   * Annule la run courante, attend sa fin (au plus un lot) et libère
+   * l'entraîneur. Les rappels d'une run invalidée sont ignorés.
+   */
+  private async settleTraining(): Promise<void> {
+    this.trainRunId += 1;
+    const trainer = this.trainer;
+    const run = this.trainRunPromise;
+    this.trainer = null;
+    this.trainRunPromise = null;
+    if (trainer === null) {
+      return;
+    }
+    await trainer.cancel();
+    if (run !== null) {
+      await run.catch(() => {
+        // Un lot illisible pendant l'arrêt ne doit pas masquer l'état affiché.
+      });
+    }
+    await trainer.dispose();
+  }
+
+  /** Pause : la boucle s'arrête avant le lot suivant et les poids sont figés. */
+  private readonly handlePauseTraining = async (): Promise<void> => {
+    const trainer = this.trainer;
+    this.trainingState = onPauseRequested(this.trainingState);
+    if (trainer === null) {
+      return;
+    }
+    await trainer.cancel();
+    // Rafraîchissement systématique à la pause, quelle que soit la cadence.
+    await this.refreshWeightsFromTrainer();
+  };
+
+  /**
+   * Réinitialise les poids : l'entraînement s'arrête, les poids pré-entraînés
+   * sont restaurés si l'architecture correspond au manifeste, sinon des poids
+   * déterministes, et les métriques sont remises à zéro.
+   */
+  private readonly handleResetWeights = async (): Promise<void> => {
+    await this.settleTraining();
+    this.weights = this.weightsForCurrentFilters();
+    this.resetMetrics();
+    this.trainingState = onWeightsReset(this.trainingState, this.manifestMatches);
+    this.runInference();
+  };
+
+  /** Poids à afficher pour l'architecture courante : pré-entraînés si possible. */
+  private weightsForCurrentFilters(): MnistCnnWeights {
+    if (
+      this.pretrainedAssets !== null &&
+      sameFilters(this.pretrainedAssets.config.filters, this.filterCounts)
+    ) {
+      return this.pretrainedAssets.weights;
+    }
+    return initializeMnistCnnWeights({ filters: this.filterCounts }, SEED);
+  }
+
+  private resetMetrics(): void {
+    this.batchesProcessed = 0;
+    this.loss = null;
+    this.validationAccuracy = null;
+    this.elapsedMs = 0;
+    this.metricsStarted = false;
+  }
+
+  /**
+   * Évènement de progression : met à jour les métriques et rafraîchit les poids
+   * d'inférence au plus toutes les 250 ms. Le rafraîchissement final est fait
+   * par `startTraining` après la fin de la run.
+   */
+  private handleTrainingProgress(runId: number, progress: MnistTrainingProgress): void {
+    if (runId !== this.trainRunId) {
+      return;
+    }
+    this.trainingState = onProgressReceived(this.trainingState);
+    this.applyProgress(progress);
+    if (progress.status !== 'running') {
+      return;
+    }
+    const now = Date.now();
+    if (now - this.lastWeightsRefreshAt >= WEIGHT_REFRESH_INTERVAL_MS) {
+      this.lastWeightsRefreshAt = now;
+      void this.refreshWeightsFromTrainer();
+    }
+  }
+
+  private applyProgress(progress: MnistTrainingProgress): void {
+    this.batchesProcessed = progress.batchesProcessed;
+    this.loss = Number.isFinite(progress.loss) ? progress.loss : null;
+    this.validationAccuracy = progress.validationAccuracy;
+    this.elapsedMs = progress.elapsedMs;
+    this.metricsStarted = true;
+  }
+
+  /**
+   * Remplace les poids d'inférence TypeScript par les poids du modèle
+   * TensorFlow.js, puis recalcule le passage avant. Un échec (entraîneur
+   * disposé entre-temps, export impossible) conserve les poids affichés.
+   */
+  private async refreshWeightsFromTrainer(): Promise<void> {
+    const trainer = this.trainer;
+    if (trainer === null) {
+      return;
+    }
+    try {
+      this.weights = await trainer.exportWeights();
+      this.runInference();
+    } catch {
+      // Les poids courants restent affichés ; la prochaine fenêtre réessayera.
+    }
+  }
+
+  /**
+   * Change le nombre de filtres d'une couche : l'entraînement s'arrête et le
+   * modèle est reconstruit (poids pré-entraînés si le tuple correspond au
+   * manifeste, déterministes sinon). L'inférence est recalculée sur l'entrée
+   * courante.
+   */
+  private setFilterCount(layer: number, count: number): void {
+    const next: [number, number, number, number] = [
+      this.filterCounts[0],
+      this.filterCounts[1],
+      this.filterCounts[2],
+      this.filterCounts[3],
+    ];
+    next[layer] = clamp(Math.round(count), MIN_FILTER_COUNT, MAX_FILTER_COUNT);
+    if (next[layer] === this.filterCounts[layer]) {
+      return;
+    }
+    this.filterCounts = next;
+    this.weights = this.weightsForCurrentFilters();
+    this.runInference();
+    this.stopTrainingToIdle();
+  }
+
+  /** Change la part du jeu d'entraînement : n'agit qu'à la prochaine run. */
+  private setTrainPercent(value: number): void {
+    const percent = clamp(Math.round(value), MIN_PERCENT, MAX_PERCENT);
+    if (percent === this.trainPercent) {
+      return;
+    }
+    this.trainPercent = percent;
+    this.updateExampleCounts();
+    this.stopTrainingToIdle();
+  }
+
+  /** Change la part du jeu de validation : n'agit qu'à la prochaine run. */
+  private setValidationPercent(value: number): void {
+    const percent = clamp(Math.round(value), MIN_PERCENT, MAX_PERCENT);
+    if (percent === this.validationPercent) {
+      return;
+    }
+    this.validationPercent = percent;
+    this.updateExampleCounts();
+    this.stopTrainingToIdle();
+  }
+
+  /** Change le taux d'apprentissage : n'agit qu'à la prochaine run. */
+  private setLearningRate(value: number): void {
+    const rate = clamp(value, MIN_LEARNING_RATE, MAX_LEARNING_RATE);
+    if (rate === this.learningRate) {
+      return;
+    }
+    this.learningRate = rate;
+    this.stopTrainingToIdle();
+  }
+
+  /**
+   * Arrête la run courante et retombe à l'état initial (curseur changé) :
+   * l'entraînement ne peut pas continuer avec une configuration obsolète. Les
+   * métriques de la run interrompue sont remises à zéro.
+   */
+  private stopTrainingToIdle(): void {
+    this.trainingState = onFiltersChanged(this.trainingState, this.manifestMatches);
+    this.resetMetrics();
+    void this.settleTraining();
+  }
+
+  /** Charge les pixels d'un exemple de la galerie dans le tampon de dessin. */
+  private readonly handleGallerySelect = (event: Event): void => {
+    const target = event.currentTarget;
+    if (!(target instanceof HTMLSelectElement)) {
+      return;
+    }
+    if (target.value === '') {
+      // Option « Charger la galerie » : déclenche le téléchargement.
+      void this.loadGallery();
+      return;
+    }
+    const index = Number(target.value);
+    const sample = this.gallerySamples[index];
+    if (
+      !Number.isInteger(index) ||
+      index < 0 ||
+      index >= this.gallerySamples.length ||
+      sample === undefined
+    ) {
+      return;
+    }
+    this.inputPixels.set(sample.images);
+    this.galleryLabel = sample.labels[0];
+    this.inputSource = `Exemple MNIST (chiffre ${this.galleryLabel})`;
+    this.runInference();
+  };
+
+  /** Ouvrir le sélecteur d'exemples déclenche le chargement de la galerie. */
+  private readonly handleSampleSelectorOpen = (): void => {
+    if (this.gallerySamples.length === 0) {
+      void this.loadGallery();
+    }
+  };
 
   protected override updated(): void {
     if (this.canvasesDirty) {
@@ -509,32 +1188,12 @@ export class MnistCnn extends DemoElement {
     this.canvasesDirty = true;
   }
 
-  /**
-   * Change le nombre de filtres d'une couche : le modèle est reconstruit avec
-   * des poids déterministes et les métriques sont remises à zéro (inférence
-   * recalculée sur l'entrée courante).
-   */
-  private setFilterCount(layer: number, count: number): void {
-    const next: [number, number, number, number] = [
-      this.filterCounts[0],
-      this.filterCounts[1],
-      this.filterCounts[2],
-      this.filterCounts[3],
-    ];
-    next[layer] = clamp(Math.round(count), MIN_FILTER_COUNT, MAX_FILTER_COUNT);
-    if (next[layer] === this.filterCounts[layer]) {
-      return;
-    }
-    this.filterCounts = next;
-    this.weights = initializeMnistCnnWeights({ filters: this.filterCounts }, SEED);
-    this.runInference();
-  }
-
   private readonly onDrawPointerDown = (event: PointerEvent): void => {
     const canvas = event.currentTarget;
     if (!(canvas instanceof HTMLCanvasElement)) {
       return;
     }
+    event.preventDefault();
     this.drawing = true;
     canvas.setPointerCapture(event.pointerId);
     this.paint(canvas, event);
@@ -572,6 +1231,7 @@ export class MnistCnn extends DemoElement {
 
   private readonly handleClearDrawing = (): void => {
     this.inputPixels.fill(0);
+    this.galleryLabel = null;
     this.inputSource = 'Dessin';
     this.runInference();
   };
@@ -736,16 +1396,23 @@ export class MnistCnn extends DemoElement {
     context.drawImage(this.scratch, 0, 0, canvas.width, canvas.height);
   }
 
-  protected override renderHeader(): TemplateResult {
+  protected renderHeader(): TemplateResult {
     return html`
       <div class="drl-status">
-        <span class="drl-badge">Inférence MNIST</span>
+        <span class="drl-badge">${this.badgeText}</span>
         <span class="drl-status-text">${this.statusLine}</span>
       </div>
     `;
   }
 
-  protected override renderContent(): TemplateResult {
+  protected override render(): TemplateResult {
+    return html`
+      <div class="drl-header">${this.renderHeader()}</div>
+      <div class="drl-content">${this.renderContent()}</div>
+    `;
+  }
+
+  protected renderContent(): TemplateResult {
     const result = this.result;
     return html`
       <div class="drl-mnist-layout">
@@ -755,25 +1422,40 @@ export class MnistCnn extends DemoElement {
             class="drl-canvas drl-canvas--input"
             width=${INPUT_CANVAS_SIZE}
             height=${INPUT_CANVAS_SIZE}
+            role="img"
             aria-label="Surface de dessin 28 par 28 pixels pour un chiffre MNIST"
             @pointerdown=${this.onDrawPointerDown}
             @pointermove=${this.onDrawPointerMove}
             @pointerup=${this.onDrawPointerUp}
             @pointercancel=${this.onDrawPointerUp}
           ></canvas>
-          <p class="drl-hint">
-            Dessinez un chiffre à la souris ou au doigt ; l'inférence se met à jour pendant
-            le tracé.
-          </p>
+          <p class="drl-hint">${this.inputHint}</p>
           <div class="drl-field">
             <label class="drl-field-label" for="drl-mnist-cnn-sample">Exemple MNIST</label>
             <select
               id="drl-mnist-cnn-sample"
-              disabled
-              aria-label="Sélecteur d'exemples MNIST, bientôt disponible"
+              aria-label="Choisir un exemple MNIST de la galerie"
+              @click=${this.handleSampleSelectorOpen}
+              @change=${this.handleGallerySelect}
             >
-              <option>Exemples locaux IDX — bientôt disponible</option>
+              ${
+                this.galleryLoading
+                  ? html`<option>Chargement de la galerie…</option>`
+                  : this.gallerySamples.length === 0
+                    ? html`<option value="">Charger la galerie MNIST…</option>`
+                    : repeat(
+                        this.gallerySamples,
+                        (_sample, index) => index,
+                        (sample, index) =>
+                          html`<option value=${index}>Chiffre ${sample.labels[0]}</option>`,
+                      )
+              }
             </select>
+            ${
+              this.galleryError !== null
+                ? html`<p class="drl-hint">Galerie indisponible : ${this.galleryError}</p>`
+                : nothing
+            }
           </div>
           <div class="drl-toolbar">
             <button type="button" class="drl-button" @click=${this.handleClearDrawing}>
@@ -799,7 +1481,7 @@ export class MnistCnn extends DemoElement {
             </div>
             <div class="drl-stat">
               <p class="drl-stat-label">Poids</p>
-              <p class="drl-stat-value">Déterministes</p>
+              <p class="drl-stat-value">${this.weightsOrigin}</p>
             </div>
           </div>
 
@@ -830,8 +1512,8 @@ export class MnistCnn extends DemoElement {
 
           <h4 class="drl-panel-title">Filtres par couche</h4>
           <p class="drl-panel-subtitle">
-            Chaque curseur reconstruit le modèle (poids déterministes, graine ${SEED}) et remet
-            les métriques à zéro.
+            Chaque curseur arrête l'entraînement et reconstruit le modèle : poids pré-entraînés
+            (manifeste) si le tuple correspond, poids déterministes (graine ${SEED}) sinon.
           </p>
           <div
             class="drl-sliders"
@@ -854,6 +1536,71 @@ export class MnistCnn extends DemoElement {
               `,
             )}
           </div>
+
+          <h4 class="drl-panel-title">Entraînement</h4>
+          <p class="drl-panel-subtitle">
+            TensorFlow.js est chargé au premier clic sur Entraîner, ainsi que les exemples MNIST
+            locaux. La précision affichée est celle du sous-ensemble de validation tenu à
+            l'écart, pas celle du jeu complet.
+          </p>
+          <div class="drl-toolbar">
+            <button
+              type="button"
+              class="drl-button drl-primary"
+              ?disabled=${isTrainingActive(this.trainingState) || this.startingTraining}
+              @click=${this.startTraining}
+            >
+              Entraîner
+            </button>
+            <button
+              type="button"
+              class="drl-button"
+              ?disabled=${!isTrainingActive(this.trainingState)}
+              @click=${this.handlePauseTraining}
+            >
+              Pause
+            </button>
+            <button type="button" class="drl-button" @click=${this.handleResetWeights}>
+              Réinitialiser les poids
+            </button>
+          </div>
+          <div
+            class="drl-sliders"
+            role="group"
+            aria-label="Fraction des jeux d'entraînement et de validation, taux d'apprentissage"
+          >
+            <drl-slider
+              label="Données d'entraînement"
+              min=${MIN_PERCENT}
+              max=${MAX_PERCENT}
+              step="1"
+              .value=${this.trainPercent}
+              @drl-input=${(event: CustomEvent<number>) => this.setTrainPercent(event.detail)}
+            ></drl-slider>
+            <drl-slider
+              label="Validation"
+              min=${MIN_PERCENT}
+              max=${MAX_PERCENT}
+              step="1"
+              .value=${this.validationPercent}
+              @drl-input=${(event: CustomEvent<number>) => this.setValidationPercent(event.detail)}
+            ></drl-slider>
+            <drl-slider
+              label="Taux d'apprentissage"
+              min=${MIN_LEARNING_RATE}
+              max=${MAX_LEARNING_RATE}
+              step="0.0005"
+              .value=${this.learningRate}
+              @drl-input=${(event: CustomEvent<number>) => this.setLearningRate(event.detail)}
+            ></drl-slider>
+          </div>
+          <p class="drl-hint">
+            ${
+              this.trainingError !== null
+                ? html`Erreur d'entraînement : ${this.trainingError}`
+                : "Les curseurs de pourcentage et le taux ne prennent effet qu'au prochain entraînement."
+            }
+          </p>
         </section>
       </div>
 
@@ -884,6 +1631,7 @@ export class MnistCnn extends DemoElement {
                               data-channel=${channel}
                               width=${FILTER_CANVAS_SIZE}
                               height=${FILTER_CANVAS_SIZE}
+                              role="img"
                               aria-label="Filtre ${name}, canal de sortie ${channel + 1}"
                             ></canvas>
                             <figcaption>sortie ${channel + 1}</figcaption>
@@ -925,6 +1673,7 @@ export class MnistCnn extends DemoElement {
                               data-channel=${channel}
                               width=${MAP_CANVAS_SIZES[layer]}
                               height=${MAP_CANVAS_SIZES[layer]}
+                              role="img"
                               aria-label="Carte de caractéristiques ${featureMap.name}, canal ${channel + 1}"
                             ></canvas>
                             <figcaption>canal ${channel + 1}</figcaption>

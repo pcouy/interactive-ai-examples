@@ -3,14 +3,39 @@ import {
   argmaxIndex,
   brushStrength,
   filterKernelMean,
+  formatLoss,
   formatPercent,
+  formatSeconds,
   hexToRgb,
   mixRgb,
   paintDisc,
+  pointerToCell,
+  stratifiedExampleCountEstimate,
 } from './drl-mnist-cnn.js';
 
 function blankPixels(): Float32Array {
   return new Float32Array(784);
+}
+
+/** Toile simulée avec un rectangle fixe, pour tester `pointerToCell` sans DOM. */
+function mockCanvas(width: number, height: number, left = 0, top = 0): HTMLCanvasElement {
+  return {
+    getBoundingClientRect: () => ({
+      left,
+      top,
+      width,
+      height,
+      right: left + width,
+      bottom: top + height,
+      x: left,
+      y: top,
+      toJSON: () => ({}),
+    }),
+  } as unknown as HTMLCanvasElement;
+}
+
+function pointer(clientX: number, clientY: number): PointerEvent {
+  return { clientX, clientY } as PointerEvent;
 }
 
 describe('brushStrength', () => {
@@ -108,5 +133,71 @@ describe('formatPercent', () => {
     expect(formatPercent(12.34)).toBe('12,3 %');
     expect(formatPercent(0)).toBe('0,0 %');
     expect(formatPercent(99.96)).toBe('100,0 %');
+  });
+});
+
+describe('pointerToCell', () => {
+  it('maps the canvas corners to the 28×28 grid corners', () => {
+    const canvas = mockCanvas(280, 280, 10, 20);
+    expect(pointerToCell(canvas, pointer(10, 20))).toEqual([0, 0]);
+    expect(pointerToCell(canvas, pointer(290, 300))).toEqual([28, 28]);
+  });
+
+  it('maps the canvas center to the grid center', () => {
+    const canvas = mockCanvas(280, 280, 10, 20);
+    expect(pointerToCell(canvas, pointer(150, 160))).toEqual([14, 14]);
+  });
+
+  it('returns null for a zero-size canvas', () => {
+    expect(pointerToCell(mockCanvas(0, 0), pointer(5, 5))).toBeNull();
+    expect(pointerToCell(mockCanvas(0, 100), pointer(5, 5))).toBeNull();
+    expect(pointerToCell(mockCanvas(100, 0), pointer(5, 5))).toBeNull();
+  });
+});
+
+describe('formatLoss', () => {
+  it('formats with three decimals and a French comma', () => {
+    expect(formatLoss(0.34567)).toBe('0,346');
+    expect(formatLoss(0)).toBe('0,000');
+  });
+
+  it('renders a dash for a null or non-finite loss', () => {
+    expect(formatLoss(null)).toBe('–');
+    expect(formatLoss(Number.NaN)).toBe('–');
+    expect(formatLoss(Number.POSITIVE_INFINITY)).toBe('–');
+  });
+});
+
+describe('formatSeconds', () => {
+  it('formats durations with one decimal and a French comma', () => {
+    expect(formatSeconds(0)).toBe('0,0 s');
+    expect(formatSeconds(1500)).toBe('1,5 s');
+    expect(formatSeconds(12345)).toBe('12,3 s');
+  });
+});
+
+describe('stratifiedExampleCountEstimate', () => {
+  it('estimates one tenth of the official split sizes', () => {
+    expect(stratifiedExampleCountEstimate(60000, 0.1)).toBe(6000);
+    expect(stratifiedExampleCountEstimate(10000, 0.1)).toBe(1000);
+  });
+
+  it('keeps at least one example per class for tiny fractions', () => {
+    expect(stratifiedExampleCountEstimate(60000, 0.001)).toBe(60);
+    expect(stratifiedExampleCountEstimate(10000, 0.001)).toBe(10);
+    expect(stratifiedExampleCountEstimate(10000, 0.01)).toBe(100);
+  });
+
+  it('returns the full size for a fraction of one', () => {
+    expect(stratifiedExampleCountEstimate(60000, 1)).toBe(60000);
+    expect(stratifiedExampleCountEstimate(10000, 1)).toBe(10000);
+  });
+
+  it('rejects invalid totals and fractions', () => {
+    expect(() => stratifiedExampleCountEstimate(5, 0.1)).toThrow(RangeError);
+    expect(() => stratifiedExampleCountEstimate(1.5, 0.1)).toThrow(RangeError);
+    expect(() => stratifiedExampleCountEstimate(60000, 0)).toThrow(RangeError);
+    expect(() => stratifiedExampleCountEstimate(60000, 1.5)).toThrow(RangeError);
+    expect(() => stratifiedExampleCountEstimate(60000, Number.NaN)).toThrow(RangeError);
   });
 });

@@ -5,11 +5,10 @@
  * seulement), dropout 0.2, aplatissement, dense 8 + sigmoïde, puis dix logits.
  * Perte d'entropie croisée softmax, optimiseur Adam au pas 3e-3.
  *
- * Ce module n'importe TensorFlow.js ni le DOM au niveau statique : les imports
- * de `@tensorflow/tfjs` et du contrat `mnist-cnn.ts` sont des imports de types,
- * effacés à la compilation. Seul `createMnistCnnTfjsTrainer` charge réellement
- * TensorFlow.js, par import dynamique. Vite peut donc isoler la bibliothèque
- * dans un chunk paresseux distinct.
+ * Ce module n'importe ni TensorFlow.js ni le DOM au niveau statique : seul
+ * `@tensorflow/tfjs` est importé dynamiquement, par `createMnistCnnTfjsTrainer`.
+ * Le contrat `mnist-cnn.ts` est importé statiquement (le composant l'importe
+ * déjà statiquement) : Vite isole TensorFlow.js dans un chunk paresseux distinct.
  *
  * L'entraînement est asynchrone et borné : un tampon circulaire garde au plus
  * `prefetchDepth` lots matérialisés d'avance. La boucle prend le plus ancien,
@@ -30,10 +29,11 @@
 
 import type { AdamOptimizer, Sequential, Tensor, Variable } from '@tensorflow/tfjs';
 import type { MnistCnnFilters, MnistCnnLayerWeights, MnistCnnWeights } from './mnist-cnn.js';
+import * as core from './mnist-cnn.js';
 import type { MnistSample } from './mnist-data.js';
 
 type TfModule = typeof import('@tensorflow/tfjs');
-type CoreModule = typeof import('./mnist-cnn.js');
+type CoreModule = typeof core;
 type TfLayer = Sequential['layers'][number];
 
 /** Fraction d'unités désactivées pendant l'entraînement (`Dropout(p=0.2)`). */
@@ -402,6 +402,79 @@ function readLayerWeights(layer: TfLayer): MnistCnnLayerWeights {
   };
 }
 
+const WEIGHT_LAYER_NAMES = ['conv1', 'conv2', 'conv3', 'conv4', 'dense1', 'dense2'] as const;
+type WeightLayerName = (typeof WEIGHT_LAYER_NAMES)[number];
+
+interface WeightLayerShape {
+  readonly kernel: number;
+  readonly bias: number;
+}
+
+/** Longueurs attendues de chaque noyau et biais pour un tuple de filtres. */
+function weightLayerShapes(filters: MnistCnnFilters): Record<WeightLayerName, WeightLayerShape> {
+  const convShapes: WeightLayerShape[] = [];
+  let inputSize = core.MNIST_INPUT_SIZE;
+  let inputChannels = 1;
+  for (let layer = 0; layer < filters.length; layer += 1) {
+    const outputSize = core.convOutputLength(
+      inputSize,
+      core.CONV_STRIDES[layer],
+      core.CONV_PADDINGS[layer],
+    );
+    const outputChannels = filters[layer];
+    convShapes.push({
+      kernel: core.CONV_KERNEL_SIZE * core.CONV_KERNEL_SIZE * inputChannels * outputChannels,
+      bias: outputChannels,
+    });
+    inputSize = outputSize;
+    inputChannels = outputChannels;
+  }
+  const denseInputLength = inputSize * inputSize * inputChannels;
+  return {
+    conv1: convShapes[0],
+    conv2: convShapes[1],
+    conv3: convShapes[2],
+    conv4: convShapes[3],
+    dense1: { kernel: denseInputLength * core.HIDDEN_DENSE_SIZE, bias: core.HIDDEN_DENSE_SIZE },
+    dense2: { kernel: core.HIDDEN_DENSE_SIZE * core.LOGIT_COUNT, bias: core.LOGIT_COUNT },
+  };
+}
+
+/**
+ * Rejette un jeu de poids qui ne correspond pas au tuple de filtres de la
+ * configuration : longueurs de noyau ou de biais incorrectes, ou valeur non
+ * finie. Les formes sont celles de `weightLayerShapes`.
+ */
+function assertWeightsForFilters(weights: MnistCnnWeights, filters: MnistCnnFilters): void {
+  const shapes = weightLayerShapes(filters);
+  const layers: ReadonlyArray<readonly [WeightLayerName, MnistCnnLayerWeights, WeightLayerShape]> =
+    [
+      ['conv1', weights.conv1, shapes.conv1],
+      ['conv2', weights.conv2, shapes.conv2],
+      ['conv3', weights.conv3, shapes.conv3],
+      ['conv4', weights.conv4, shapes.conv4],
+      ['dense1', weights.dense1, shapes.dense1],
+      ['dense2', weights.dense2, shapes.dense2],
+    ];
+  for (const [name, layer, shape] of layers) {
+    if (layer.kernel.length !== shape.kernel || layer.bias.length !== shape.bias) {
+      throw new RangeError(
+        `MNIST TFJS ${name} weights do not match the ${JSON.stringify(filters)} filter tuple.`,
+      );
+    }
+    for (const value of layer.kernel) {
+      if (!Number.isFinite(value)) {
+        throw new RangeError(`MNIST TFJS ${name} kernel must contain only finite values.`);
+      }
+    }
+    for (const value of layer.bias) {
+      if (!Number.isFinite(value)) {
+        throw new RangeError(`MNIST TFJS ${name} bias must contain only finite values.`);
+      }
+    }
+  }
+}
+
 /**
  * Entraîneur asynchrone du CNN MNIST sur TensorFlow.js.
  *
@@ -679,6 +752,77 @@ export class MnistCnnTfjsTrainer {
   }
 
   /**
+   * Remplace les poids du modèle par un jeu `MnistCnnWeights` du core, puis
+   * recrée l'optimiseur pour repartir de moments Adam à zéro.
+   *
+   * Les noyaux de convolution du core sont déjà en HWIO
+   * `[kernelY][kernelX][canalEntrée][canalSortie]` et les noyaux denses déjà en
+   * `[caractéristiqueEntrée][caractéristiqueSortie]` : aucune conversion de
+   * disposition n'est nécessaire. `setWeights` recopie les valeurs dans les
+   * variables du modèle, donc les tenseurs temporaires sont disposés ici.
+   *
+   * Rejette un entraîneur disposé et un jeu de poids dont le tuple de filtres
+   * ne correspond pas à la configuration.
+   */
+  async applyWeights(weights: MnistCnnWeights): Promise<void> {
+    this.assertUsable();
+    assertWeightsForFilters(weights, this.config.filters);
+    const model = this.ensureModel();
+    const shapes = weightLayerShapes(this.config.filters);
+    const values: Tensor[] = [];
+    try {
+      values.push(
+        this.tf.tensor(weights.conv1.kernel, [
+          core.CONV_KERNEL_SIZE,
+          core.CONV_KERNEL_SIZE,
+          1,
+          this.config.filters[0],
+        ]),
+        this.tf.tensor(weights.conv1.bias, [this.config.filters[0]]),
+        this.tf.tensor(weights.conv2.kernel, [
+          core.CONV_KERNEL_SIZE,
+          core.CONV_KERNEL_SIZE,
+          this.config.filters[0],
+          this.config.filters[1],
+        ]),
+        this.tf.tensor(weights.conv2.bias, [this.config.filters[1]]),
+        this.tf.tensor(weights.conv3.kernel, [
+          core.CONV_KERNEL_SIZE,
+          core.CONV_KERNEL_SIZE,
+          this.config.filters[1],
+          this.config.filters[2],
+        ]),
+        this.tf.tensor(weights.conv3.bias, [this.config.filters[2]]),
+        this.tf.tensor(weights.conv4.kernel, [
+          core.CONV_KERNEL_SIZE,
+          core.CONV_KERNEL_SIZE,
+          this.config.filters[2],
+          this.config.filters[3],
+        ]),
+        this.tf.tensor(weights.conv4.bias, [this.config.filters[3]]),
+        this.tf.tensor(weights.dense1.kernel, [
+          shapes.dense1.kernel / core.HIDDEN_DENSE_SIZE,
+          core.HIDDEN_DENSE_SIZE,
+        ]),
+        this.tf.tensor(weights.dense1.bias, [core.HIDDEN_DENSE_SIZE]),
+        this.tf.tensor(weights.dense2.kernel, [core.HIDDEN_DENSE_SIZE, core.LOGIT_COUNT]),
+        this.tf.tensor(weights.dense2.bias, [core.LOGIT_COUNT]),
+      );
+      model.setWeights(values);
+    } finally {
+      for (const value of values) {
+        value.dispose();
+      }
+    }
+    // Les moments Adam de l'ancien jeu de poids sont périmés : on recrée
+    // l'optimiseur pour repartir de moments à zéro.
+    if (this.optimizer !== null) {
+      this.optimizer.dispose();
+    }
+    this.optimizer = this.tf.train.adam(this.config.learningRate);
+  }
+
+  /**
    * Retourne les probabilités softmax (count × 10, ligne-major) pour
    * l'affichage. Le dropout est désactivé.
    */
@@ -876,13 +1020,13 @@ export class MnistCnnTfjsTrainer {
 }
 
 /**
- * Charge TensorFlow.js et le contrat `mnist-cnn.ts` dynamiquement, puis
- * construit un entraîneur. C'est le seul point d'entrée qui charge
- * TensorFlow.js : le graphe d'imports statique du module reste léger.
+ * Charge TensorFlow.js dynamiquement, puis construit un entraîneur. C'est le
+ * seul point d'entrée qui charge TensorFlow.js : le graphe d'imports statique
+ * du module reste léger (le contrat `mnist-cnn.ts` est importé statiquement).
  */
 export async function createMnistCnnTfjsTrainer(
   config: MnistCnnTrainingConfig,
 ): Promise<MnistCnnTfjsTrainer> {
-  const [tf, core] = await Promise.all([import('@tensorflow/tfjs'), import('./mnist-cnn.js')]);
+  const tf = await import('@tensorflow/tfjs');
   return new MnistCnnTfjsTrainer(tf, core, config);
 }

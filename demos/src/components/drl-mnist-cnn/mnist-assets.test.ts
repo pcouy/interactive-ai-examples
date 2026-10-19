@@ -89,6 +89,40 @@ describe('decompressGzip', () => {
   });
 });
 
+describe('isGzipPayload', () => {
+  it('returns true only for the 0x1f 0x8b prefix', async () => {
+    const { isGzipPayload } = await loadLoader();
+    expect(isGzipPayload(new Uint8Array([0x1f, 0x8b, 0x08, 0x00]))).toBe(true);
+    expect(isGzipPayload(new Uint8Array([0x00, 0x00, 0x08, 0x03]))).toBe(false);
+    expect(isGzipPayload(new Uint8Array([0x1f]))).toBe(false);
+    expect(isGzipPayload(new Uint8Array([]))).toBe(false);
+  });
+});
+
+describe('decodeIdxPayload', () => {
+  it('decompresses a gzip payload with no Content-Encoding', async () => {
+    const { decodeIdxPayload } = await loadLoader();
+    const payload = new TextEncoder().encode('mnist payload');
+    const compressed = await gzip(payload);
+    const result = await decodeIdxPayload(compressed, null);
+    expect(new TextDecoder().decode(result)).toBe('mnist payload');
+  });
+
+  it('returns an already-decompressed payload unchanged with Content-Encoding: gzip', async () => {
+    const { decodeIdxPayload } = await loadLoader();
+    const payload = new Uint8Array(new TextEncoder().encode('mnist payload'));
+    const result = await decodeIdxPayload(payload, 'gzip');
+    expect(new TextDecoder().decode(result)).toBe('mnist payload');
+  });
+
+  it('returns an already-decompressed payload unchanged with no Content-Encoding and no gzip magic', async () => {
+    const { decodeIdxPayload } = await loadLoader();
+    const payload = new Uint8Array(new TextEncoder().encode('mnist payload'));
+    const result = await decodeIdxPayload(payload, null);
+    expect(new TextDecoder().decode(result)).toBe('mnist payload');
+  });
+});
+
 describe('loadMnistSplits', () => {
   it('fetches the four local files once and returns both IDX splits', async () => {
     const assets = await gzippedAssets();
@@ -142,6 +176,25 @@ describe('loadMnistSplits', () => {
     await expect(loadMnistSplits()).rejects.toThrow(/HTTP 404/);
     await expect(loadMnistSplits()).rejects.toThrow(/npm run mnist:data/);
   });
+
+  it('raises an actionable error for an HTML error page', async () => {
+    const html = new Uint8Array(
+      new TextEncoder().encode('<html><body>404 Not Found</body></html>'),
+    );
+    const mock = vi.fn(
+      async (_input: RequestInfo | URL): Promise<Response> => new Response(html, { status: 200 }),
+    );
+    vi.stubGlobal('fetch', mock);
+    const { loadMnistSplits } = await loadLoader();
+    const error = await loadMnistSplits().then(
+      () => {
+        throw new Error('expected the load to fail');
+      },
+      (reason: Error) => reason,
+    );
+    expect(error.message).toContain('npm run mnist:data');
+    expect(error.message).toMatch(/train-images-idx3-ubyte\.gz|t10k-labels-idx1-ubyte\.gz/);
+  });
 });
 
 describe('mnistFetchErrorMessage', () => {
@@ -170,5 +223,81 @@ describe('loadMnistGallery', () => {
     expect(gallery.images).toHaveLength(10 * 28 * 28);
     expect(gallery.images).toBeInstanceOf(Float32Array);
     expect([...gallery.labels].sort((a, b) => a - b)).toEqual([0, 1, 2, 3, 4, 5, 6, 7, 8, 9]);
+  });
+});
+
+/** Manifeste minimal valide : filtres [1, 1, 1, 1], 338 paramètres. */
+function minimalManifestJson(): string {
+  const layer = (
+    kernelLength: number,
+    biasLength: number,
+  ): { kernel: number[]; bias: number[] } => ({
+    kernel: Array.from({ length: kernelLength }, (_unused, index) => index * 0.1),
+    bias: new Array<number>(biasLength).fill(0),
+  });
+  return JSON.stringify({
+    schemaVersion: 1,
+    architecture: { filters: [1, 1, 1, 1] },
+    parameterCount: 338,
+    layers: {
+      conv1: layer(9, 1),
+      conv2: layer(9, 1),
+      conv3: layer(9, 1),
+      conv4: layer(9, 1),
+      dense1: layer(200, 8),
+      dense2: layer(80, 10),
+    },
+  });
+}
+
+describe('fetchMnistCnnManifest', () => {
+  it('downloads the pretrained manifest under mnist/ and its text parses', async () => {
+    const manifest = minimalManifestJson();
+    const fetchMock = vi.fn(
+      async (_input: RequestInfo | URL): Promise<Response> =>
+        new Response(manifest, { status: 200 }),
+    );
+    vi.stubGlobal('fetch', fetchMock);
+    const { fetchMnistCnnManifest } = await loadLoader();
+    const { parseMnistCnnManifestJson } = await import('../../core/mnist-cnn-assets.js');
+
+    const text = await fetchMnistCnnManifest();
+    expect(text).toBe(manifest);
+    expect(String(fetchMock.mock.calls[0][0])).toContain('/mnist/model-v1.json');
+    expect(parseMnistCnnManifestJson(text).config.filters).toEqual([1, 1, 1, 1]);
+  });
+
+  it('reports a missing manifest clearly', async () => {
+    const fetchMock = vi.fn(
+      async (): Promise<Response> =>
+        new Response('missing', { status: 404, statusText: 'Not Found' }),
+    );
+    vi.stubGlobal('fetch', fetchMock);
+    const { fetchMnistCnnManifest } = await loadLoader();
+    const error = await fetchMnistCnnManifest().then(
+      () => {
+        throw new Error('expected the fetch to fail');
+      },
+      (reason: Error) => reason,
+    );
+    expect(error.message).toContain('model-v1.json');
+    expect(error.message).toContain('npm run mnist:data');
+    expect(error.message).toContain('HTTP 404');
+  });
+
+  it('reports a network failure clearly', async () => {
+    const fetchMock = vi.fn(async (): Promise<Response> => {
+      throw new Error('offline');
+    });
+    vi.stubGlobal('fetch', fetchMock);
+    const { fetchMnistCnnManifest } = await loadLoader();
+    const error = await fetchMnistCnnManifest().then(
+      () => {
+        throw new Error('expected the fetch to fail');
+      },
+      (reason: Error) => reason,
+    );
+    expect(error.message).toContain('model-v1.json');
+    expect(error.message).toContain('offline');
   });
 });

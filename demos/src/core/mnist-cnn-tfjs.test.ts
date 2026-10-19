@@ -5,6 +5,7 @@ import {
   DEFAULT_FILTER_COUNTS,
   forwardMnistCnn,
   HIDDEN_DENSE_SIZE,
+  initializeMnistCnnWeights,
   LOGIT_COUNT,
   MNIST_INPUT_LENGTH,
   type MnistCnnFilters,
@@ -123,9 +124,11 @@ describe('static import graph', () => {
       (match) => match[1],
     );
     expect(valueImports).not.toContain('@tensorflow/tfjs');
-    expect(valueImports).not.toContain('./mnist-cnn.js');
+    // Le contrat du core est importé statiquement ; seul TensorFlow.js reste
+    // un import dynamique.
+    expect(valueImports).toContain('./mnist-cnn.js');
     expect(code).toContain("import('@tensorflow/tfjs')");
-    expect(code).toContain("import('./mnist-cnn.js')");
+    expect(code).not.toContain("import('./mnist-cnn.js')");
   });
 
   it('does not eagerly import through side-effect imports or require', () => {
@@ -245,6 +248,97 @@ describe('weight export', () => {
     const c = await third.exportWeights();
     expect(Array.from(a.conv1.kernel)).toEqual(Array.from(b.conv1.kernel));
     expect(Array.from(a.dense2.kernel)).not.toEqual(Array.from(c.dense2.kernel));
+  });
+});
+
+describe('applyWeights', () => {
+  it('round-trips exportWeights through applyWeights and keeps predict identical', async () => {
+    const trainer = await makeTrainer(SMALL_FILTERS);
+    const sample = makeSample(4);
+    const before = await trainer.predict(sample);
+    const weights = await trainer.exportWeights();
+    await trainer.applyWeights(weights);
+    const after = await trainer.predict(sample);
+    expect(after).toHaveLength(before.length);
+    for (let index = 0; index < before.length; index += 1) {
+      expect(after[index]).toBeCloseTo(before[index], 5);
+    }
+  });
+
+  it('makes predict match the core forward pass for the applied weights', async () => {
+    const trainer = await makeTrainer(SMALL_FILTERS);
+    const weights = initializeMnistCnnWeights({ filters: SMALL_FILTERS }, 1234);
+    await trainer.applyWeights(weights);
+    const input = rampInput();
+    const probabilities = await trainer.predict({
+      count: 1,
+      images: input,
+      labels: new Uint8Array([0]),
+    });
+    const reference = forwardMnistCnn(input, weights, { filters: SMALL_FILTERS });
+    for (let index = 0; index < LOGIT_COUNT; index += 1) {
+      expect(probabilities[index]).toBeCloseTo(reference.probabilities[index], 4);
+    }
+  });
+
+  it('round-trips the default multi-channel architecture through applyWeights', async () => {
+    const trainer = await makeTrainer(DEFAULT_FILTER_COUNTS);
+    const weights = await trainer.exportWeights();
+    await trainer.applyWeights(weights);
+    const input = rampInput();
+    const probabilities = await trainer.predict({
+      count: 1,
+      images: input,
+      labels: new Uint8Array([0]),
+    });
+    const reference = forwardMnistCnn(input, weights, { filters: DEFAULT_FILTER_COUNTS });
+    for (let index = 0; index < LOGIT_COUNT; index += 1) {
+      expect(probabilities[index]).toBeCloseTo(reference.probabilities[index], 4);
+    }
+  });
+
+  it('rejects a weight set whose filter tuple does not match the config', async () => {
+    const trainer = await makeTrainer(SMALL_FILTERS);
+    const other = await makeTrainer(DEFAULT_FILTER_COUNTS);
+    const weights = await other.exportWeights();
+    await expect(trainer.applyWeights(weights)).rejects.toThrow(RangeError);
+  });
+
+  it('rejects weights with non-finite values', async () => {
+    const trainer = await makeTrainer(SMALL_FILTERS);
+    const weights = initializeMnistCnnWeights({ filters: SMALL_FILTERS }, 7);
+    weights.conv1.kernel[0] = Number.NaN;
+    await expect(trainer.applyWeights(weights)).rejects.toThrow(RangeError);
+  });
+
+  it('rejects when the trainer is disposed', async () => {
+    const trainer = await makeTrainer(SMALL_FILTERS);
+    const weights = await trainer.exportWeights();
+    await trainer.dispose();
+    await expect(trainer.applyWeights(weights)).rejects.toThrow(/disposed/);
+  });
+
+  it('resets Adam moments so a later run resumes from the applied weights', async () => {
+    const source = makeSource(16);
+    // Premier entraîneur : entraîne d'abord (moments Adam non nuls), puis
+    // applique les poids et entraîne à nouveau.
+    const first = await makeTrainer(SMALL_FILTERS, { batchSize: 4 });
+    await first.train({ train: source, epochs: 1, lossSampleEvery: 1, progressIntervalMs: 0 });
+    const applied = initializeMnistCnnWeights({ filters: SMALL_FILTERS }, 1234);
+    await first.applyWeights(applied);
+    await first.train({ train: source, epochs: 1, lossSampleEvery: 1, progressIntervalMs: 0 });
+    const afterFirst = await first.exportWeights();
+    // Second entraîneur : applique directement les mêmes poids, mêmes données,
+    // même graine. Sans réinitialisation des moments, les deux différeraient.
+    const second = await makeTrainer(SMALL_FILTERS, { batchSize: 4 });
+    await second.applyWeights(applied);
+    await second.train({ train: source, epochs: 1, lossSampleEvery: 1, progressIntervalMs: 0 });
+    const afterSecond = await second.exportWeights();
+    for (const layer of ['conv1', 'dense2'] as const) {
+      for (let index = 0; index < afterFirst[layer].kernel.length; index += 1) {
+        expect(afterFirst[layer].kernel[index]).toBeCloseTo(afterSecond[layer].kernel[index], 5);
+      }
+    }
   });
 });
 
