@@ -17,6 +17,20 @@ import './components/drl-frozen-lake/drl-frozen-lake.js';
 // @demos-imports
 
 export * from './base/demo-element.js';
+export type {
+  FrozenLakeAction,
+  FrozenLakeCell,
+  FrozenLakeCoreOptions,
+  FrozenLakeEnvOptions,
+  FrozenLakeSize,
+  FrozenLakeStats,
+  FrozenLakeStep,
+} from './core/frozen-lake.js';
+export { FROZEN_LAKE_ACTIONS, FrozenLakeCore, FrozenLakeEnv } from './core/frozen-lake.js';
+export type { QLearningOptions, Transition } from './core/q-learning.js';
+export { QLearningAgent } from './core/q-learning.js';
+export type { ReplayBufferOptions } from './core/replay-buffer.js';
+export { ReplayBuffer } from './core/replay-buffer.js';
 export { DrlCard } from './ui/drl-card.js';
 export { DrlControls } from './ui/drl-controls.js';
 export { DrlSlider } from './ui/drl-slider.js';
