@@ -96,6 +96,16 @@
             value="0.1"
           ></drl-slider>
         </p>
+        <p>
+          <drl-slider
+            data-param="replay-batch-size"
+            label="Taille de l'échantillon"
+            min="1"
+            max="64"
+            step="1"
+            value="8"
+          ></drl-slider>
+        </p>
       </drl-card>
     </main>
     <script type="module" src="/src/index.ts"></script>
@@ -135,6 +145,12 @@
       candyRewardSlider?.addEventListener('drl-input', (event) => {
         if (demo) {
           demo.candyReward = event.detail;
+        }
+      });
+      const replayBatchSizeSlider = document.querySelector('[data-param="replay-batch-size"]');
+      replayBatchSizeSlider?.addEventListener('drl-input', (event) => {
+        if (demo) {
+          demo.replayBatchSize = event.detail;
         }
       });
     </script>

@@ -1,4 +1,5 @@
-import { QLearningAgent } from './q-learning.js';
+import { QLearningAgent, type Transition } from './q-learning.js';
+import { ReplayBuffer } from './replay-buffer.js';
 
 export type FrozenLakeAction = 'left' | 'down' | 'right' | 'up';
 
@@ -286,6 +287,16 @@ export class FrozenLakeCore {
 
   private history: number[] = [];
 
+  private readonly replayOptions: {
+    enabled: boolean;
+    batchSize: number;
+    capacity: number;
+  };
+
+  private readonly replayBuffer: ReplayBuffer<number, FrozenLakeAction>;
+
+  private lastBatch: readonly Transition<number, FrozenLakeAction>[] = [];
+
   constructor(
     options: {
       size?: FrozenLakeSize;
@@ -297,6 +308,9 @@ export class FrozenLakeCore {
       initialValue?: number;
       seed?: number;
       desc?: readonly string[];
+      replayEnabled?: boolean;
+      replayBatchSize?: number;
+      replayCapacity?: number;
     } = {},
   ) {
     this.seed = options.seed ?? DEFAULT_SEED;
@@ -313,6 +327,17 @@ export class FrozenLakeCore {
       epsilon: options.epsilon,
       initialValue: options.initialValue,
       rng: mulberry32((this.seed + 1) >>> 0),
+    });
+    this.replayOptions = {
+      enabled: options.replayEnabled ?? false,
+      batchSize: options.replayBatchSize ?? 8,
+      capacity: options.replayCapacity ?? 1000,
+    };
+    // A third independent rng stream: the env uses the seed, the agent the
+    // seed plus one and the buffer the seed plus two.
+    this.replayBuffer = new ReplayBuffer<number, FrozenLakeAction>({
+      capacity: this.replayOptions.capacity,
+      rng: mulberry32((this.seed + 2) >>> 0),
     });
   }
 
@@ -397,13 +422,23 @@ export class FrozenLakeCore {
     const observation = this.env.observation;
     const action = this.agent.selectAction(observation);
     const result = this.env.step(action);
-    this.agent.update({
+    const transition: Transition<number, FrozenLakeAction> = {
       observation,
       action,
       reward: result.reward,
       nextObservation: result.observation,
       done: result.done,
-    });
+    };
+    if (this.replayOptions.enabled) {
+      this.replayBuffer.store(transition);
+      const batch = this.replayBuffer.sample(this.replayOptions.batchSize);
+      this.lastBatch = batch;
+      for (const item of batch) {
+        this.agent.update(item);
+      }
+    } else {
+      this.agent.update(transition);
+    }
     this.episodeReturn += result.reward;
     this.steps += 1;
     if (result.done) {
@@ -450,6 +485,35 @@ export class FrozenLakeCore {
     this.env.candyReward = value;
   }
 
+  get replayEnabled(): boolean {
+    return this.replayOptions.enabled;
+  }
+
+  set replayEnabled(value: boolean) {
+    this.replayOptions.enabled = value;
+  }
+
+  get replayBatchSize(): number {
+    return this.replayOptions.batchSize;
+  }
+
+  set replayBatchSize(value: number) {
+    this.replayOptions.batchSize = Math.max(1, Math.round(value));
+  }
+
+  get replayBufferSize(): number {
+    return this.replayBuffer.size;
+  }
+
+  get replayCapacity(): number {
+    return this.replayOptions.capacity;
+  }
+
+  /** Last sampled replay batch, or an empty batch when replay is disabled. */
+  get lastReplayBatch(): readonly Transition<number, FrozenLakeAction>[] {
+    return this.replayOptions.enabled ? this.lastBatch : [];
+  }
+
   /**
    * Replaces the environment map with custom rows and resets training. The
    * rows define the grid size, so they must contain 4, 6 or 8 rows of matching
@@ -477,6 +541,8 @@ export class FrozenLakeCore {
     this.steps = 0;
     this.episodeReturn = 0;
     this.history = [];
+    this.replayBuffer.clear();
+    this.lastBatch = [];
   }
 
   private buildAgent(): QLearningAgent<number, FrozenLakeAction> {

@@ -1,7 +1,7 @@
 import type { BaseType, Selection } from 'd3';
 import { select } from 'd3';
 import type { PropertyValues, TemplateResult } from 'lit';
-import { css, html } from 'lit';
+import { css, html, nothing } from 'lit';
 import { customElement, property } from 'lit/decorators.js';
 import { DemoElement } from '../../base/demo-element.js';
 import type { FrozenLakeAction } from '../../core/frozen-lake.js';
@@ -199,6 +199,39 @@ export class FrozenLake extends DemoElement {
         stroke: var(--drl-accent);
         stroke-width: 2;
       }
+
+      .drl-replay {
+        margin-bottom: var(--drl-space-2);
+      }
+
+      .drl-replay-header {
+        margin: 0 0 var(--drl-space-1);
+        color: var(--drl-muted);
+        font-size: 0.85em;
+        font-variant-numeric: tabular-nums;
+      }
+
+      .drl-replay-list {
+        display: grid;
+        gap: var(--drl-space-1);
+        margin: 0;
+        padding: 0;
+        list-style: none;
+      }
+
+      .drl-replay-row {
+        font-size: 0.9em;
+        font-variant-numeric: tabular-nums;
+      }
+
+      .drl-replay-row--last {
+        color: var(--drl-accent);
+        font-weight: 600;
+      }
+
+      .drl-replay-row--muted {
+        color: var(--drl-muted);
+      }
     `,
   ];
 
@@ -222,6 +255,12 @@ export class FrozenLake extends DemoElement {
 
   @property({ type: Number, attribute: 'initial-value' })
   initialValue = 0;
+
+  @property({ type: Boolean, attribute: 'replay-enabled' })
+  replayEnabled = false;
+
+  @property({ type: Number, attribute: 'replay-batch-size' })
+  replayBatchSize = 8;
 
   private readonly core = new FrozenLakeCore();
 
@@ -283,6 +322,8 @@ export class FrozenLake extends DemoElement {
     this.core.discountFactor = this.discountFactor;
     this.core.initialValue = this.initialValue;
     this.core.candyReward = this.candyReward;
+    this.core.replayEnabled = this.replayEnabled;
+    this.core.replayBatchSize = this.replayBatchSize;
     if (changed.has('gridSize')) {
       this.core.setSize(this.size);
       this.buildGrid();
@@ -308,6 +349,20 @@ export class FrozenLake extends DemoElement {
     this.gridSize = 8;
     this.requestUpdate();
   };
+
+  private readonly handleReplayToggle = (): void => {
+    this.replayEnabled = !this.replayEnabled;
+    this.requestUpdate();
+  };
+
+  // The replay panel exists in the DOM only after the first toggle, so it is
+  // refreshed once the new markup has rendered, not during willUpdate.
+  protected override updated(changed: PropertyValues<this>): void {
+    super.updated(changed);
+    if (changed.has('replayEnabled')) {
+      this.draw();
+    }
+  }
 
   private buildGrid(): void {
     // The grid is rebuilt when the grid size changes, so the tooltip must not
@@ -503,6 +558,45 @@ export class FrozenLake extends DemoElement {
     if (this.hoveredCell !== null && this.tooltip && !this.tooltip.hidden) {
       this.fillTooltip(this.hoveredCell);
     }
+
+    this.drawReplay();
+  }
+
+  /**
+   * Fills the replay panel from the last sampled batch. The panel is queried
+   * on every call because it exists in the DOM only while replay is enabled.
+   * Rows are newest first, so the batch is reversed around its last entry.
+   */
+  private drawReplay(): void {
+    const header = this.renderRoot.querySelector<HTMLElement>('.drl-replay-header');
+    const list = this.renderRoot.querySelector<HTMLElement>('.drl-replay-list');
+    if (!header || !list) {
+      return;
+    }
+    const batch = this.core.lastReplayBatch;
+    header.textContent = `Rejeu · échantillon ${batch.length} · mémoire ${this.core.replayBufferSize}/${this.core.replayCapacity}`;
+    list.replaceChildren();
+    if (batch.length === 0) {
+      const placeholder = document.createElement('li');
+      placeholder.className = 'drl-replay-row drl-replay-row--muted';
+      placeholder.textContent = "Aucun échantillon pour l'instant.";
+      list.append(placeholder);
+      return;
+    }
+    const rows = [batch[batch.length - 1], ...batch.slice(0, -1)];
+    rows.forEach((transition, position) => {
+      const row = document.createElement('li');
+      row.className = position === 0 ? 'drl-replay-row drl-replay-row--last' : 'drl-replay-row';
+      let text = `case ${transition.observation} ${ACTION_GLYPHS[transition.action]} case ${transition.nextObservation} · r ${transition.reward}`;
+      if (transition.done) {
+        text += ' · fin';
+      }
+      if (position === 0) {
+        text += ' · dernier pas';
+      }
+      row.textContent = text;
+      list.append(row);
+    });
   }
 
   protected override renderHeader(): TemplateResult {
@@ -545,6 +639,14 @@ export class FrozenLake extends DemoElement {
         >
           8×8
         </button>
+        <button
+          type="button"
+          class="drl-button"
+          aria-pressed=${this.replayEnabled ? 'true' : 'false'}
+          @click=${this.handleReplayToggle}
+        >
+          Rejeu
+        </button>
       </div>
       <div class="drl-grid-wrap">
         <svg class="drl-grid" viewBox="0 0 480 480" role="img" aria-label="Grille Frozen Lake">
@@ -562,6 +664,16 @@ export class FrozenLake extends DemoElement {
       >
         <path class="drl-curve" visibility="hidden"></path>
       </svg>
+      ${
+        this.replayEnabled
+          ? html`
+            <section class="drl-replay" aria-label="Rejeu">
+              <p class="drl-replay-header"></p>
+              <ul class="drl-replay-list"></ul>
+            </section>
+          `
+          : nothing
+      }
     `;
   }
 }

@@ -5,6 +5,7 @@ import {
   FrozenLakeCore,
   FrozenLakeEnv,
 } from './frozen-lake.js';
+import { QLearningAgent } from './q-learning.js';
 
 function mulberry32(seed: number): () => number {
   let a = seed >>> 0;
@@ -679,5 +680,162 @@ describe('FrozenLakeCore configuration', () => {
     expect(core.candyReward).toBe(0.5);
     expect(core.stats).toEqual(stats);
     expect(core.stats.steps).toBe(stats.steps);
+  });
+});
+
+describe('FrozenLakeCore replay', () => {
+  it('defaults replay to disabled with a batch size of 8 and a capacity of 1000', () => {
+    const core = new FrozenLakeCore({ size: 4, seed: 1 });
+    expect(core.replayEnabled).toBe(false);
+    expect(core.replayBatchSize).toBe(8);
+    expect(core.replayCapacity).toBe(1000);
+    expect(core.replayBufferSize).toBe(0);
+  });
+
+  it('clamps the batch size setter to whole values of at least 1', () => {
+    const core = new FrozenLakeCore({ size: 4, seed: 1 });
+    core.replayBatchSize = 0;
+    expect(core.replayBatchSize).toBe(1);
+    core.replayBatchSize = -3;
+    expect(core.replayBatchSize).toBe(1);
+    core.replayBatchSize = 2.6;
+    expect(core.replayBatchSize).toBe(3);
+  });
+
+  it('returns an empty last batch while replay is disabled', () => {
+    const core = new FrozenLakeCore({ size: 4, slipProbability: 0, seed: 5 });
+    expect(core.lastReplayBatch).toEqual([]);
+    train(core, 50);
+    expect(core.lastReplayBatch).toEqual([]);
+  });
+
+  it('samples a batch of min(replayBatchSize, steps) transitions', () => {
+    const core = new FrozenLakeCore({
+      size: 4,
+      slipProbability: 0,
+      seed: 5,
+      replayEnabled: true,
+      replayBatchSize: 8,
+    });
+    train(core, 3);
+    expect(core.lastReplayBatch).toHaveLength(3);
+    expect(core.replayBufferSize).toBe(3);
+    train(core, 7);
+    expect(core.lastReplayBatch).toHaveLength(8);
+    expect(core.replayBufferSize).toBe(10);
+  });
+
+  it('ends the last batch with the current tick transition', () => {
+    const core = new FrozenLakeCore({
+      size: 4,
+      slipProbability: 0,
+      seed: 5,
+      replayEnabled: true,
+      replayBatchSize: 8,
+    });
+    for (let index = 0; index < 10; index += 1) {
+      const before = core.observation;
+      core.tick();
+      expect(core.lastReplayBatch.at(-1)?.observation).toBe(before);
+      expect(core.lastReplayBatch.at(-1)?.nextObservation).toBe(core.observation);
+    }
+  });
+
+  it('matches a hand-built online reference when replay is disabled', () => {
+    const seed = 21;
+    const core = new FrozenLakeCore({ size: 4, slipProbability: 0, seed });
+    train(core, 100);
+
+    // Replicates the tick loop with a standalone env and agent, seeded the
+    // same way as the core: env on the seed, agent on the seed plus one.
+    const env = new FrozenLakeEnv({ size: 4, slipProbability: 0, rng: mulberry32(seed) });
+    const agent = new QLearningAgent<number, (typeof FROZEN_LAKE_ACTIONS)[number]>(
+      FROZEN_LAKE_ACTIONS,
+      { rng: mulberry32((seed + 1) >>> 0) },
+    );
+    const history: number[] = [];
+    let episodeReturn = 0;
+    for (let index = 0; index < 100; index += 1) {
+      const observation = env.observation;
+      const action = agent.selectAction(observation);
+      const result = env.step(action);
+      agent.update({
+        observation,
+        action,
+        reward: result.reward,
+        nextObservation: result.observation,
+        done: result.done,
+      });
+      episodeReturn += result.reward;
+      if (result.done) {
+        history.push(episodeReturn);
+        episodeReturn = 0;
+        env.reset();
+      }
+    }
+    expect([...core.rewardHistory]).toEqual(history);
+  });
+
+  it('trains differently when replay is enabled', () => {
+    const disabled = new FrozenLakeCore({ size: 4, slipProbability: 0, seed: 16 });
+    const enabled = new FrozenLakeCore({
+      size: 4,
+      slipProbability: 0,
+      seed: 16,
+      replayEnabled: true,
+    });
+    train(disabled, 100);
+    train(enabled, 100);
+    expect([...enabled.rewardHistory]).not.toEqual([...disabled.rewardHistory]);
+  });
+
+  it('reproduces the same reward history for the same seed when replay is enabled', () => {
+    const run = (): number[] => {
+      const core = new FrozenLakeCore({
+        size: 4,
+        slipProbability: 0,
+        seed: 29,
+        replayEnabled: true,
+      });
+      train(core, 100);
+      return [...core.rewardHistory];
+    };
+    expect(run()).toEqual(run());
+  });
+
+  it('clears the buffer on reset, setSize and setCustomMap', () => {
+    const core = new FrozenLakeCore({ size: 4, slipProbability: 0, seed: 2, replayEnabled: true });
+    train(core, 50);
+    expect(core.replayBufferSize).toBeGreaterThan(0);
+
+    core.reset();
+    expect(core.replayBufferSize).toBe(0);
+    expect(core.lastReplayBatch).toEqual([]);
+
+    train(core, 50);
+    expect(core.replayBufferSize).toBeGreaterThan(0);
+    core.setSize(8);
+    expect(core.replayBufferSize).toBe(0);
+
+    train(core, 50);
+    expect(core.replayBufferSize).toBeGreaterThan(0);
+    core.setCustomMap(CUSTOM_6X6);
+    expect(core.replayBufferSize).toBe(0);
+  });
+
+  it('caps the buffer at the configured capacity', () => {
+    const core = new FrozenLakeCore({
+      size: 4,
+      slipProbability: 0,
+      seed: 2,
+      replayEnabled: true,
+      replayCapacity: 3,
+    });
+    expect(core.replayCapacity).toBe(3);
+    train(core, 10);
+    expect(core.replayBufferSize).toBe(3);
+    // The batch still ends with the newest transition at capacity.
+    expect(core.lastReplayBatch).toHaveLength(3);
+    expect(core.lastReplayBatch[2].observation).toBeDefined();
   });
 });
