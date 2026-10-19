@@ -90,6 +90,39 @@ describe('QLearningAgent update', () => {
   });
 });
 
+describe('QLearningAgent initial value', () => {
+  it('reads the initial value for an unseen pair', () => {
+    const agent = new QLearningAgent<string, string>(['first', 'second'], { initialValue: 0.5 });
+    expect(agent.valueOf('unknown', 'first')).toBe(0.5);
+    expect(agent.maxValue('unknown')).toBe(0.5);
+  });
+
+  it('uses the initial value in the update math', () => {
+    const agent = new QLearningAgent<string, number>([0, 1], {
+      learningRate: 0.5,
+      initialValue: 0.5,
+    });
+    // target = 1, current = 0.5, updated = 0.5 + 0.5 * (1 - 0.5) = 0.75
+    agent.update({ observation: 's', action: 0, reward: 1, nextObservation: 't', done: true });
+    expect(agent.valueOf('s', 0)).toBeCloseTo(0.75);
+  });
+
+  it('lets the initial value change for unseen pairs', () => {
+    const agent = new QLearningAgent<string, string>(['first'], { initialValue: 0.5 });
+    agent.initialValue = -1;
+    expect(agent.valueOf('unknown', 'first')).toBe(-1);
+    expect(agent.maxValue('unknown')).toBe(-1);
+  });
+
+  it('keeps the learned value when the initial value changes', () => {
+    const agent = new QLearningAgent<string, number>([0], { learningRate: 1, initialValue: 0.5 });
+    agent.update({ observation: 's', action: 0, reward: 1, nextObservation: 't', done: true });
+    agent.initialValue = 5;
+    expect(agent.valueOf('s', 0)).toBeCloseTo(1);
+    expect(agent.valueOf('unknown', 0)).toBe(5);
+  });
+});
+
 describe('QLearningAgent table access', () => {
   it('returns 0 for unseen pairs', () => {
     const agent = new QLearningAgent<string, string>(['first', 'second']);

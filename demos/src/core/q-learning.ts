@@ -10,12 +10,14 @@ export interface QLearningOptions {
   learningRate?: number;
   discountFactor?: number;
   epsilon?: number;
+  initialValue?: number;
   rng?: () => number;
 }
 
 const DEFAULT_LEARNING_RATE = 0.1;
 const DEFAULT_DISCOUNT_FACTOR = 0.99;
 const DEFAULT_EPSILON = 0.1;
+const DEFAULT_INITIAL_VALUE = 0;
 
 export class QLearningAgent<O, A> {
   learningRate: number;
@@ -23,6 +25,8 @@ export class QLearningAgent<O, A> {
   discountFactor: number;
 
   epsilon: number;
+
+  initialValue: number;
 
   private readonly actions: readonly A[];
 
@@ -38,6 +42,7 @@ export class QLearningAgent<O, A> {
     this.learningRate = options.learningRate ?? DEFAULT_LEARNING_RATE;
     this.discountFactor = options.discountFactor ?? DEFAULT_DISCOUNT_FACTOR;
     this.epsilon = options.epsilon ?? DEFAULT_EPSILON;
+    this.initialValue = options.initialValue ?? DEFAULT_INITIAL_VALUE;
     this.rng = options.rng ?? Math.random;
   }
 
@@ -65,7 +70,7 @@ export class QLearningAgent<O, A> {
   }
 
   valueOf(observation: O, action: A): number {
-    return this.table.get(observation)?.get(action) ?? 0;
+    return this.table.get(observation)?.get(action) ?? this.initialValue;
   }
 
   maxValue(observation: O): number {
