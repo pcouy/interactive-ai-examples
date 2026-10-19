@@ -36,6 +36,15 @@ import {
 } from '../../core/mnist-data.js';
 import { createIdxTrainSource } from '../../core/mnist-train-source.js';
 import { drlTokens } from '../../styles/tokens.js';
+import {
+  enumerateLinks,
+  filterCanvasSelector,
+  isUsableRect,
+  type LineGeometry,
+  type LinkEndpoint,
+  linkGeometry,
+  type RectLike,
+} from './filter-links.js';
 import { fetchMnistCnnManifest, loadMnistGallery, loadMnistSplits } from './mnist-assets.js';
 import { MnistTrainingController } from './training-controller.js';
 import { isTrainingActive, type TrainingState, trainingStateBadge } from './training-state.js';
@@ -568,6 +577,65 @@ export function describeLinkLabel(
 }
 
 /**
+ * Sélecteurs des deux toiles de filtres reliées par une liaison : la toile amont
+ * est le canal de sortie `inputChannel` de la couche précédente, la toile aval le
+ * canal d'entrée `outputChannel` de la couche de la frontière. `filterCanvasSelector`
+ * lève une `RangeError` pour des indices négatifs : la frontière 0, sans couche
+ * amont, n'énumère aucune liaison.
+ */
+export function linkCanvasSelectors(link: LinkEndpoint): { source: string; target: string } {
+  return {
+    source: filterCanvasSelector(link.boundary - 1, link.inputChannel),
+    target: filterCanvasSelector(link.boundary, link.outputChannel),
+  };
+}
+
+/**
+ * Indices de la liaison portée par un `<g>` de ligne, lus depuis ses attributs de
+ * données, ou null s'ils ne désignent pas une frontière et deux canaux valides.
+ * `filterCanvasSelector` lève une `RangeError` pour un indice négatif, d'où ce
+ * filtrage préalable.
+ */
+export function linkGroupIndices(group: Element): LinkEndpoint | null {
+  const read = (name: string): number | null => {
+    const raw = group.getAttribute(name);
+    if (raw === null || raw === '') {
+      return null;
+    }
+    const value = Number(raw);
+    return Number.isInteger(value) && value >= 0 ? value : null;
+  };
+  const boundary = read('data-boundary');
+  const inputChannel = read('data-input-channel');
+  const outputChannel = read('data-output-channel');
+  if (boundary === null || inputChannel === null || outputChannel === null) {
+    return null;
+  }
+  return { boundary, inputChannel, outputChannel };
+}
+
+/**
+ * Segment d'une liaison entre deux toiles de filtres, exprimé en coordonnées
+ * relatives au panneau, ou null si l'un des rectangles n'est pas utilisable :
+ * la ligne est alors laissée en l'état plutôt qu tracée à une position absurde.
+ * Ne lève jamais, y compris si `linkGeometry` refuse un rectangle.
+ */
+export function filterLinkGeometry(
+  source: RectLike,
+  target: RectLike,
+  container: RectLike,
+): LineGeometry | null {
+  if (!isUsableRect(source) || !isUsableRect(target) || !isUsableRect(container)) {
+    return null;
+  }
+  try {
+    return linkGeometry(source, target, container);
+  } catch {
+    return null;
+  }
+}
+
+/**
  * Valeur courante d'un poids sélectionné, ou null si la sélection n'est pas un
  * poids ou si ses indices sont hors bornes. Le nombre de canaux d'entrée est
  * déduit de la longueur du noyau et du biais (nombre de canaux de sortie).
@@ -777,6 +845,10 @@ export class MnistCnn extends LitElement {
         border-radius: var(--drl-radius);
       }
 
+      .drl-panel--filters {
+        position: relative;
+      }
+
       .drl-panel-title {
         margin: 0;
         font-size: 0.95em;
@@ -971,6 +1043,66 @@ export class MnistCnn extends LitElement {
         color: var(--drl-muted);
         font-size: 0.75em;
       }
+
+      /* Lignes de liaison entre toiles de filtres : le SVG couvre tout le panneau
+         mais ne capture les clics que sur les lignes, pour ne jamais masquer une
+         toile ni la surface de dessin. */
+      .drl-filter-links {
+        position: absolute;
+        inset: 0;
+        width: 100%;
+        height: 100%;
+        overflow: visible;
+        pointer-events: none;
+      }
+
+      .drl-filter-link-group {
+        pointer-events: auto;
+        cursor: pointer;
+      }
+
+      .drl-filter-link {
+        fill: none;
+        stroke: var(--drl-muted);
+        stroke-width: 1;
+        opacity: 0.45;
+        transition:
+          stroke 120ms ease,
+          stroke-width 120ms ease,
+          opacity 120ms ease;
+      }
+
+      /* Sélection : lisible sans concurrencer les toiles. */
+      .drl-filter-link--selected {
+        stroke: var(--drl-accent);
+        stroke-width: 2;
+        opacity: 1;
+      }
+
+      /* Une sélection atténue toutes les autres lignes. */
+      .drl-filter-link--dimmed {
+        stroke: var(--drl-muted);
+        stroke-width: 1;
+        opacity: 0.15;
+      }
+
+      /* Survol : la ligne prend l'accent secondaire, y compris si elle est
+         atténue — c'est l'état « highlighted ». */
+      .drl-filter-link-group:hover .drl-filter-link--normal,
+      .drl-filter-link-group:hover .drl-filter-link--dimmed {
+        stroke: var(--drl-accent-2);
+        stroke-width: 1.5;
+        opacity: 0.85;
+      }
+
+      /* Zone de clic large mais transparente : le contour du segment reste la
+         seule partie sensible, jamais le panneau entier. */
+      .drl-filter-link-hit {
+        fill: none;
+        stroke: transparent;
+        stroke-width: 10;
+        pointer-events: auto;
+      }
     `,
   ];
 
@@ -1053,6 +1185,9 @@ export class MnistCnn extends LitElement {
 
   /** Dessin des toiles reporté après la prochaine mise à jour du DOM Lit. */
   private canvasesDirty = true;
+
+  /** Observe le panneau des filtres pour repositionner lignes et toiles ensemble. */
+  private filterPanelObserver: ResizeObserver | null = null;
 
   /** Sélection de l'éditeur de poids : liaison ou poids exact. */
   @state()
@@ -1193,6 +1328,16 @@ export class MnistCnn extends LitElement {
   protected override firstUpdated(): void {
     this.runInference();
     void this.loadManifest();
+    const panel = this.renderRoot.querySelector<HTMLElement>('.drl-panel--filters');
+    // Le redimensionnement du panneau déplace les toiles : un `ResizeObserver`
+    // repositionne les lignes, tracées en pixels relatifs à ce panneau.
+    if (panel && typeof ResizeObserver !== 'undefined') {
+      const observer = new ResizeObserver(() => {
+        this.positionFilterLinks();
+      });
+      observer.observe(panel);
+      this.filterPanelObserver = observer;
+    }
   }
 
   override connectedCallback(): void {
@@ -1201,8 +1346,55 @@ export class MnistCnn extends LitElement {
   }
 
   override disconnectedCallback(): void {
+    this.filterPanelObserver?.disconnect();
+    this.filterPanelObserver = null;
     super.disconnectedCallback();
     void this.controller.notifyDisconnected();
+  }
+
+  /**
+   * Positionne les lignes de liaison : pour chaque `<g>`, lit les rectangles de la
+   * toile amont et de la toile aval, relatifs au panneau, puis écrit `x1`, `y1`,
+   * `x2`, `y2` sur ses deux lignes. Une ligne dont un rectangle n'est pas
+   * utilisable — toile absente, panneau masqué — est laissée en l'état. Ne lève
+   * jamais : le rendu ne dépend pas de cette méthode.
+   */
+  private positionFilterLinks(): void {
+    const panel = this.renderRoot.querySelector<HTMLElement>('.drl-panel--filters');
+    const svg = panel?.querySelector<SVGSVGElement>('svg.drl-filter-links');
+    if (!panel || !svg) {
+      return;
+    }
+    const container = panel.getBoundingClientRect();
+    if (!isUsableRect(container)) {
+      return;
+    }
+    for (const group of Array.from(svg.querySelectorAll<SVGGElement>('g.drl-filter-link-group'))) {
+      const indices = linkGroupIndices(group);
+      if (!indices) {
+        continue;
+      }
+      const selectors = linkCanvasSelectors(indices);
+      const source = panel.querySelector<HTMLElement>(selectors.source);
+      const target = panel.querySelector<HTMLElement>(selectors.target);
+      if (!source || !target) {
+        continue;
+      }
+      const geometry = filterLinkGeometry(
+        source.getBoundingClientRect(),
+        target.getBoundingClientRect(),
+        container,
+      );
+      if (!geometry) {
+        continue;
+      }
+      for (const line of Array.from(group.querySelectorAll<SVGLineElement>('line'))) {
+        line.setAttribute('x1', String(geometry.x1));
+        line.setAttribute('y1', String(geometry.y1));
+        line.setAttribute('x2', String(geometry.x2));
+        line.setAttribute('y2', String(geometry.y2));
+      }
+    }
   }
 
   /**
@@ -1562,8 +1754,8 @@ export class MnistCnn extends LitElement {
 
   /**
    * Clic sur une ligne de liaison : sélectionne la liaison entre les deux canaux
-   * (ou la désélectionne). Les lignes n'existent pas encore dans le gabarit : le
-   * prochain panneau des liaisons branchera ce gestionnaire.
+   * (ou la désélectionne). Le clic part du `<g>`, qui porte la zone de clic large :
+   * seul le segment, visible ou non, est sensible.
    */
   private readonly handleLinkClick = (
     boundary: number,
@@ -1657,6 +1849,7 @@ export class MnistCnn extends LitElement {
         this.drawFeatureMapCanvas(canvas, featureMap, channel);
       }
     }
+    this.positionFilterLinks();
   }
 
   private drawInputCanvas(canvas: HTMLCanvasElement | null): void {
@@ -1985,7 +2178,7 @@ export class MnistCnn extends LitElement {
       </div>
 
       <div class="drl-panels-row">
-        <section class="drl-panel" aria-label="Filtres de convolution">
+        <section class="drl-panel drl-panel--filters" aria-label="Filtres de convolution">
           <h4 class="drl-panel-title">Filtres de convolution 3×3</h4>
           <p class="drl-panel-subtitle">
             Moyenne des canaux d'entrée pour chaque canal de sortie ; bleu = positif, violet =
@@ -2025,6 +2218,7 @@ export class MnistCnn extends LitElement {
                 )
               : html`<p class="drl-hint">En attente du premier passage avant.</p>`
           }
+          ${this.renderFilterLinks()}
         </section>
 
         <section class="drl-panel" aria-label="Cartes de caractéristiques">
@@ -2069,6 +2263,57 @@ export class MnistCnn extends LitElement {
           }
         </section>
       </div>
+    `;
+  }
+
+  /**
+   * Couche SVG des lignes de liaison : un `<g>` par liaison entre couches de
+   * convolution, positionné ensuite par `positionFilterLinks`. Elle reste dans le
+   * panneau même sans passage avant, pour que le `ResizeObserver` la trouve.
+   */
+  private renderFilterLinks(): TemplateResult {
+    return html`
+      <svg class="drl-filter-links">
+        ${repeat(
+          enumerateLinks(this.filterCounts),
+          (link) => `${link.boundary}:${link.inputChannel}:${link.outputChannel}`,
+          (link) => this.renderFilterLink(link),
+        )}
+      </svg>
+    `;
+  }
+
+  /**
+   * Une ligne de liaison : une ligne visible à l'état courant, une zone de clic
+   * large et transparente, et le libellé porté par le titre et par `aria-label`.
+   */
+  private renderFilterLink(link: LinkEndpoint): TemplateResult {
+    const state = linkLineState(
+      this.selection,
+      link.boundary,
+      link.inputChannel,
+      link.outputChannel,
+    );
+    const label = describeLinkLabel(
+      this.selection,
+      link.boundary,
+      link.inputChannel,
+      link.outputChannel,
+      this.filterCounts,
+    );
+    return html`
+      <g
+        class="drl-filter-link-group"
+        data-boundary=${link.boundary}
+        data-input-channel=${link.inputChannel}
+        data-output-channel=${link.outputChannel}
+        aria-label=${label}
+        @click=${() => this.handleLinkClick(link.boundary, link.inputChannel, link.outputChannel)}
+      >
+        <title>${label}</title>
+        <line class="drl-filter-link drl-filter-link--${state}" x1="0" y1="0" x2="0" y2="0"></line>
+        <line class="drl-filter-link-hit" x1="0" y1="0" x2="0" y2="0"></line>
+      </g>
     `;
   }
 }

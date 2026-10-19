@@ -16,11 +16,14 @@ import {
   filterKernelMean,
   filterKernelSlice,
   filterKernelValues,
+  filterLinkGeometry,
   filterViewMode,
   formatLoss,
   formatPercent,
   formatSeconds,
   hexToRgb,
+  linkCanvasSelectors,
+  linkGroupIndices,
   linkLineState,
   mixRgb,
   paintDisc,
@@ -30,6 +33,8 @@ import {
   selectedWeightValue,
   stratifiedExampleCountEstimate,
 } from './drl-mnist-cnn.js';
+import type { RectLike } from './filter-links.js';
+import { linkGeometry } from './filter-links.js';
 
 function blankPixels(): Float32Array {
   return new Float32Array(784);
@@ -553,6 +558,84 @@ describe('linkLineState', () => {
     expect(linkLineState(selection, 0, 0, 1)).toBe('dimmed');
     expect(linkLineState(selection, 1, 0, 1)).toBe('dimmed');
     expect(linkLineState(selection, 2, 0, 1)).toBe('dimmed');
+  });
+});
+
+describe('linkCanvasSelectors', () => {
+  it('binds the upstream output channel to the downstream input channel', () => {
+    expect(linkCanvasSelectors({ boundary: 1, inputChannel: 0, outputChannel: 2 })).toEqual({
+      source: 'canvas.drl-canvas--filter[data-layer="0"][data-channel="0"]',
+      target: 'canvas.drl-canvas--filter[data-layer="1"][data-channel="2"]',
+    });
+    expect(linkCanvasSelectors({ boundary: 3, inputChannel: 2, outputChannel: 3 })).toEqual({
+      source: 'canvas.drl-canvas--filter[data-layer="2"][data-channel="2"]',
+      target: 'canvas.drl-canvas--filter[data-layer="3"][data-channel="3"]',
+    });
+  });
+
+  it('rejects the boundary 0, which has no upstream canvas', () => {
+    expect(() => linkCanvasSelectors({ boundary: 0, inputChannel: 0, outputChannel: 0 })).toThrow(
+      RangeError,
+    );
+  });
+});
+
+describe('filterLinkGeometry', () => {
+  const CONTAINER: RectLike = { left: 5, top: 7, width: 500, height: 400 };
+
+  it('returns the segment of linkGeometry for usable rectangles', () => {
+    const source: RectLike = { left: 10, top: 20, width: 40, height: 30 };
+    const target: RectLike = { left: 100, top: 200, width: 20, height: 10 };
+    expect(filterLinkGeometry(source, target, CONTAINER)).toEqual(
+      linkGeometry(source, target, CONTAINER),
+    );
+  });
+
+  it('returns null instead of throwing for an unusable rectangle', () => {
+    const rect: RectLike = { left: 0, top: 0, width: 10, height: 10 };
+    // linkGeometry lève dans chacun de ces cas : la ligne est ignorée, pas tracée.
+    expect(filterLinkGeometry({ ...rect, width: 0 }, rect, CONTAINER)).toBeNull();
+    expect(filterLinkGeometry(rect, { ...rect, height: 0 }, CONTAINER)).toBeNull();
+    expect(filterLinkGeometry(rect, rect, { ...CONTAINER, top: Number.NaN })).toBeNull();
+    expect(
+      filterLinkGeometry(rect, rect, { ...CONTAINER, left: Number.POSITIVE_INFINITY }),
+    ).toBeNull();
+  });
+});
+
+describe('linkGroupIndices', () => {
+  /** `<g>` simulé par ses trois attributs de données. */
+  function mockGroup(attributes: Record<string, string | null>): Element {
+    return {
+      getAttribute: (name: string) => attributes[name] ?? null,
+    } as unknown as Element;
+  }
+
+  function validGroup(): Record<string, string | null> {
+    return { 'data-boundary': '1', 'data-input-channel': '2', 'data-output-channel': '0' };
+  }
+
+  it('reads the boundary and the two channels from the data attributes', () => {
+    expect(linkGroupIndices(mockGroup(validGroup()))).toEqual({
+      boundary: 1,
+      inputChannel: 2,
+      outputChannel: 0,
+    });
+  });
+
+  it('returns null for a missing attribute', () => {
+    const missingChannel = validGroup();
+    delete missingChannel['data-input-channel'];
+    expect(linkGroupIndices(mockGroup(missingChannel))).toBeNull();
+    expect(linkGroupIndices(mockGroup({}))).toBeNull();
+  });
+
+  it('returns null for an empty or non-integer attribute', () => {
+    for (const value of ['', 'x', '1.5', '-1', 'NaN', 'Infinity']) {
+      const group = validGroup();
+      group['data-boundary'] = value;
+      expect(linkGroupIndices(mockGroup(group))).toBeNull();
+    }
   });
 });
 
