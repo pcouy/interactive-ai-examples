@@ -200,6 +200,23 @@ describe('dataset', () => {
     expect(core.advanceBatch(0.1)).toBeNull();
     expect(() => core.advance(0.1)).not.toThrow();
   });
+
+  it('keeps the current count when count is not finite', () => {
+    const core = makeCore({ expression: 'x1 + x2', count: 24, seed: 7 });
+    expect(core.dataset).toHaveLength(24);
+
+    core.setDataset({ count: NaN });
+    expect(core.dataset).toHaveLength(24);
+
+    core.setDataset({ count: Infinity });
+    expect(core.dataset).toHaveLength(24);
+
+    core.setDataset({ count: -Infinity });
+    expect(core.dataset).toHaveLength(24);
+
+    core.setDataset({ count: 10 });
+    expect(core.dataset).toHaveLength(10);
+  });
 });
 
 describe('losses', () => {
@@ -395,6 +412,74 @@ describe('phase machine', () => {
     expect(core.diverged).toBe(true);
     expect(core.advanceBatch(0.1)).toBeNull();
   });
+
+  it('applies the same batch-mean update in detailed and coarse mode', () => {
+    const configs: Array<{ bias: boolean; loss: LossKind }> = [
+      { bias: false, loss: 'l2' },
+      { bias: true, loss: 'l2' },
+      { bias: false, loss: 'l1' },
+      { bias: true, loss: 'l1' },
+    ];
+    for (const { bias, loss } of configs) {
+      const detailed = makeCore({ expression: 'x1 + x2', count: 24, seed: 7, bias, loss });
+      const coarse = makeCore({ expression: 'x1 + x2', count: 24, seed: 7, bias, loss });
+      detailed.reset({ startW1: 1.1, startW2: -1.4, startB: 0.2 });
+      coarse.reset({ startW1: 1.1, startW2: -1.4, startB: 0.2 });
+
+      // The first advance draws the epoch batch; snapshot it before walking.
+      detailed.advance(0.15);
+      const batch = detailed.batch.map((example) => ({ ...example }));
+      const startW1 = detailed.w1;
+      const startW2 = detailed.w2;
+      const startB = detailed.b;
+
+      let steps = 0;
+      while (detailed.epoch < 1 && steps < 1000) {
+        detailed.advance(0.15);
+        steps += 1;
+      }
+      expect(detailed.epoch).toBe(1);
+
+      coarse.advanceBatch(0.15);
+      expect(coarse.epoch).toBe(1);
+
+      expect(detailed.w1).toBeCloseTo(coarse.w1, 12);
+      expect(detailed.w2).toBeCloseTo(coarse.w2, 12);
+      expect(detailed.b).toBeCloseTo(coarse.b, 12);
+
+      const expected = meanGradient(startW1, startW2, startB, batch, loss);
+      expect(detailed.w1).toBeCloseTo(startW1 - 0.15 * expected.dw1, 12);
+      expect(detailed.w2).toBeCloseTo(startW2 - 0.15 * expected.dw2, 12);
+      if (bias) {
+        expect(detailed.b).toBeCloseTo(startB - 0.15 * expected.db, 12);
+      } else {
+        expect(detailed.b).toBe(0);
+      }
+    }
+  });
+
+  it('treats a non-finite learning rate as a no-op', () => {
+    const core = makeCore({ expression: 'x1 + x2', count: 24, seed: 7, bias: true });
+    core.reset({ startW1: 0.5, startW2: -0.3, startB: 0.2 });
+
+    for (const learningRate of [NaN, Infinity, -Infinity]) {
+      core.advance(learningRate);
+      core.advance(learningRate, { detailed: false });
+      expect(core.advanceBatch(learningRate)).toBeNull();
+      expect(core.phase).toBe('idle');
+      expect(core.w1).toBe(0.5);
+      expect(core.w2).toBe(-0.3);
+      expect(core.b).toBe(0.2);
+      expect(core.epoch).toBe(0);
+      expect(core.diverged).toBe(false);
+    }
+
+    core.advanceBatch(0.1);
+    expect(core.epoch).toBe(1);
+    expect(core.advanceBatch(NaN)).toBeNull();
+    expect(core.epoch).toBe(1);
+    expect(core.phase).toBe('present');
+  });
 });
 
 describe('determinism and reset', () => {
@@ -485,6 +570,26 @@ describe('divergence', () => {
 
     core.reset({ startW1: 0.1, startW2: 0.2 });
     expect(core.diverged).toBe(false);
+  });
+
+  it('does not diverge on a large-offset target with bias', () => {
+    const core = makeCore({ expression: 'x1 + x2 + 100', count: 40, bias: true });
+    expect(core.domain).toBe(20);
+    core.reset({ startB: 0 });
+
+    for (let i = 0; i < 10; i += 1) {
+      core.advanceBatch(0.05);
+    }
+    const bAfter10 = core.b;
+    for (let i = 0; i < 10; i += 1) {
+      core.advanceBatch(0.05);
+    }
+
+    expect(core.diverged).toBe(false);
+    expect(core.epoch).toBe(20);
+    expect(core.b).toBeGreaterThan(bAfter10);
+    expect(core.b).toBeGreaterThan(50);
+    expect(core.b).toBeLessThan(200);
   });
 });
 
