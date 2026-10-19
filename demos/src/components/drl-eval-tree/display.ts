@@ -1,4 +1,4 @@
-import type { CutInfo } from '../../core/contracts.js';
+import type { CutInfo, VisitKind } from '../../core/contracts.js';
 import type { TreeModel } from '../../core/search/tree-model.js';
 
 export const MOVE_FIELDS = ['index', 'col', 'column', 'row'] as const;
@@ -34,6 +34,25 @@ export function formatMove(move: unknown): string {
     return json.length <= 12 ? json : `${json.slice(0, 11)}…`;
   }
   return String(move);
+}
+
+/**
+ * Ne garde que le premier frère élagué (`pruned`).
+ * WHY: plusieurs frères élagués portent la même information de coupure,
+ * donc un seul suffit pour montrer que le reste de la fratrie a été élagué.
+ */
+export function keepFirstPruned<T extends { kind: VisitKind }>(children: readonly T[]): T[] {
+  let seenPruned = false;
+  return children.filter((child) => {
+    if (child.kind !== 'pruned') {
+      return true;
+    }
+    if (seenPruned) {
+      return false;
+    }
+    seenPruned = true;
+    return true;
+  });
 }
 
 /** Résumé affichable des bornes d'un nœud (panneau α/β du visualiseur). */
@@ -86,6 +105,12 @@ export function formatBound(value: number): string {
   }
   return formatScore(value);
 }
+
+/**
+ * Libellé neutre du panneau α/β quand le nœud dessiné n'a pas de coupure.
+ * Afficher un texte de longueur comparable garde une hauteur de panneau stable.
+ */
+export const NO_CUT_LABEL = 'Développement du nœud';
 
 /** Étiquette courte d'une coupure : '> β' (strict) / '≥ β' / '< α' / '≤ α'. */
 export function cutLabel(cut: CutInfo): string {

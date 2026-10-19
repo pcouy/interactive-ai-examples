@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import type { CutInfo } from '../../core/contracts.js';
+import type { CutInfo, VisitKind } from '../../core/contracts.js';
 import { TreeModel } from '../../core/search/tree-model.js';
 import {
   boundsSummary,
@@ -9,6 +9,8 @@ import {
   formatMove,
   formatNumber,
   formatScore,
+  keepFirstPruned,
+  NO_CUT_LABEL,
 } from './display.js';
 
 interface FakeState {
@@ -114,6 +116,49 @@ describe('formatBound', () => {
     expect(formatBound(0.5)).toBe('+0,50');
     expect(formatBound(-0.25)).toBe('-0,25');
     expect(formatBound(-0.001)).toBe('0,00');
+  });
+});
+
+describe('NO_CUT_LABEL', () => {
+  it('uses the exact French label of the bounds panel for an uncut node', () => {
+    expect(NO_CUT_LABEL).toBe('Développement du nœud');
+  });
+});
+
+describe('keepFirstPruned', () => {
+  const child = (kind: VisitKind): { kind: VisitKind } => ({ kind });
+
+  it('keeps only the first pruned sibling', () => {
+    const children = [child('pruned'), child('pruned'), child('pruned')];
+    expect(keepFirstPruned(children)).toEqual([child('pruned')]);
+  });
+
+  it('keeps every non-pruned sibling in order', () => {
+    const children = [
+      child('expand'),
+      child('pruned'),
+      child('leaf'),
+      child('pruned'),
+      child('expand'),
+    ];
+    expect(keepFirstPruned(children).map((c) => c.kind)).toEqual([
+      'expand',
+      'pruned',
+      'leaf',
+      'expand',
+    ]);
+  });
+
+  it('leaves zero or one pruned sibling unchanged', () => {
+    const none = [child('expand'), child('leaf')];
+    expect(keepFirstPruned(none)).toEqual(none);
+    const one = [child('expand'), child('pruned'), child('leaf')];
+    expect(keepFirstPruned(one)).toEqual(one);
+  });
+
+  it('keeps the first pruned sibling in its original position', () => {
+    const children = [child('expand'), child('pruned'), child('pruned'), child('leaf')];
+    expect(keepFirstPruned(children).map((c) => c.kind)).toEqual(['expand', 'pruned', 'leaf']);
   });
 });
 

@@ -29,6 +29,8 @@ import {
   formatBound,
   formatMove,
   formatScore,
+  keepFirstPruned,
+  NO_CUT_LABEL,
 } from './display.js';
 import '../../ui/drl-controls.js';
 import '../../ui/drl-slider.js';
@@ -241,6 +243,12 @@ export class DrlEvalTree<S> extends DemoElement {
         color: var(--drl-muted);
         font-size: 0.9em;
         font-variant-numeric: tabular-nums;
+      }
+
+      /* nowrap : le libellé neutre ou la description de coupure tiennent sur une
+         seule ligne, donc la hauteur du panneau reste constante entre les deux. */
+      .drl-bounds-item {
+        white-space: nowrap;
       }
 
       .drl-bounds-title {
@@ -862,7 +870,8 @@ export class DrlEvalTree<S> extends DemoElement {
         node,
         compact: false,
         collapsedCount: 0,
-        children: children.map((child) => walk(child, relDepth + 1)),
+        // Un seul frère élagué suffit : les autres portent la même coupure.
+        children: keepFirstPruned(children).map((child) => walk(child, relDepth + 1)),
       };
     };
     return hierarchy(walk(start, 0));
@@ -1362,7 +1371,7 @@ export class DrlEvalTree<S> extends DemoElement {
                 </span>
                 ${
                   this.boundsText.cut === null
-                    ? nothing
+                    ? html`<span class="drl-bounds-item">${NO_CUT_LABEL}</span>`
                     : html`<span class="drl-bounds-item drl-bounds-cut">${this.boundsText.cut}</span>`
                 }
               `
