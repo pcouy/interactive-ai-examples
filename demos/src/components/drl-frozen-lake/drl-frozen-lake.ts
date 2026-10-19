@@ -157,8 +157,11 @@ export class FrozenLake extends DemoElement {
   @property({ type: Number, attribute: 'grid-size' })
   gridSize = 4;
 
-  @property({ type: Boolean, attribute: 'slippery' })
-  slippery = false;
+  @property({ type: Number, attribute: 'slip-probability' })
+  slipProbability = 0;
+
+  @property({ type: Number, attribute: 'initial-value' })
+  initialValue = 0;
 
   private readonly core = new FrozenLakeCore();
 
@@ -176,8 +179,8 @@ export class FrozenLake extends DemoElement {
 
   private statusText: HTMLElement | null = null;
 
-  private get size(): 4 | 8 {
-    return this.gridSize === 8 ? 8 : 4;
+  private get size(): 4 | 6 | 8 {
+    return this.gridSize === 8 ? 8 : this.gridSize === 6 ? 6 : 4;
   }
 
   protected override firstUpdated(): void {
@@ -210,13 +213,14 @@ export class FrozenLake extends DemoElement {
     this.core.learningRate = this.learningRate;
     this.core.epsilon = this.epsilon;
     this.core.discountFactor = this.discountFactor;
+    this.core.initialValue = this.initialValue;
     if (changed.has('gridSize')) {
       this.core.setSize(this.size);
       this.buildGrid();
       this.draw();
     }
-    if (changed.has('slippery')) {
-      this.core.setSlippery(this.slippery);
+    if (changed.has('slipProbability')) {
+      this.core.setSlipProbability(this.slipProbability);
       this.draw();
     }
   }
@@ -226,13 +230,13 @@ export class FrozenLake extends DemoElement {
     this.requestUpdate();
   };
 
-  private readonly handleSize8 = (): void => {
-    this.gridSize = 8;
+  private readonly handleSize6 = (): void => {
+    this.gridSize = 6;
     this.requestUpdate();
   };
 
-  private readonly handleSlippery = (): void => {
-    this.slippery = !this.slippery;
+  private readonly handleSize8 = (): void => {
+    this.gridSize = 8;
     this.requestUpdate();
   };
 
@@ -313,7 +317,8 @@ export class FrozenLake extends DemoElement {
       .attr('visibility', (index) => (actions[index] === null ? 'hidden' : 'visible'))
       .attr('opacity', (index) => {
         const value = values[index] ?? 0;
-        return maxValue > 0 ? 0.15 + 0.85 * (value / maxValue) : 0.15;
+        const raw = maxValue > 0 ? 0.15 + 0.85 * (value / maxValue) : 0.15;
+        return Math.min(Math.max(raw, 0.15), 1);
       });
 
     const observation = this.core.observation;
@@ -375,18 +380,18 @@ export class FrozenLake extends DemoElement {
         <button
           type="button"
           class="drl-button"
-          aria-pressed=${this.size === 8 ? 'true' : 'false'}
-          @click=${this.handleSize8}
+          aria-pressed=${this.size === 6 ? 'true' : 'false'}
+          @click=${this.handleSize6}
         >
-          8×8
+          6×6
         </button>
         <button
           type="button"
           class="drl-button"
-          aria-pressed=${this.slippery ? 'true' : 'false'}
-          @click=${this.handleSlippery}
+          aria-pressed=${this.size === 8 ? 'true' : 'false'}
+          @click=${this.handleSize8}
         >
-          Glissant
+          8×8
         </button>
       </div>
       <svg class="drl-grid" viewBox="0 0 480 480" role="img" aria-label="Grille Frozen Lake">
