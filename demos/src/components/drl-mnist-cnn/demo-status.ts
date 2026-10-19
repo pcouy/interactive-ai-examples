@@ -25,8 +25,6 @@ export interface DemoStatusInput {
   readonly weightsEdited: boolean;
   /** Raison de l'échec du manifeste pré-entraîné, ou null. */
   readonly manifestError: string | null;
-  /** Raison de l'échec de la dernière run, ou null. */
-  readonly trainingError: string | null;
   /** Nombre de lots traités par la run courante. */
   readonly batchesProcessed: number;
   /** Dernière perte, ou null avant le premier évènement de progression. */

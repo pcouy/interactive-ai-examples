@@ -919,6 +919,14 @@ export class MnistCnn extends LitElement {
   @state()
   private weightError: string | null = null;
 
+  /**
+   * Chaîne de notifications d'édition de poids : deux applications rapprochées
+   * pendant une run active sont sérialisées, car `notifyWeightsEdited` attend
+   * l'arrêt de l'entraîneur — sans file d'attente, la seconde édition serait
+   * perdue par la course. La chaîne reste vivante après un échec.
+   */
+  private weightsNotifyChain: Promise<void> = Promise.resolve();
+
   /** Image courante : 784 valeurs d'encre en [0,1], ligne-major. */
   private readonly inputPixels = new Float32Array(MNIST_INPUT_LENGTH);
 
@@ -986,7 +994,6 @@ export class MnistCnn extends LitElement {
       state: this.trainingState,
       weightsEdited: this.weightsEdited,
       manifestError: this.manifestError,
-      trainingError: this.trainingError,
       batchesProcessed: this.batchesProcessed,
       loss: this.loss,
       validationAccuracy: this.validationAccuracy,
@@ -1448,8 +1455,17 @@ export class MnistCnn extends LitElement {
    * une sélection plus ancienne ne désignant plus rien de valide.
    */
   private clearSelection(): void {
-    this.selection = null;
+    this.cancelWeightEdit();
     this.weightsEdited = false;
+  }
+
+  /**
+   * Efface la sélection, la saisie et l'erreur de l'éditeur, sans toucher à
+   * l'indicateur d'édition manuelle : appelée par « Annuler » et Échap, le poids
+   * déjà appliqué reste écrit dans les poids affichés.
+   */
+  private cancelWeightEdit(): void {
+    this.selection = null;
     this.weightDraft = '';
     this.weightError = null;
     this.canvasesDirty = true;
@@ -1509,12 +1525,14 @@ export class MnistCnn extends LitElement {
 
   /**
    * Saisie du brouillon : le texte du champ devient `weightDraft`, que
-   * `handleApplyWeight` soumet à `applyWeightDraft`.
+   * `handleApplyWeight` soumet à `applyWeightDraft`. Le message d'erreur est
+   * effacé : l'utilisateur corrige la valeur rejetée.
    */
   private readonly handleWeightInput = (event: Event): void => {
     const target = event.currentTarget;
     if (target instanceof HTMLInputElement) {
       this.weightDraft = target.value;
+      this.weightError = null;
     }
   };
 
@@ -1550,19 +1568,25 @@ export class MnistCnn extends LitElement {
       this.weightError = result.message;
       return;
     }
-    this.weights = result.weights;
+    // Poids capturés avant la mise en file : la notification sérialisée envoie
+    // la valeur de cette édition, pas celle d'une édition suivante.
+    const edited = result.weights;
+    this.weights = edited;
     this.weightsEdited = true;
     this.runInference();
-    void this.controller.notifyWeightsEdited(this.weights);
+    this.weightsNotifyChain = this.weightsNotifyChain
+      .then(() => this.controller.notifyWeightsEdited(edited))
+      .catch(() => undefined);
     this.weightError = null;
   };
 
   /**
    * Annule l'édition : sélection, saisie et erreur sont effacées — les toiles
-   * retombent sur la vue en moyenne des canaux.
+   * retombent sur la vue en moyenne des canaux — mais les poids déjà écrits
+   * restent édités, donc l'origine « Modifié » est conservée.
    */
   private readonly handleCancelWeight = (): void => {
-    this.clearSelection();
+    this.cancelWeightEdit();
   };
 
   /**
@@ -2079,7 +2103,7 @@ export class MnistCnn extends LitElement {
         </div>
         ${
           this.weightError !== null
-            ? html`<p class="drl-weight-error">${this.weightError}</p>`
+            ? html`<p class="drl-weight-error" role="alert">${this.weightError}</p>`
             : nothing
         }
       </div>

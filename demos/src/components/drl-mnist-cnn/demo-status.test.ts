@@ -12,7 +12,6 @@ const BASE_INPUT: DemoStatusInput = {
   state: 'deterministic',
   weightsEdited: false,
   manifestError: null,
-  trainingError: null,
   batchesProcessed: 0,
   loss: null,
   validationAccuracy: null,
@@ -133,6 +132,22 @@ describe('statusLine', () => {
       ),
     ).toBe(
       'Entrée : Dessin · classe prédite : – · 1234 paramètres · lots : 0 · perte : 0,420 · précision validation (sous-ensemble) : – · temps : 0,0 s · entraînement : 600 exemples · validation : 100 exemples',
+    );
+  });
+
+  it('shows a dash for a non-finite loss and a null validation accuracy', () => {
+    const line = statusLine(
+      input({
+        state: 'training',
+        metricsStarted: true,
+        loss: Number.NaN,
+        validationAccuracy: null,
+      }),
+    );
+    expect(line).toContain('perte : –');
+    expect(line).not.toContain('NaN');
+    expect(line).toBe(
+      'Entrée : Dessin · classe prédite : – · 1234 paramètres · lots : 0 · perte : – · précision validation (sous-ensemble) : – · temps : 0,0 s · entraînement : 600 exemples · validation : 100 exemples',
     );
   });
 
