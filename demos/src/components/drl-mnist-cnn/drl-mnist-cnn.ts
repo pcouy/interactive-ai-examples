@@ -120,7 +120,9 @@ export {
  * le formulaire sur le poids exact : libellé, saisie au clavier pré-remplie,
  * boutons « Appliquer » et « Annuler » — Entrée applique, Échap annule. Une
  * liaison sélectionnée sans case affiche le conseil de geste du module
- * `weight-editor.ts` à la place du formulaire.
+ * `weight-editor.ts` à la place du formulaire. Les liaisons se pilotent aussi
+ * au clavier (Entrée et Espace, avec focus visible) ; les toiles, elles,
+ * restent au pointeur.
  */
 
 /** Graine de l'initialisation déterministe des poids et des sélections. */
@@ -342,6 +344,19 @@ export function describeLinkLabel(
 }
 
 /**
+ * Sous-titre du panneau des filtres : la moyenne des canaux d'entrée pour
+ * chaque canal de sortie. Dès qu'un couple est sélectionné, sa toile de
+ * filtre aval montre le noyau 3×3 exact plutôt que la moyenne : une phrase
+ * le signale, sinon l'affichage contredirait le sous-titre.
+ */
+export function filterPanelSubtitle(selection: WeightSelection): string {
+  const mean = `Moyenne des canaux d'entrée pour chaque canal de sortie ; bleu = positif, violet = négatif.`;
+  return selection === null
+    ? mean
+    : `${mean} La toile du couple sélectionné montre le noyau 3×3 exact.`;
+}
+
+/**
  * Sélecteurs des deux toiles de filtres reliées par une liaison : la toile amont
  * est le canal de sortie `inputChannel` de la couche précédente, la toile aval le
  * canal d'entrée `outputChannel` de la couche de la frontière.
@@ -518,7 +533,7 @@ export class MnistCnn extends LitElement {
 
       .drl-panels-row {
         display: grid;
-        grid-template-columns: repeat(auto-fit, minmax(300px, minmax(0, 1fr)));
+        grid-template-columns: repeat(auto-fit, minmax(240px, minmax(0, 1fr)));
         gap: var(--drl-space-3);
         margin-top: var(--drl-space-3);
       }
@@ -788,7 +803,7 @@ export class MnistCnn extends LitElement {
         fill: none;
         stroke: var(--drl-muted);
         stroke-width: 1;
-        opacity: 0.45;
+        opacity: 0.7;
         transition:
           stroke 120ms ease,
           stroke-width 120ms ease,
@@ -806,7 +821,7 @@ export class MnistCnn extends LitElement {
       .drl-filter-link--dimmed {
         stroke: var(--drl-muted);
         stroke-width: 1;
-        opacity: 0.15;
+        opacity: 0.35;
       }
 
       /* Survol : la ligne prend l'accent secondaire, y compris si elle est
@@ -816,6 +831,14 @@ export class MnistCnn extends LitElement {
         stroke: var(--drl-accent-2);
         stroke-width: 1.5;
         opacity: 0.85;
+      }
+
+      /* Focus clavier : la ligne visible du groupe prend l'accent secondaire,
+          sans cadre autour du groupe SVG. */
+      .drl-filter-link-group:focus-visible .drl-filter-link {
+        stroke: var(--drl-accent-2);
+        stroke-width: 2;
+        opacity: 1;
       }
 
       /* Zone de clic large mais transparente : le contour du segment reste la
@@ -1510,6 +1533,24 @@ export class MnistCnn extends LitElement {
   };
 
   /**
+   * Clavier d'une ligne de liaison : Entrée et Espace sélectionnent le couple
+   * comme le clic ; Espace est bloqué pour ne pas faire défiler la page.
+   */
+  private readonly handleLinkKeyDown = (
+    event: KeyboardEvent,
+    boundary: number,
+    inputChannel: number,
+    outputChannel: number,
+  ): void => {
+    if (event.key === 'Enter') {
+      this.handleLinkClick(boundary, inputChannel, outputChannel);
+    } else if (event.key === ' ') {
+      event.preventDefault();
+      this.handleLinkClick(boundary, inputChannel, outputChannel);
+    }
+  };
+
+  /**
    * Clic sur une case d'une toile de filtres : ne produit une sélection de poids
    * que si la sélection courante est la liaison de la frontière immédiatement en
    * amont désignant cette toile. Sinon le clic est ignoré : le canal d'entrée
@@ -1790,7 +1831,7 @@ export class MnistCnn extends LitElement {
     return html`
       <div class="drl-status">
         <span class="drl-badge">${badgeText(this.demoStatus)}</span>
-        <span class="drl-status-text">${statusLine(this.demoStatus)}</span>
+        <span class="drl-status-text" role="status">${statusLine(this.demoStatus)}</span>
       </div>
     `;
   }
@@ -2000,10 +2041,7 @@ export class MnistCnn extends LitElement {
       <div class="drl-panels-row">
         <section class="drl-panel drl-panel--filters" aria-label="Filtres de convolution">
           <h4 class="drl-panel-title">Filtres de convolution 3×3</h4>
-          <p class="drl-panel-subtitle">
-            Moyenne des canaux d'entrée pour chaque canal de sortie ; bleu = positif, violet =
-            négatif.
-          </p>
+          <p class="drl-panel-subtitle">${filterPanelSubtitle(this.selection)}</p>
           ${this.renderWeightEditor()}
           ${
             result
@@ -2173,11 +2211,15 @@ export class MnistCnn extends LitElement {
     return html`
       <g
         class="drl-filter-link-group"
+        role="button"
+        tabindex="0"
         data-boundary=${link.boundary}
         data-input-channel=${link.inputChannel}
         data-output-channel=${link.outputChannel}
         aria-label=${label}
         @click=${() => this.handleLinkClick(link.boundary, link.inputChannel, link.outputChannel)}
+        @keydown=${(event: KeyboardEvent) =>
+          this.handleLinkKeyDown(event, link.boundary, link.inputChannel, link.outputChannel)}
       >
         <title>${label}</title>
         <line class="drl-filter-link drl-filter-link--${state}" x1="0" y1="0" x2="0" y2="0"></line>
