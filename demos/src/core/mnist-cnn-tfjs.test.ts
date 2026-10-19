@@ -12,9 +12,17 @@ import {
 } from './mnist-cnn.js';
 import {
   createMnistCnnTfjsTrainer,
+  DEFAULT_PREFETCH_DEPTH,
   DEFAULT_TRAINING_SEED,
+  MAX_LOSS_SAMPLE_EVERY,
+  MAX_PREFETCH_DEPTH,
+  MIN_LOSS_SAMPLE_EVERY,
+  MIN_PREFETCH_DEPTH,
+  MNIST_VALIDATION_CHUNK_SIZE,
   MnistCnnTfjsTrainer,
   type MnistTrainingProgress,
+  type MnistTrainSource,
+  sampleToTrainSource,
 } from './mnist-cnn-tfjs.js';
 import type { MnistSample } from './mnist-data.js';
 
@@ -55,6 +63,31 @@ function makeSample(count: number, seed = 7): MnistSample {
     labels[index] = index % LOGIT_COUNT;
   }
   return { count, images, labels };
+}
+
+/** Source d'entraînement en mémoire, adossée à un échantillon synthétique. */
+function makeSource(count: number, seed = 7): MnistTrainSource {
+  return sampleToTrainSource(makeSample(count, seed));
+}
+
+/** Source dont `readBatch` retourne toujours le même lot, pour tester la validation. */
+function sourceOfBatch(batch: MnistSample): MnistTrainSource {
+  return { count: batch.count, readBatch: () => batch };
+}
+
+/** Source qui découpe un échantillon en tranches et enregistre chaque plage lue. */
+function recordingSource(sample: MnistSample, ranges: Array<[number, number]>): MnistTrainSource {
+  return {
+    count: sample.count,
+    readBatch(start, end) {
+      ranges.push([start, end]);
+      return {
+        count: end - start,
+        images: sample.images.subarray(start * MNIST_INPUT_LENGTH, end * MNIST_INPUT_LENGTH),
+        labels: sample.labels.subarray(start, end),
+      };
+    },
+  };
 }
 
 function rampInput(): Float32Array {
@@ -221,8 +254,9 @@ describe('bounded training', () => {
     const initial = await trainer.exportWeights();
     const events: MnistTrainingProgress[] = [];
     const result = await trainer.train({
-      train: makeSample(4),
+      train: makeSource(4),
       epochs: 1,
+      progressIntervalMs: 0,
       onProgress: (progress) => events.push(progress),
     });
     expect(result.status).toBe('completed');
@@ -231,7 +265,8 @@ describe('bounded training', () => {
     expect(result.loss).toBeGreaterThan(0);
     expect(result.validationLoss).toBeNull();
     expect(result.validationAccuracy).toBeNull();
-    expect(events.filter((event) => event.status === 'running')).toHaveLength(2);
+    // Deux évènements par lot, plus un évènement de fin d'époque.
+    expect(events.filter((event) => event.status === 'running')).toHaveLength(3);
     expect(events.at(-1)?.status).toBe('completed');
     const updated = await trainer.exportWeights();
     expect(Array.from(updated.dense1.kernel)).not.toEqual(Array.from(initial.dense1.kernel));
@@ -240,8 +275,8 @@ describe('bounded training', () => {
   it('reports validation loss and accuracy at the end of each epoch', async () => {
     const trainer = await makeTrainer(SMALL_FILTERS, { batchSize: 2 });
     const result = await trainer.train({
-      train: makeSample(4, 1),
-      validation: makeSample(6, 2),
+      train: makeSource(4, 1),
+      validation: makeSource(6, 2),
       epochs: 2,
     });
     expect(result.status).toBe('completed');
@@ -256,8 +291,9 @@ describe('bounded training', () => {
     const pending: Array<() => void> = [];
     const events: MnistTrainingProgress[] = [];
     const running = trainer.train({
-      train: makeSample(4),
+      train: makeSource(4),
       epochs: 1,
+      progressIntervalMs: 0,
       onProgress: (progress) => events.push(progress),
       yieldControl: () =>
         new Promise<void>((resolve) => {
@@ -275,21 +311,22 @@ describe('bounded training', () => {
     }
     const result = await running;
     expect(result.status).toBe('completed');
-    expect(events.filter((event) => event.status === 'running')).toHaveLength(2);
+    // Deux évènements par lot, plus un évènement de fin d'époque.
+    expect(events.filter((event) => event.status === 'running')).toHaveLength(3);
   });
 
   it('rejects a concurrent training run', async () => {
     const trainer = await makeTrainer(SMALL_FILTERS, { batchSize: 2 });
     const pending: Array<() => void> = [];
     const running = trainer.train({
-      train: makeSample(4),
+      train: makeSource(4),
       yieldControl: () =>
         new Promise<void>((resolve) => {
           pending.push(resolve);
         }),
     });
     await new Promise<void>((resolve) => setTimeout(resolve, 0));
-    await expect(trainer.train({ train: makeSample(2) })).rejects.toThrow(/already training/i);
+    await expect(trainer.train({ train: makeSource(2) })).rejects.toThrow(/already training/i);
     pending.shift()?.();
     await new Promise<void>((resolve) => setTimeout(resolve, 0));
     pending.shift()?.();
@@ -317,9 +354,9 @@ describe('bounded training', () => {
       seed: DEFAULT_TRAINING_SEED,
     });
     disposables.push(trainer);
-    await expect(trainer.train({ train: makeSample(2) })).rejects.toThrow(/allocation failed/i);
+    await expect(trainer.train({ train: makeSource(2) })).rejects.toThrow(/allocation failed/i);
     // La première allocation a échoué : l'entraîneur ne doit pas rester bloqué.
-    const result = await trainer.train({ train: makeSample(2), epochs: 1 });
+    const result = await trainer.train({ train: makeSource(2), epochs: 1 });
     expect(result.status).toBe('completed');
   });
 });
@@ -330,8 +367,9 @@ describe('cancellation', () => {
     const before = tf.memory().numTensors;
     const events: MnistTrainingProgress[] = [];
     const result = await trainer.train({
-      train: makeSample(4),
+      train: makeSource(4),
       epochs: 1,
+      progressIntervalMs: 0,
       onProgress: (progress) => {
         events.push(progress);
         if (progress.batchesProcessed === 1) {
@@ -348,18 +386,18 @@ describe('cancellation', () => {
 
   it('ignores a cancellation requested after completion', async () => {
     const trainer = await makeTrainer(SMALL_FILTERS, { batchSize: 2 });
-    const first = await trainer.train({ train: makeSample(2), epochs: 1 });
+    const first = await trainer.train({ train: makeSource(2), epochs: 1 });
     expect(first.status).toBe('completed');
     await trainer.cancel();
-    const second = await trainer.train({ train: makeSample(2), epochs: 1 });
+    const second = await trainer.train({ train: makeSource(2), epochs: 1 });
     expect(second.status).toBe('completed');
   });
 
   it('skips validation when cancellation is requested during the last batch', async () => {
     const trainer = await makeTrainer(SMALL_FILTERS, { batchSize: 4 });
     const result = await trainer.train({
-      train: makeSample(4),
-      validation: makeSample(4, 2),
+      train: makeSource(4),
+      validation: makeSource(4, 2),
       epochs: 1,
       onProgress: (progress) => {
         if (progress.status === 'running') {
@@ -377,7 +415,7 @@ describe('reset and disposal', () => {
   it('rebuilds a fresh model after reset', async () => {
     const trainer = await makeTrainer(SMALL_FILTERS, { batchSize: 2 });
     const initial = await trainer.exportWeights();
-    await trainer.train({ train: makeSample(4), epochs: 1 });
+    await trainer.train({ train: makeSource(4), epochs: 1 });
     trainer.reset();
     const rebuilt = await trainer.exportWeights();
     expect(trainer.graph).not.toBeNull();
@@ -388,7 +426,7 @@ describe('reset and disposal', () => {
     const trainer = await makeTrainer(SMALL_FILTERS);
     await trainer.dispose();
     expect(trainer.isDisposed).toBe(true);
-    await expect(trainer.train({ train: makeSample(2) })).rejects.toThrow(/disposed/i);
+    await expect(trainer.train({ train: makeSource(2) })).rejects.toThrow(/disposed/i);
     await expect(trainer.exportWeights()).rejects.toThrow(/disposed/i);
     await expect(trainer.predict(makeSample(2))).rejects.toThrow(/disposed/i);
     await expect(trainer.dispose()).resolves.toBeUndefined();
@@ -401,7 +439,7 @@ describe('error handling', () => {
     const before = tf.memory().numTensors;
     const pending: Array<() => void> = [];
     const running = trainer.train({
-      train: makeSample(4),
+      train: makeSource(4),
       epochs: 1,
       yieldControl: () =>
         new Promise<void>((resolve) => {
@@ -418,6 +456,350 @@ describe('error handling', () => {
   });
 });
 
+describe('train source', () => {
+  it('reads bounded batches and never the whole split', async () => {
+    const trainer = await makeTrainer(SMALL_FILTERS, { batchSize: 4 });
+    const sample = makeSample(10);
+    const ranges: Array<[number, number]> = [];
+    const result = await trainer.train({
+      train: recordingSource(sample, ranges),
+      prefetchDepth: 1,
+      epochs: 1,
+    });
+    expect(result.status).toBe('completed');
+    expect(result.batchesProcessed).toBe(3);
+    expect(ranges).toHaveLength(3);
+    for (const [start, end] of ranges) {
+      expect(end - start).toBeGreaterThan(0);
+      expect(end - start).toBeLessThanOrEqual(4);
+      expect(end - start).toBeLessThan(sample.count);
+    }
+    const sorted = [...ranges].sort((a, b) => a[0] - b[0]);
+    let cursor = 0;
+    for (const [start, end] of sorted) {
+      expect(start).toBe(cursor);
+      cursor = end;
+    }
+    expect(cursor).toBe(sample.count);
+  });
+
+  it('rejects a source whose readBatch returns the wrong count', async () => {
+    const trainer = await makeTrainer(SMALL_FILTERS, { batchSize: 2 });
+    const wrongCount: MnistTrainSource = {
+      count: 4,
+      readBatch(start, end) {
+        const size = end - start + 1;
+        return {
+          count: size,
+          images: new Float32Array(size * MNIST_INPUT_LENGTH),
+          labels: new Uint8Array(size),
+        };
+      },
+    };
+    await expect(trainer.train({ train: wrongCount, epochs: 1 })).rejects.toThrow(/readBatch/i);
+  });
+
+  it('rejects a source with an invalid count', async () => {
+    const trainer = await makeTrainer(SMALL_FILTERS);
+    await expect(
+      trainer.train({ train: { count: 0, readBatch: () => makeSample(1) } }),
+    ).rejects.toThrow(/count/i);
+  });
+});
+
+describe('validation chunking', () => {
+  it('accumulates metrics over chunks larger than the chunk size', async () => {
+    const trainer = await makeTrainer(SMALL_FILTERS, { batchSize: 8 });
+    const validationSample = makeSample(MNIST_VALIDATION_CHUNK_SIZE + 8, 3);
+    const ranges: Array<[number, number]> = [];
+    const result = await trainer.train({
+      train: makeSource(8),
+      validation: recordingSource(validationSample, ranges),
+      epochs: 1,
+    });
+    expect(result.status).toBe('completed');
+    expect(ranges).toHaveLength(2);
+    expect(ranges[0][1] - ranges[0][0]).toBe(MNIST_VALIDATION_CHUNK_SIZE);
+    expect(ranges[1][1] - ranges[1][0]).toBe(8);
+
+    // Référence calculée indépendamment sur les mêmes poids finaux.
+    const probabilities = await trainer.predict(validationSample);
+    let correct = 0;
+    for (let index = 0; index < validationSample.count; index += 1) {
+      let best = 0;
+      for (let column = 1; column < LOGIT_COUNT; column += 1) {
+        const candidate = probabilities[index * LOGIT_COUNT + column];
+        if (candidate > probabilities[index * LOGIT_COUNT + best]) {
+          best = column;
+        }
+      }
+      if (best === validationSample.labels[index]) {
+        correct += 1;
+      }
+    }
+    expect(result.validationAccuracy).toBeCloseTo(correct / validationSample.count, 6);
+    expect(result.validationLoss).toBeGreaterThan(0);
+  });
+});
+
+describe('prefetch', () => {
+  it('materializes at most prefetchDepth batches ahead', async () => {
+    const trainer = await makeTrainer(SMALL_FILTERS, { batchSize: 2 });
+    const prefetchDepth = DEFAULT_PREFETCH_DEPTH;
+    const sample = makeSample(20);
+    const ranges: Array<[number, number]> = [];
+    const outstanding: number[] = [];
+    let consumed = 0;
+    const source: MnistTrainSource = {
+      count: sample.count,
+      readBatch(start, end) {
+        if (ranges.length - consumed >= prefetchDepth) {
+          throw new Error('MNIST TFJS source read more than prefetchDepth batches ahead.');
+        }
+        ranges.push([start, end]);
+        outstanding.push(ranges.length - consumed);
+        return {
+          count: end - start,
+          images: sample.images.subarray(start * MNIST_INPUT_LENGTH, end * MNIST_INPUT_LENGTH),
+          labels: sample.labels.subarray(start, end),
+        };
+      },
+    };
+    const result = await trainer.train({
+      train: source,
+      prefetchDepth,
+      epochs: 1,
+      progressIntervalMs: 0,
+      onProgress: (progress) => {
+        consumed = progress.batchesProcessed;
+      },
+    });
+    expect(result.status).toBe('completed');
+    expect(result.batchesProcessed).toBe(10);
+    expect(ranges).toHaveLength(10);
+    expect(new Set(ranges.map(([start, end]) => `${start}-${end}`)).size).toBe(10);
+    expect(Math.max(...outstanding)).toBe(prefetchDepth);
+  });
+
+  it('drains and disposes the buffer after completion and cancellation', async () => {
+    const trainer = await makeTrainer(SMALL_FILTERS, { batchSize: 2 });
+    await trainer.exportWeights();
+    await trainer.train({ train: makeSource(20, 1), prefetchDepth: 4, epochs: 1 });
+    const baseline = tf.memory().numTensors;
+
+    const completed = await trainer.train({
+      train: makeSource(20, 2),
+      prefetchDepth: 4,
+      epochs: 1,
+    });
+    expect(completed.status).toBe('completed');
+    expect(tf.memory().numTensors).toBe(baseline);
+
+    const cancelled = await trainer.train({
+      train: makeSource(20, 3),
+      prefetchDepth: 4,
+      epochs: 1,
+      progressIntervalMs: 0,
+      onProgress: (progress) => {
+        if (progress.batchesProcessed === 1) {
+          void trainer.cancel();
+        }
+      },
+    });
+    expect(cancelled.status).toBe('cancelled');
+    expect(tf.memory().numTensors).toBe(baseline);
+  });
+
+  it('completes and updates the weights with prefetchDepth 1', async () => {
+    const trainer = await makeTrainer(SMALL_FILTERS, { batchSize: 2 });
+    const initial = await trainer.exportWeights();
+    const result = await trainer.train({ train: makeSource(4), prefetchDepth: 1, epochs: 1 });
+    expect(result.status).toBe('completed');
+    expect(result.batchesProcessed).toBe(2);
+    const updated = await trainer.exportWeights();
+    expect(Array.from(updated.dense1.kernel)).not.toEqual(Array.from(initial.dense1.kernel));
+  });
+});
+
+describe('loss sampling', () => {
+  it('reads the loss once per window and never synchronously', async () => {
+    // On espionne `Tensor.prototype` : la lecture porte sur le scalaire moyen,
+    // pas sur les tenseurs de coût individuels.
+    const prototype = tf.Tensor.prototype as unknown as {
+      data: (...args: unknown[]) => Promise<unknown>;
+      dataSync: (...args: unknown[]) => unknown;
+    };
+    const originalData = prototype.data;
+    const originalDataSync = prototype.dataSync;
+    let dataCalls = 0;
+    let dataSyncCalls = 0;
+    prototype.data = function (this: unknown, ...args: unknown[]): Promise<unknown> {
+      dataCalls += 1;
+      return originalData.apply(this, args);
+    };
+    prototype.dataSync = function (this: unknown, ...args: unknown[]): unknown {
+      dataSyncCalls += 1;
+      return originalDataSync.apply(this, args);
+    };
+    try {
+      const trainer = await makeTrainer(SMALL_FILTERS, { batchSize: 2 });
+      const batches = 16;
+      const result = await trainer.train({
+        train: makeSource(batches * 2),
+        lossSampleEvery: 4,
+        epochs: 1,
+      });
+      expect(result.status).toBe('completed');
+      expect(result.batchesProcessed).toBe(batches);
+      expect(Number.isFinite(result.loss)).toBe(true);
+      // Aucune lecture synchrone : la file GPU n'est jamais vidée par lot.
+      expect(dataSyncCalls).toBe(0);
+      // Une seule lecture par fenêtre : 16 lots / 4 = 4 lectures.
+      expect(dataCalls).toBe(4);
+    } finally {
+      prototype.data = originalData;
+      prototype.dataSync = originalDataSync;
+    }
+  });
+
+  it('flushes a partial window at the end of an epoch with the mean loss', async () => {
+    const core = await import('./mnist-cnn.js');
+    const batchLosses: number[] = [];
+    const realAdam = tf.train.adam.bind(tf.train);
+    const fakeTf = {
+      ...tf,
+      train: {
+        ...tf.train,
+        adam: (learningRate: number) => {
+          const optimizer = realAdam(learningRate);
+          return new Proxy(optimizer, {
+            get(target, property, receiver) {
+              if (property !== 'minimize') {
+                return Reflect.get(target, property, receiver);
+              }
+              return (...args: unknown[]) => {
+                const cost = (target.minimize as (...inner: unknown[]) => tf.Tensor | null)(
+                  ...args,
+                );
+                if (cost !== null) {
+                  batchLosses.push(Number(cost.dataSync()[0]));
+                }
+                return cost;
+              };
+            },
+          });
+        },
+      },
+    } as unknown as typeof tf;
+    const trainer = new MnistCnnTfjsTrainer(fakeTf, core, {
+      filters: SMALL_FILTERS,
+      learningRate: 3e-3,
+      batchSize: 2,
+      seed: DEFAULT_TRAINING_SEED,
+    });
+    disposables.push(trainer);
+    const result = await trainer.train({
+      train: makeSource(10),
+      lossSampleEvery: 3,
+      epochs: 1,
+    });
+    expect(result.status).toBe('completed');
+    expect(result.batchesProcessed).toBe(5);
+    expect(batchLosses).toHaveLength(5);
+    // Fenêtre finale partielle : moyenne des deux derniers lots seulement.
+    const expected = (batchLosses[3] + batchLosses[4]) / 2;
+    expect(result.loss).toBeCloseTo(expected, 4);
+  });
+
+  it('disposes pending cost tensors after completion and cancellation', async () => {
+    const trainer = await makeTrainer(SMALL_FILTERS, { batchSize: 2 });
+    await trainer.exportWeights();
+    await trainer.train({ train: makeSource(20, 1), lossSampleEvery: 8, epochs: 1 });
+    const baseline = tf.memory().numTensors;
+
+    const completed = await trainer.train({
+      train: makeSource(20, 2),
+      lossSampleEvery: 8,
+      epochs: 1,
+    });
+    expect(completed.status).toBe('completed');
+    expect(tf.memory().numTensors).toBe(baseline);
+
+    const cancelled = await trainer.train({
+      train: makeSource(20, 3),
+      lossSampleEvery: 8,
+      epochs: 1,
+      progressIntervalMs: 0,
+      onProgress: (progress) => {
+        if (progress.batchesProcessed === 1) {
+          void trainer.cancel();
+        }
+      },
+    });
+    expect(cancelled.status).toBe('cancelled');
+    expect(tf.memory().numTensors).toBe(baseline);
+  });
+});
+
+describe('progress throttling', () => {
+  it('emits one running event and one final event for a short run', async () => {
+    const trainer = await makeTrainer(SMALL_FILTERS, { batchSize: 1 });
+    const events: MnistTrainingProgress[] = [];
+    const result = await trainer.train({
+      train: makeSource(4),
+      epochs: 1,
+      progressIntervalMs: 60_000,
+      onProgress: (progress) => events.push(progress),
+    });
+    expect(result.status).toBe('completed');
+    expect(result.batchesProcessed).toBe(4);
+    const running = events.filter((event) => event.status === 'running');
+    expect(running).toHaveLength(1);
+    expect(running[0].batchesProcessed).toBe(4);
+    expect(events.at(-1)?.status).toBe('completed');
+    expect(events.at(-1)?.batchesProcessed).toBe(4);
+  });
+});
+
+describe('reshuffle', () => {
+  it('calls reshuffle once per epoch with deterministic seeds', async () => {
+    const sample = makeSample(8);
+    const buildSource = (): { seeds: number[]; source: MnistTrainSource } => {
+      const seeds: number[] = [];
+      return {
+        seeds,
+        source: {
+          count: sample.count,
+          readBatch(start, end) {
+            return {
+              count: end - start,
+              images: sample.images.subarray(start * MNIST_INPUT_LENGTH, end * MNIST_INPUT_LENGTH),
+              labels: sample.labels.subarray(start, end),
+            };
+          },
+          reshuffle(seed) {
+            seeds.push(seed);
+          },
+        },
+      };
+    };
+
+    const first = await makeTrainer(SMALL_FILTERS, { batchSize: 2, seed: 11 });
+    const firstRun = buildSource();
+    const result = await first.train({ train: firstRun.source, epochs: 3 });
+    expect(result.status).toBe('completed');
+    expect(result.batchesProcessed).toBe(12);
+    expect(firstRun.seeds).toHaveLength(3);
+    expect(new Set(firstRun.seeds).size).toBe(3);
+
+    // Même graine d'entraînement : mêmes graines d'époque.
+    const second = await makeTrainer(SMALL_FILTERS, { batchSize: 2, seed: 11 });
+    const secondRun = buildSource();
+    await second.train({ train: secondRun.source, epochs: 3 });
+    expect(secondRun.seeds).toEqual(firstRun.seeds);
+  });
+});
+
 describe('configuration validation', () => {
   it('rejects invalid filter counts', async () => {
     await expect(makeTrainer([0, 1, 1, 1])).rejects.toThrow(/filter count/i);
@@ -430,41 +812,75 @@ describe('configuration validation', () => {
     await expect(makeTrainer(SMALL_FILTERS, { seed: -1 })).rejects.toThrow(/seed/i);
   });
 
-  it('rejects malformed samples and epochs', async () => {
+  it('rejects an invalid prefetchDepth', async () => {
+    const trainer = await makeTrainer(SMALL_FILTERS);
+    await expect(
+      trainer.train({ train: makeSource(2), prefetchDepth: MIN_PREFETCH_DEPTH - 1 }),
+    ).rejects.toThrow(/prefetchDepth/i);
+    await expect(
+      trainer.train({ train: makeSource(2), prefetchDepth: MAX_PREFETCH_DEPTH + 1 }),
+    ).rejects.toThrow(/prefetchDepth/i);
+    await expect(trainer.train({ train: makeSource(2), prefetchDepth: 1.5 })).rejects.toThrow(
+      /prefetchDepth/i,
+    );
+  });
+
+  it('rejects invalid lossSampleEvery and progressIntervalMs', async () => {
+    const trainer = await makeTrainer(SMALL_FILTERS);
+    await expect(
+      trainer.train({ train: makeSource(2), lossSampleEvery: MIN_LOSS_SAMPLE_EVERY - 1 }),
+    ).rejects.toThrow(/lossSampleEvery/i);
+    await expect(
+      trainer.train({ train: makeSource(2), lossSampleEvery: MAX_LOSS_SAMPLE_EVERY + 1 }),
+    ).rejects.toThrow(/lossSampleEvery/i);
+    await expect(trainer.train({ train: makeSource(2), lossSampleEvery: 2.5 })).rejects.toThrow(
+      /lossSampleEvery/i,
+    );
+    await expect(trainer.train({ train: makeSource(2), progressIntervalMs: -1 })).rejects.toThrow(
+      /progressIntervalMs/i,
+    );
+    await expect(
+      trainer.train({ train: makeSource(2), progressIntervalMs: Number.NaN }),
+    ).rejects.toThrow(/progressIntervalMs/i);
+  });
+
+  it('rejects malformed batches and epochs', async () => {
     const trainer = await makeTrainer(SMALL_FILTERS);
     await expect(
       trainer.train({
-        train: { count: 2, images: new Float32Array(10), labels: new Uint8Array(2) },
+        train: sourceOfBatch({ count: 2, images: new Float32Array(10), labels: new Uint8Array(2) }),
       }),
     ).rejects.toThrow(/images/i);
     await expect(
       trainer.train({
-        train: {
+        train: sourceOfBatch({
           count: 2,
           images: new Float32Array(2 * MNIST_INPUT_LENGTH),
           labels: new Uint8Array(1),
-        },
+        }),
       }),
     ).rejects.toThrow(/labels/i);
-    await expect(trainer.train({ train: makeSample(2), epochs: 0 })).rejects.toThrow(/epochs/i);
+    await expect(trainer.train({ train: makeSource(2), epochs: 0 })).rejects.toThrow(/epochs/i);
   });
 
   it('rejects out-of-range labels and non-finite pixels', async () => {
     const trainer = await makeTrainer(SMALL_FILTERS);
     await expect(
       trainer.train({
-        train: {
+        train: sourceOfBatch({
           count: 2,
           images: new Float32Array(2 * MNIST_INPUT_LENGTH),
           labels: new Uint8Array([1, 12]),
-        },
+        }),
       }),
     ).rejects.toThrow(/labels/i);
 
     const notANumber = new Float32Array(2 * MNIST_INPUT_LENGTH);
     notANumber[3] = Number.NaN;
     await expect(
-      trainer.train({ train: { count: 2, images: notANumber, labels: new Uint8Array([1, 2]) } }),
+      trainer.train({
+        train: sourceOfBatch({ count: 2, images: notANumber, labels: new Uint8Array([1, 2]) }),
+      }),
     ).rejects.toThrow(/images/i);
 
     const infinite = new Float32Array(2 * MNIST_INPUT_LENGTH);
