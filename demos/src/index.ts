@@ -15,6 +15,8 @@ import './components/drl-deep-blue-page/drl-deep-blue-page.js';
 import './components/drl-mnist-cnn/drl-mnist-cnn.js';
 import './components/drl-frozen-lake/drl-frozen-lake.js';
 
+import './components/drl-neuron/drl-neuron.js';
+
 // @demos-imports
 
 export * from './base/demo-element.js';

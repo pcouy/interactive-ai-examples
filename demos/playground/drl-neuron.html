@@ -1,0 +1,253 @@
+<!doctype html>
+<html lang="fr">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>Neurone — descente de gradient par batch</title>
+    <style>
+      body {
+        margin: 0;
+        padding: 2rem;
+        background: #f8fafc;
+        color: #0f172a;
+        font-family: system-ui, sans-serif;
+      }
+
+      main {
+        display: grid;
+        gap: 1rem;
+        margin: 0 auto;
+      }
+
+      h4 {
+        margin: 1rem 0 0.25rem;
+        font-size: 0.95rem;
+      }
+
+      p {
+        margin: 0.25rem 0;
+        line-height: 1.5;
+      }
+
+      a {
+        color: #2563eb;
+      }
+
+      .sliders {
+        display: grid;
+        gap: 0.5rem;
+        margin: 0.5rem 0 1rem;
+      }
+
+      .drl-field {
+        display: grid;
+        gap: 0.35rem;
+        margin: 0.5rem 0;
+      }
+
+      .drl-field > label {
+        color: #64748b;
+        font-size: 0.9rem;
+      }
+
+      .drl-row {
+        display: flex;
+        flex-wrap: wrap;
+        align-items: center;
+        gap: 0.5rem;
+      }
+
+      input[type='text'],
+      select,
+      button {
+        font: inherit;
+        padding: 0.25rem 0.6rem;
+        border: 1px solid #e2e8f0;
+        border-radius: 5px;
+        background: #f8fafc;
+        color: #0f172a;
+      }
+
+      button {
+        cursor: pointer;
+      }
+
+      .drl-error {
+        margin: 0;
+        color: #dc2626;
+        font-size: 0.9rem;
+      }
+    </style>
+  </head>
+  <body>
+    <main>
+      <p><a href="./index.html">← Playground</a></p>
+      <drl-card heading="Neurone — descente de gradient">
+        <p>
+          Le neurone calcule ŷ = w₁·x₁ + w₂·x₂, plus un biais b lorsque la case est cochée. Il apprend
+          à imiter une fonction f(x₁, x₂) que vous saisissez, évaluée sur des couples (x₁, x₂)
+          tirés au hasard : chaque point du graphique est un exemple, et sa couleur donne sa
+          valeur cible t = f(x₁, x₂).
+        </p>
+        <p>
+          La vue 2D montre les exemples colorés selon leur cible t. Derrière eux, une grille 16×16
+          affiche la prédiction actuelle ŷ du neurone sur tout le carré d'entrée, avec la même
+          échelle de couleurs : à mesure que l'entraînement progresse, la grille prend peu à peu
+          les couleurs des points. La vue 3D montre la surface de loss moyenne sur tout le jeu de
+          données, la bille suivant la descente : les deux vues sont synchronisées.
+        </p>
+        <p>
+          La loss L1 est l'erreur absolue moyenne ; la loss L2 est l'erreur quadratique moyenne.
+          L2 pénalise plus fortement les grandes erreurs et dessine un bol plus lisse ; L1 est plus
+          robuste aux valeurs extrêmes.
+        </p>
+        <p>
+          Play entraîne une batch par seconde. Chaque batch calcule le gradient moyen puis fait un
+          pas dans la direction opposée. Si la loss explose, un message de divergence vous invite à
+          réinitialiser.
+        </p>
+        <drl-neuron speed="0.033333"></drl-neuron>
+        <p id="diverged" class="drl-error" hidden>Divergé — réinitialisez.</p>
+        <div class="sliders">
+          <drl-slider
+            id="lr"
+            label="Taux d'apprentissage"
+            min="0.01"
+            max="10"
+            step="0.01"
+            value="0.15"
+          ></drl-slider>
+          <drl-slider
+            id="batch-size"
+            label="Taille de batch"
+            min="1"
+            max="12"
+            step="1"
+            value="4"
+          ></drl-slider>
+          <drl-slider
+            id="count"
+            label="Nombre d'exemples"
+            min="10"
+            max="200"
+            step="10"
+            value="40"
+          ></drl-slider>
+        </div>
+        <div class="drl-field">
+          <label for="expression">Fonction cible f(x₁, x₂)</label>
+          <div class="drl-row">
+            <input id="expression" type="text" placeholder="x1 + x2" />
+            <button id="apply-expression" type="button">Appliquer</button>
+            <button id="new-dataset" type="button">Nouveau jeu de données</button>
+          </div>
+          <p id="expression-error" class="drl-error" hidden></p>
+        </div>
+        <div class="drl-field">
+          <label for="loss-kind">Loss</label>
+          <select id="loss-kind">
+            <option value="l1">L1</option>
+            <option value="l2" selected>L2</option>
+          </select>
+        </div>
+        <div class="drl-field">
+          <label for="bias">Biais</label>
+          <input id="bias" type="checkbox" />
+        </div>
+      </drl-card>
+    </main>
+    <script type="module" src="/src/index.ts"></script>
+    <script type="module">
+      const demo = document.querySelector('drl-neuron');
+      const expressionInput = document.getElementById('expression');
+      const applyButton = document.getElementById('apply-expression');
+      const newDatasetButton = document.getElementById('new-dataset');
+      const expressionError = document.getElementById('expression-error');
+      const lossKind = document.getElementById('loss-kind');
+      const bias = document.getElementById('bias');
+      const diverged = document.getElementById('diverged');
+
+      function bind(id, apply) {
+        const slider = document.getElementById(id);
+        slider?.addEventListener('drl-input', (event) => {
+          if (demo) {
+            apply(demo, event.detail);
+          }
+        });
+      }
+
+      bind('lr', (element, value) => {
+        element.learningRate = value;
+      });
+      bind('batch-size', (element, value) => {
+        element.batchSize = value;
+      });
+      bind('count', (element, value) => {
+        element.count = value;
+      });
+
+      function applyExpression() {
+        if (demo === null || expressionInput === null) {
+          return;
+        }
+        // The component rebuilds its dataset when `expression` changes: no reset here.
+        demo.expression = expressionInput.value;
+      }
+
+      applyButton?.addEventListener('click', applyExpression);
+      expressionInput?.addEventListener('keydown', (event) => {
+        if (event.key === 'Enter') {
+          applyExpression();
+        }
+      });
+
+      newDatasetButton?.addEventListener('click', () => {
+        demo?.regenerateDataset();
+      });
+
+      demo?.addEventListener('drl-target-error', (event) => {
+        if (expressionError === null) {
+          return;
+        }
+        if (event.detail === null) {
+          expressionError.hidden = true;
+          return;
+        }
+        expressionError.textContent = event.detail;
+        expressionError.hidden = false;
+      });
+
+      lossKind?.addEventListener('change', () => {
+        if (demo === null) {
+          return;
+        }
+        demo.lossKind = lossKind.value;
+      });
+
+      bias?.addEventListener('change', () => {
+        if (demo === null) {
+          return;
+        }
+        demo.bias = bias.checked;
+      });
+
+      demo?.addEventListener('drl-diverged', (event) => {
+        if (diverged !== null) {
+          diverged.hidden = !event.detail;
+        }
+      });
+
+      if (demo !== null) {
+        if (expressionInput !== null) {
+          expressionInput.value = demo.expression;
+        }
+        if (lossKind !== null) {
+          lossKind.value = demo.lossKind;
+        }
+        if (bias !== null) {
+          bias.checked = demo.bias;
+        }
+      }
+    </script>
+  </body>
+</html>
