@@ -9,8 +9,13 @@ export const FROZEN_LAKE_ACTIONS: readonly FrozenLakeAction[] = ['left', 'down',
 const DEFAULT_SEED = 42;
 const REWARD_HISTORY_LIMIT = 300;
 
-const MAPS: Readonly<Record<4 | 8, readonly string[]>> = {
+export type FrozenLakeSize = 4 | 6 | 8;
+
+const MAPS: Readonly<Record<FrozenLakeSize, readonly string[]>> = {
   4: ['SFFF', 'FHFH', 'FFFH', 'HFFG'],
+  // User-editable template: change these rows to build your own 6x6 lake.
+  // Every row must have exactly 6 characters and the map needs exactly one 'S'.
+  6: ['SFFFFF', 'FHFHFF', 'FFFHFF', 'HHFFFF', 'FFFHFF', 'FFFFFG'],
   8: [
     'SFFFFFFF',
     'FFFFFFFF',
@@ -23,7 +28,8 @@ const MAPS: Readonly<Record<4 | 8, readonly string[]>> = {
   ],
 };
 
-// Slip outcomes when the lake is slippery: [intended, first perpendicular, second perpendicular].
+// Perpendicular outcomes for a slip: [first, second]. The intended action is
+// not listed here, so a slip never repeats the intended move.
 const SLIP_OUTCOMES: Readonly<
   Record<FrozenLakeAction, readonly [FrozenLakeAction, FrozenLakeAction]>
 > = {
@@ -32,6 +38,18 @@ const SLIP_OUTCOMES: Readonly<
   right: ['up', 'down'],
   up: ['left', 'right'],
 };
+
+function clampProbability(value: number): number {
+  return Math.min(Math.max(value, 0), 1);
+}
+
+function sizeFromRows(rows: readonly string[]): FrozenLakeSize {
+  const size = rows.length;
+  if (size === 4 || size === 6 || size === 8) {
+    return size;
+  }
+  throw new Error(`Frozen Lake map needs 4, 6 or 8 rows, got ${size}.`);
+}
 
 function mulberry32(seed: number): () => number {
   let a = seed >>> 0;
@@ -56,12 +74,30 @@ function cellFromSymbol(symbol: string): FrozenLakeCell {
   return 'frozen';
 }
 
-function cellsFromMap(size: 4 | 8): FrozenLakeCell[] {
+function cellsFromMap(
+  size: FrozenLakeSize,
+  rows: readonly string[] = MAPS[size],
+): FrozenLakeCell[] {
   const cells: FrozenLakeCell[] = [];
-  for (const row of MAPS[size]) {
+  let starts = 0;
+  for (const row of rows) {
+    if (row.length !== size) {
+      throw new Error(
+        `Frozen Lake map row "${row}" must have exactly ${size} characters, got ${row.length}.`,
+      );
+    }
     for (const symbol of row) {
+      if (symbol === 'S') {
+        starts += 1;
+      }
       cells.push(cellFromSymbol(symbol));
     }
+  }
+  if (starts !== 1) {
+    throw new Error(`Frozen Lake map needs exactly one start cell "S", found ${starts}.`);
+  }
+  if (rows.length !== size) {
+    throw new Error(`Frozen Lake map must have exactly ${size} rows, got ${rows.length}.`);
   }
   return cells;
 }
@@ -73,9 +109,7 @@ export interface FrozenLakeStep {
 }
 
 export class FrozenLakeEnv {
-  readonly size: 4 | 8;
-
-  slippery: boolean;
+  readonly size: FrozenLakeSize;
 
   private readonly cells: FrozenLakeCell[];
 
@@ -85,13 +119,34 @@ export class FrozenLakeEnv {
 
   private finished: boolean;
 
-  constructor(options: { size?: 4 | 8; slippery?: boolean; rng?: () => number } = {}) {
+  private slip: number;
+
+  constructor(
+    options: {
+      size?: FrozenLakeSize;
+      slipProbability?: number;
+      desc?: readonly string[];
+      rng?: () => number;
+    } = {},
+  ) {
     this.size = options.size ?? 4;
-    this.cells = cellsFromMap(this.size);
-    this.slippery = options.slippery ?? false;
+    this.cells = cellsFromMap(this.size, options.desc ?? MAPS[this.size]);
+    this.slip = clampProbability(options.slipProbability ?? 0);
     this.rng = options.rng ?? Math.random;
     this.position = this.startIndex();
     this.finished = false;
+  }
+
+  /**
+   * Probability that the intended move is replaced by a uniformly random
+   * perpendicular move. The setter clamps the stored value to [0, 1].
+   */
+  get slipProbability(): number {
+    return this.slip;
+  }
+
+  set slipProbability(value: number) {
+    this.slip = clampProbability(value);
   }
 
   get observation(): number {
@@ -116,10 +171,13 @@ export class FrozenLakeEnv {
     if (this.finished) {
       return { observation: this.position, reward: 0, done: true };
     }
+    // A slip replaces the intended move with one of the two perpendicular
+    // moves. With slipProbability 2/3 the split is 1/3 intended and 1/3 for
+    // each perpendicular, which matches gym's FrozenLake.
     let chosen = action;
-    if (this.slippery) {
-      const outcomes: readonly FrozenLakeAction[] = [action, ...SLIP_OUTCOMES[action]];
-      chosen = outcomes[Math.floor(this.rng() * 3)];
+    if (this.rng() < this.slip) {
+      const outcomes = SLIP_OUTCOMES[action];
+      chosen = outcomes[Math.floor(this.rng() * 2)];
     }
     this.position = this.targetIndex(this.position, chosen);
     const cell = this.cells[this.position];
@@ -176,6 +234,8 @@ export class FrozenLakeCore {
 
   private agent: QLearningAgent<number, FrozenLakeAction>;
 
+  private customMap: readonly string[] | undefined;
+
   private episodes = 0;
 
   private successes = 0;
@@ -188,20 +248,24 @@ export class FrozenLakeCore {
 
   constructor(
     options: {
-      size?: 4 | 8;
-      slippery?: boolean;
+      size?: FrozenLakeSize;
+      slipProbability?: number;
       learningRate?: number;
       discountFactor?: number;
       epsilon?: number;
+      initialValue?: number;
       seed?: number;
+      desc?: readonly string[];
     } = {},
   ) {
     this.seed = options.seed ?? DEFAULT_SEED;
-    this.env = this.buildEnv(options.size, options.slippery);
+    this.customMap = options.desc;
+    this.env = this.buildEnv(options.size, options.slipProbability, this.customMap);
     this.agent = new QLearningAgent<number, FrozenLakeAction>(FROZEN_LAKE_ACTIONS, {
       learningRate: options.learningRate,
       discountFactor: options.discountFactor,
       epsilon: options.epsilon,
+      initialValue: options.initialValue,
       rng: mulberry32((this.seed + 1) >>> 0),
     });
   }
@@ -265,6 +329,14 @@ export class FrozenLakeCore {
     this.agent.discountFactor = value;
   }
 
+  get initialValue(): number {
+    return this.agent.initialValue;
+  }
+
+  set initialValue(value: number) {
+    this.agent.initialValue = value;
+  }
+
   tick(): void {
     const observation = this.env.observation;
     const action = this.agent.selectAction(observation);
@@ -293,17 +365,33 @@ export class FrozenLakeCore {
   }
 
   reset(): void {
-    this.env = this.buildEnv(this.env.size, this.env.slippery);
+    this.env = this.buildEnv(this.env.size, this.env.slipProbability, this.customMap);
     this.resetTraining();
   }
 
-  setSize(size: 4 | 8): void {
-    this.env = this.buildEnv(size, this.env.slippery);
+  setSize(size: FrozenLakeSize): void {
+    this.customMap = undefined;
+    this.env = this.buildEnv(size, this.env.slipProbability, undefined);
     this.resetTraining();
   }
 
-  setSlippery(value: boolean): void {
-    this.env.slippery = value;
+  setSlipProbability(value: number): void {
+    this.env.slipProbability = value;
+  }
+
+  /**
+   * Replaces the environment map with custom rows and resets training. The
+   * rows define the grid size, so they must contain 4, 6 or 8 rows of matching
+   * width and one start cell. Invalid rows throw before the current map is
+   * replaced. The custom map is kept for every later rebuild, including
+   * reset().
+   */
+  setCustomMap(rows: readonly string[]): void {
+    const customMap = rows.slice();
+    // Build first so an invalid map leaves the current environment untouched.
+    this.env = this.buildEnv(this.env.size, this.env.slipProbability, customMap);
+    this.customMap = customMap;
+    this.resetTraining();
   }
 
   private resetTraining(): void {
@@ -320,11 +408,23 @@ export class FrozenLakeCore {
       learningRate: this.agent.learningRate,
       discountFactor: this.agent.discountFactor,
       epsilon: this.agent.epsilon,
+      initialValue: this.agent.initialValue,
       rng: mulberry32((this.seed + 1) >>> 0),
     });
   }
 
-  private buildEnv(size: 4 | 8 | undefined, slippery: boolean | undefined): FrozenLakeEnv {
-    return new FrozenLakeEnv({ size, slippery, rng: mulberry32(this.seed) });
+  private buildEnv(
+    size: FrozenLakeSize | undefined,
+    slipProbability: number | undefined,
+    desc: readonly string[] | undefined,
+  ): FrozenLakeEnv {
+    // A custom map defines its own grid size, so it overrides the size option
+    // and survives every rebuild.
+    return new FrozenLakeEnv({
+      size: desc ? sizeFromRows(desc) : size,
+      slipProbability,
+      desc,
+      rng: mulberry32(this.seed),
+    });
   }
 }

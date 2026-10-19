@@ -17,7 +17,11 @@ function mulberry32(seed: number): () => number {
 }
 
 const TERMINALS_4X4 = [5, 7, 11, 12, 15];
+const TERMINALS_6X6 = [7, 9, 15, 18, 19, 27, 35];
 const TERMINALS_8X8 = [19, 29, 35, 41, 42, 46, 49, 52, 54, 59, 63];
+
+const CUSTOM_4X4 = ['SFFF', 'FFFF', 'FFFF', 'FFFG'];
+const CUSTOM_6X6 = ['SHFFFF', 'FFFFFF', 'FFFFFF', 'FFFFFF', 'FFFFFF', 'FFFFFG'];
 
 function terminalCells(env: FrozenLakeEnv): number[] {
   const cells: number[] = [];
@@ -87,26 +91,67 @@ describe('FrozenLakeEnv maps', () => {
     expect(env.cellAt(63)).toBe('goal');
     expect(terminalCells(env)).toEqual(TERMINALS_8X8);
   });
+
+  it('parses the 6x6 template map', () => {
+    const env = new FrozenLakeEnv({ size: 6 });
+    expect(env.map).toHaveLength(36);
+    expect(env.cellAt(0)).toBe('start');
+    expect(env.cellAt(35)).toBe('goal');
+    expect(terminalCells(env)).toEqual(TERMINALS_6X6);
+  });
+
+  it('accepts a custom map through desc', () => {
+    const env = new FrozenLakeEnv({ size: 4, desc: CUSTOM_4X4 });
+    expect(env.map).toHaveLength(16);
+    expect(env.cellAt(0)).toBe('start');
+    expect(env.cellAt(15)).toBe('goal');
+    // The default 4x4 map has a hole at cell 5, the custom map does not.
+    expect(env.cellAt(5)).toBe('frozen');
+    expect(terminalCells(env)).toEqual([15]);
+  });
+
+  it('throws when a map row has the wrong length', () => {
+    expect(
+      () => new FrozenLakeEnv({ size: 4, desc: ['SFF', 'FFFF', 'FFFF', 'FFFG'] }),
+    ).toThrowError(/must have exactly 4 characters/);
+  });
+
+  it('throws when a map has the wrong number of rows', () => {
+    // A deleted row from the 6x6 template keeps the row width but not the count.
+    expect(
+      () =>
+        new FrozenLakeEnv({
+          size: 6,
+          desc: ['SFFFFF', 'FHFHFF', 'FFFHFF', 'HHFFFF', 'FFFHFF'],
+        }),
+    ).toThrowError(/must have exactly 6 rows/);
+  });
+
+  it('throws when a map has no start cell', () => {
+    expect(
+      () => new FrozenLakeEnv({ size: 4, desc: ['FFFF', 'FFFF', 'FFFF', 'FFFG'] }),
+    ).toThrowError(/exactly one start cell/);
+  });
 });
 
 describe('FrozenLakeEnv deterministic movement', () => {
   it('moves on the 4x4 map and clamps at walls', () => {
-    const env = new FrozenLakeEnv({ size: 4, slippery: false });
+    const env = new FrozenLakeEnv({ size: 4, slipProbability: 0 });
     expect(env.reset()).toBe(0);
     expect(env.step('right')).toEqual({ observation: 1, reward: 0, done: false });
 
-    const down = new FrozenLakeEnv({ size: 4, slippery: false });
+    const down = new FrozenLakeEnv({ size: 4, slipProbability: 0 });
     expect(down.step('down')).toEqual({ observation: 4, reward: 0, done: false });
 
-    const leftAtWall = new FrozenLakeEnv({ size: 4, slippery: false });
+    const leftAtWall = new FrozenLakeEnv({ size: 4, slipProbability: 0 });
     expect(leftAtWall.step('left')).toEqual({ observation: 0, reward: 0, done: false });
 
-    const upAtWall = new FrozenLakeEnv({ size: 4, slippery: false });
+    const upAtWall = new FrozenLakeEnv({ size: 4, slipProbability: 0 });
     expect(upAtWall.step('up')).toEqual({ observation: 0, reward: 0, done: false });
   });
 
   it('lands on the hole at cell 12 after three steps down', () => {
-    const env = new FrozenLakeEnv({ size: 4, slippery: false });
+    const env = new FrozenLakeEnv({ size: 4, slipProbability: 0 });
     env.step('down');
     env.step('down');
     expect(env.step('down')).toEqual({ observation: 12, reward: 0, done: true });
@@ -117,7 +162,7 @@ describe('FrozenLakeEnv deterministic movement', () => {
   });
 
   it('reaches the goal from cell 13 with reward 1', () => {
-    const env = new FrozenLakeEnv({ size: 4, slippery: false });
+    const env = new FrozenLakeEnv({ size: 4, slipProbability: 0 });
     for (const action of ['down', 'down', 'right', 'right', 'down', 'left'] as const) {
       expect(env.step(action).done).toBe(false);
     }
@@ -129,7 +174,7 @@ describe('FrozenLakeEnv deterministic movement', () => {
   });
 
   it('returns to the start cell on reset after a terminal step', () => {
-    const env = new FrozenLakeEnv({ size: 4, slippery: false });
+    const env = new FrozenLakeEnv({ size: 4, slipProbability: 0 });
     env.step('down');
     env.step('down');
     expect(env.step('down').done).toBe(true);
@@ -142,19 +187,41 @@ describe('FrozenLakeEnv deterministic movement', () => {
 });
 
 describe('FrozenLakeEnv slip', () => {
-  it('follows the fixed slip outcomes for a down move at cell 0', () => {
-    const intended = new FrozenLakeEnv({ size: 4, slippery: true, rng: () => 0 }).step('down');
-    expect(intended.observation).toBe(4);
+  it('is deterministic when the slip probability is 0', () => {
+    const env = new FrozenLakeEnv({ size: 4, slipProbability: 0, rng: () => 0.5 });
+    expect(env.step('down')).toEqual({ observation: 4, reward: 0, done: false });
+    expect(env.step('down')).toEqual({ observation: 8, reward: 0, done: false });
+  });
 
-    const slipLeft = new FrozenLakeEnv({ size: 4, slippery: true, rng: () => 0.5 }).step('down');
-    expect(slipLeft.observation).toBe(0);
+  it('always picks a perpendicular move when the slip probability is 1', () => {
+    // 'down' at cell 0 slips to 'left' (cell 0) for the first draw and
+    // 'right' (cell 1) for the second.
+    const first = new FrozenLakeEnv({ size: 4, slipProbability: 1, rng: () => 0 }).step('down');
+    expect(first.observation).toBe(0);
 
-    const slipRight = new FrozenLakeEnv({ size: 4, slippery: true, rng: () => 0.999 }).step('down');
-    expect(slipRight.observation).toBe(1);
+    const second = new FrozenLakeEnv({ size: 4, slipProbability: 1, rng: () => 0.999 }).step(
+      'down',
+    );
+    expect(second.observation).toBe(1);
+  });
+
+  it('slips below the threshold and keeps the move above it', () => {
+    const slips = new FrozenLakeEnv({ size: 4, slipProbability: 0.5, rng: () => 0.4 }).step('down');
+    expect(slips.observation).toBe(0);
+
+    const keeps = new FrozenLakeEnv({ size: 4, slipProbability: 0.5, rng: () => 0.6 }).step('down');
+    expect(keeps.observation).toBe(4);
+  });
+
+  it('clamps the stored slip probability to [0, 1]', () => {
+    const env = new FrozenLakeEnv({ size: 4, slipProbability: 2 });
+    expect(env.slipProbability).toBe(1);
+    env.slipProbability = -1;
+    expect(env.slipProbability).toBe(0);
   });
 
   it('never leaves the grid over many slippery steps', () => {
-    const env = new FrozenLakeEnv({ size: 4, slippery: true, rng: mulberry32(11) });
+    const env = new FrozenLakeEnv({ size: 4, slipProbability: 1, rng: mulberry32(11) });
     for (let index = 0; index < 1000; index += 1) {
       const action = FROZEN_LAKE_ACTIONS[index % FROZEN_LAKE_ACTIONS.length];
       const before = env.observation;
@@ -171,11 +238,37 @@ describe('FrozenLakeEnv slip', () => {
       }
     }
   });
+
+  it('matches gym with slipProbability 2/3 over many steps', () => {
+    // Each iteration starts from cell 0 and takes 'down'. The intended move
+    // lands on cell 4, the left slip clamps to cell 0 and the right slip
+    // lands on cell 1, so the three observations are the three outcomes.
+    const env = new FrozenLakeEnv({ size: 4, slipProbability: 2 / 3, rng: mulberry32(11) });
+    const steps = 6000;
+    let intendedCount = 0;
+    let leftCount = 0;
+    let rightCount = 0;
+    for (let index = 0; index < steps; index += 1) {
+      env.reset();
+      const result = env.step('down');
+      if (result.observation === 4) {
+        intendedCount += 1;
+      } else if (result.observation === 0) {
+        leftCount += 1;
+      } else {
+        rightCount += 1;
+      }
+    }
+    expect(intendedCount + leftCount + rightCount).toBe(steps);
+    expect(intendedCount / steps).toBeCloseTo(1 / 3, 1);
+    expect(leftCount / steps).toBeCloseTo(1 / 3, 1);
+    expect(rightCount / steps).toBeCloseTo(1 / 3, 1);
+  });
 });
 
 describe('FrozenLakeCore training', () => {
   it('counts episodes, successes and steps at episode boundaries', () => {
-    const core = new FrozenLakeCore({ size: 4, slippery: false, epsilon: 1, seed: 3 });
+    const core = new FrozenLakeCore({ size: 4, slipProbability: 0, epsilon: 1, seed: 3 });
     const ticks = runUntilEpisodes(core, 5, 100000);
     expect(ticks).toBeLessThan(100000);
     expect(core.stats.episodes).toBeGreaterThanOrEqual(5);
@@ -191,7 +284,7 @@ describe('FrozenLakeCore training', () => {
   it('trains to a success rate of at least 0.5', () => {
     const core = new FrozenLakeCore({
       size: 4,
-      slippery: false,
+      slipProbability: 0,
       learningRate: 0.5,
       discountFactor: 0.95,
       epsilon: 0.1,
@@ -203,7 +296,7 @@ describe('FrozenLakeCore training', () => {
 
   it('reproduces the same reward history for the same seed', () => {
     const run = (): number[] => {
-      const core = new FrozenLakeCore({ size: 4, slippery: false, seed: 17 });
+      const core = new FrozenLakeCore({ size: 4, slipProbability: 0, seed: 17 });
       train(core, 500);
       return [...core.rewardHistory];
     };
@@ -214,7 +307,7 @@ describe('FrozenLakeCore training', () => {
     const ticks = 300;
     const quiet = new FrozenLakeCore({
       size: 4,
-      slippery: false,
+      slipProbability: 0,
       seed: 7,
       learningRate: 0.5,
       discountFactor: 0.95,
@@ -222,7 +315,7 @@ describe('FrozenLakeCore training', () => {
     });
     const reading = new FrozenLakeCore({
       size: 4,
-      slippery: false,
+      slipProbability: 0,
       seed: 7,
       learningRate: 0.5,
       discountFactor: 0.95,
@@ -243,7 +336,7 @@ describe('FrozenLakeCore training', () => {
     const make = (): FrozenLakeCore =>
       new FrozenLakeCore({
         size: 4,
-        slippery: false,
+        slipProbability: 0,
         seed: 3,
         learningRate: 0.5,
         discountFactor: 0.95,
@@ -271,7 +364,7 @@ describe('FrozenLakeCore reporting', () => {
   });
 
   it('reports greedy actions and values for every cell', () => {
-    const core = new FrozenLakeCore({ size: 4, slippery: false, seed: 1 });
+    const core = new FrozenLakeCore({ size: 4, slipProbability: 0, seed: 1 });
     train(core, 500);
 
     expect(core.greedyActions).toHaveLength(16);
@@ -288,7 +381,7 @@ describe('FrozenLakeCore reporting', () => {
   });
 
   it('records one reward per episode and caps the history at 300', () => {
-    const core = new FrozenLakeCore({ size: 4, slippery: false, epsilon: 1, seed: 9 });
+    const core = new FrozenLakeCore({ size: 4, slipProbability: 0, epsilon: 1, seed: 9 });
 
     // Under the cap the history grows by exactly one entry per episode.
     let ticks = 0;
@@ -318,23 +411,44 @@ describe('FrozenLakeCore reporting', () => {
       learningRate: 0.2,
       epsilon: 0.3,
       discountFactor: 0.8,
+      initialValue: 0.4,
     });
     expect(core.learningRate).toBe(0.2);
     expect(core.epsilon).toBe(0.3);
     expect(core.discountFactor).toBe(0.8);
+    expect(core.initialValue).toBe(0.4);
 
     core.learningRate = 0.6;
     core.epsilon = 0.05;
     core.discountFactor = 0.9;
+    core.initialValue = 0.7;
     expect(core.learningRate).toBe(0.6);
     expect(core.epsilon).toBe(0.05);
     expect(core.discountFactor).toBe(0.9);
+    expect(core.initialValue).toBe(0.7);
+  });
+
+  it('keeps the initial value when training resets', () => {
+    const core = new FrozenLakeCore({ size: 4, initialValue: 0.5, seed: 1 });
+    train(core, 50);
+    core.reset();
+    expect(core.initialValue).toBe(0.5);
+    expect(core.greedyValues.every((value) => value === 0.5 || value === 0)).toBe(true);
+  });
+
+  it('forwards the slip probability to the environment', () => {
+    const run = (slipProbability: number): number[] => {
+      const core = new FrozenLakeCore({ size: 4, slipProbability, epsilon: 1, seed: 5 });
+      train(core, 500);
+      return [...core.rewardHistory];
+    };
+    expect(run(1)).not.toEqual(run(0));
   });
 });
 
 describe('FrozenLakeCore configuration', () => {
   it('clears the q-table and the stats on reset', () => {
-    const core = new FrozenLakeCore({ size: 4, slippery: false, seed: 8 });
+    const core = new FrozenLakeCore({ size: 4, slipProbability: 0, seed: 8 });
     train(core, 200);
 
     core.reset();
@@ -352,7 +466,7 @@ describe('FrozenLakeCore configuration', () => {
   });
 
   it('rebuilds the environment when the size changes', () => {
-    const core = new FrozenLakeCore({ size: 4, slippery: false, seed: 2 });
+    const core = new FrozenLakeCore({ size: 4, slipProbability: 0, seed: 2 });
     train(core, 50);
     expect(core.stats.steps).toBe(50);
 
@@ -369,14 +483,78 @@ describe('FrozenLakeCore configuration', () => {
     expect(core.greedyActions[0]).not.toBeNull();
   });
 
-  it('flips slip without resetting training', () => {
-    const core = new FrozenLakeCore({ size: 4, slippery: false, epsilon: 1, seed: 4 });
+  it('trains on the 6x6 map', () => {
+    const core = new FrozenLakeCore({ size: 6, slipProbability: 0, epsilon: 1, seed: 6 });
+    train(core, 2000);
+    expect(core.greedyActions).toHaveLength(36);
+    expect(core.greedyValues).toHaveLength(36);
+    for (const index of TERMINALS_6X6) {
+      expect(core.greedyActions[index]).toBeNull();
+      expect(core.greedyValues[index]).toBe(0);
+    }
+    expect(core.stats.episodes).toBeGreaterThan(0);
+  });
+
+  it('uses a custom map set through the desc option', () => {
+    const core = new FrozenLakeCore({ size: 4, desc: CUSTOM_4X4, seed: 1 });
+    expect(core.greedyActions).toHaveLength(16);
+    // Cell 5 is a hole in the default map but frozen in the custom map.
+    expect(core.greedyActions[5]).not.toBeNull();
+    expect(core.greedyActions[15]).toBeNull();
+  });
+
+  it('keeps a custom map across reset and clears it on setSize', () => {
+    const core = new FrozenLakeCore({ size: 4, seed: 1 });
+    core.setCustomMap(CUSTOM_6X6);
+    expect(core.greedyActions).toHaveLength(36);
+    // Cell 1 is a hole in the custom map but frozen in the 4x4 preset.
+    expect(core.greedyActions[1]).toBeNull();
+
+    core.reset();
+    expect(core.greedyActions).toHaveLength(36);
+    expect(core.greedyActions[1]).toBeNull();
+
+    // setSize drops the custom map and restores the preset for the new size.
+    core.setSize(4);
+    expect(core.greedyActions).toHaveLength(16);
+    // Cell 5 is a hole in the 4x4 preset but frozen in the custom map.
+    expect(core.greedyActions[5]).toBeNull();
+    expect(core.greedyActions[1]).not.toBeNull();
+
+    core.setSize(8);
+    expect(core.greedyActions).toHaveLength(64);
+    expect(core.greedyActions[19]).toBeNull();
+  });
+
+  it('derives the grid size from a custom 6x6 map', () => {
+    const core = new FrozenLakeCore({ size: 4, seed: 1 });
+    core.setCustomMap(CUSTOM_6X6);
+    expect(core.greedyActions).toHaveLength(36);
+    expect(core.greedyValues).toHaveLength(36);
+    // Cell 1 is a hole in the custom map but frozen in the 6x6 preset.
+    expect(core.greedyActions[1]).toBeNull();
+    expect(core.greedyActions[35]).toBeNull();
+    expect(core.greedyActions[2]).not.toBeNull();
+  });
+
+  it('rejects an invalid custom map and keeps the current one', () => {
+    const core = new FrozenLakeCore({ size: 4, seed: 1 });
+    expect(() => core.setCustomMap(['SFF', 'FFFF', 'FFFF', 'FFFG'])).toThrowError(
+      /must have exactly 4 characters/,
+    );
+    // The rejected map is not stored, so the default 4x4 map stays active.
+    expect(core.greedyActions).toHaveLength(16);
+    expect(core.greedyActions[5]).toBeNull();
+  });
+
+  it('changes the slip probability without resetting training', () => {
+    const core = new FrozenLakeCore({ size: 4, slipProbability: 0, epsilon: 1, seed: 4 });
     train(core, 100);
     const stats = { ...core.stats };
     const history = [...core.rewardHistory];
 
-    core.setSlippery(true);
-    core.setSlippery(false);
+    core.setSlipProbability(1);
+    core.setSlipProbability(0);
     expect(core.stats).toEqual(stats);
     expect([...core.rewardHistory]).toEqual(history);
   });
