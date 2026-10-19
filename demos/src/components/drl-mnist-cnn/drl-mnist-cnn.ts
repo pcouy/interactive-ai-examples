@@ -37,6 +37,13 @@ import {
 import { createIdxTrainSource } from '../../core/mnist-train-source.js';
 import { drlTokens } from '../../styles/tokens.js';
 import {
+  badgeText,
+  type DemoStatusInput,
+  formatPercent,
+  statusLine,
+  weightsOriginText,
+} from './demo-status.js';
+import {
   enumerateLinks,
   filterCanvasSelector,
   isUsableRect,
@@ -47,7 +54,8 @@ import {
 } from './filter-links.js';
 import { fetchMnistCnnManifest, loadMnistGallery, loadMnistSplits } from './mnist-assets.js';
 import { MnistTrainingController } from './training-controller.js';
-import { isTrainingActive, type TrainingState, trainingStateBadge } from './training-state.js';
+import { isTrainingActive, type TrainingState } from './training-state.js';
+import { applyWeightDraft, weightEditorHint, weightEditorView } from './weight-editor.js';
 
 /**
  * Démonstration interactive du CNN MNIST de référence (`tf-playground/mnist/train.py`) :
@@ -74,6 +82,9 @@ import { isTrainingActive, type TrainingState, trainingStateBadge } from './trai
  *
  * La machine à états de l'entraînement vit dans `training-state.ts` : toute
  * transition qui met fin à une run fait retomber le badge sur un état inactif.
+ * Badge, origine des poids et ligne d'état sont calculés par le module pur
+ * `demo-status.ts` à partir de l'état courant : le badge affiche « Modifié » dès
+ * qu'un poids a été édité à la main sans run active.
  * La galerie et les jeux IDX ne sont téléchargés ni à l'affichage ni au
  * chargement : seule la première ouverture du sélecteur d'exemples ou le premier
  * clic sur « Entraîner » les déclenche.
@@ -82,7 +93,10 @@ import { isTrainingActive, type TrainingState, trainingStateBadge } from './trai
  * canal de sortie) à une frontière entre couches ; un second clic sur la même
  * liaison désélectionne. La toile de filtre du couple montre le noyau 3×3 exact
  * plutôt que la moyenne des canaux ; un clic sur une case de cette toile ouvre
- * l'éditeur sur le poids exact.
+ * le formulaire sur le poids exact : libellé, saisie au clavier pré-remplie,
+ * boutons « Appliquer » et « Annuler » — Entrée applique, Échap annule. Une
+ * liaison sélectionnée sans case affiche le conseil de geste du module
+ * `weight-editor.ts` à la place du formulaire.
  */
 
 /** Graine de l'initialisation déterministe des poids et des sélections. */
@@ -734,21 +748,6 @@ export function mixRgb(
   ];
 }
 
-/** Pourcentage à une décimale, format français (virgule). */
-export function formatPercent(value: number): string {
-  return `${value.toFixed(1).replace('.', ',')} %`;
-}
-
-/** Perte à trois décimales, format français (virgule) ; « – » si absente ou non finie. */
-export function formatLoss(value: number | null): string {
-  return value !== null && Number.isFinite(value) ? value.toFixed(3).replace('.', ',') : '–';
-}
-
-/** Durée en secondes à une décimale, format français (virgule). */
-export function formatSeconds(value: number): string {
-  return `${(value / 1000).toFixed(1).replace('.', ',')} s`;
-}
-
 /**
  * Estimation déterministe du nombre d'exemples d'une sélection stratifiée (voir
  * `selectStratifiedIndices`) pour un jeu de `total` exemples répartis en dix
@@ -889,6 +888,41 @@ export class MnistCnn extends LitElement {
       .drl-hint {
         margin: 0;
         color: var(--drl-muted);
+        font-size: 0.85em;
+      }
+
+      /* Éditeur de poids : ligne compacte (libellé, saisie, deux boutons), puis
+          ligne d'erreur à l'accent secondaire. */
+      .drl-weight-editor {
+        display: grid;
+        gap: var(--drl-space-1);
+      }
+
+      .drl-weight-row {
+        display: flex;
+        flex-wrap: wrap;
+        align-items: center;
+        gap: var(--drl-space-2);
+      }
+
+      .drl-weight-label {
+        font-size: 0.85em;
+      }
+
+      .drl-weight-input {
+        font: inherit;
+        width: 8em;
+        padding: var(--drl-space-1) var(--drl-space-2);
+        border: 1px solid var(--drl-border);
+        border-radius: calc(var(--drl-radius) / 2);
+        background: var(--drl-bg);
+        color: var(--drl-fg);
+        font-variant-numeric: tabular-nums;
+      }
+
+      .drl-weight-error {
+        margin: 0;
+        color: var(--drl-accent-2);
         font-size: 0.85em;
       }
 
@@ -1262,24 +1296,28 @@ export class MnistCnn extends LitElement {
     return this.result ? argmaxIndex(this.result.probabilities) : null;
   }
 
-  private get badgeText(): string {
-    return trainingStateBadge(this.trainingState);
-  }
-
-  /** Origine des poids affichée dans les statistiques. */
-  private get weightsOrigin(): string {
-    if (this.trainingState === 'random') {
-      return 'Aléatoires';
-    }
-    if (
-      this.metricsStarted &&
-      (this.trainingState === 'training' ||
-        this.trainingState === 'paused' ||
-        this.trainingState === 'trained')
-    ) {
-      return 'Entraîné';
-    }
-    return this.pretrainedAssets !== null ? 'Pré-entraîné' : 'Déterministes';
+  /**
+   * État courant assemblé pour le module pur `demo-status.ts` : le badge,
+   * l'origine des poids et la ligne d'état en sont déduits, sans logique
+   * propre au composant.
+   */
+  private get demoStatus(): DemoStatusInput {
+    return {
+      state: this.trainingState,
+      weightsEdited: this.weightsEdited,
+      manifestError: this.manifestError,
+      trainingError: this.trainingError,
+      batchesProcessed: this.batchesProcessed,
+      loss: this.loss,
+      validationAccuracy: this.validationAccuracy,
+      elapsedMs: this.elapsedMs,
+      metricsStarted: this.metricsStarted,
+      trainExampleCount: this.trainExampleCount,
+      validationExampleCount: this.validationExampleCount,
+      parameters: mnistCnnParameterCount(this.filterCounts),
+      predictedClass: this.predictedClass,
+      inputSource: this.inputSource,
+    };
   }
 
   /** Vrai si le manifeste chargé correspond à l'architecture courante. */
@@ -1295,34 +1333,6 @@ export class MnistCnn extends LitElement {
       return "Dessinez un chiffre à la souris ou au doigt ; l'inférence se met à jour pendant le tracé.";
     }
     return `Exemple de la galerie MNIST : le chiffre attendu est un ${this.galleryLabel}.`;
-  }
-
-  private get statusLine(): string {
-    const predicted = this.predictedClass;
-    const parameters = mnistCnnParameterCount(this.filterCounts);
-    const parts = [
-      `Entrée : ${this.inputSource}`,
-      `${parameters} paramètres`,
-      `classe prédite : ${predicted === null ? '–' : String(predicted)}`,
-    ];
-    if (this.metricsStarted) {
-      parts.push(
-        `lots : ${this.batchesProcessed}`,
-        `perte : ${formatLoss(this.loss)}`,
-        `précision validation (sous-ensemble) : ${
-          this.validationAccuracy === null ? '–' : formatPercent(this.validationAccuracy * 100)
-        }`,
-        `temps : ${formatSeconds(this.elapsedMs)}`,
-      );
-    }
-    parts.push(
-      `entraînement : ${this.trainExampleCount} exemples`,
-      `validation : ${this.validationExampleCount} exemples`,
-    );
-    if (this.manifestError !== null) {
-      parts.push(`manifeste inaccessible : ${this.manifestError}`);
-    }
-    return parts.join(' · ');
   }
 
   protected override firstUpdated(): void {
@@ -1507,6 +1517,9 @@ export class MnistCnn extends LitElement {
    */
   private readonly handleStartTraining = (): void => {
     this.trainingError = null;
+    // La run qui s'apprête à démarrer remplacera les poids affichés : toute
+    // édition manuelle antérieure cesse d'être l'origine des poids.
+    this.weightsEdited = false;
     const initialWeights = this.manifestMatches
       ? (this.pretrainedAssets?.weights ?? this.weights)
       : this.weights;
@@ -1729,13 +1742,23 @@ export class MnistCnn extends LitElement {
 
   /**
    * Applique un événement de l'éditeur à la sélection courante : la sélection est
-   * recalculée, la saisie numérique est effacée — elle visait l'ancienne sélection
-   * — et les toiles sont redessinées.
+   * recalculée, la saisie est effacée — elle visait l'ancienne sélection — et les
+   * toiles sont redessinées. Dès que la sélection devient un poids, la saisie est
+   * pré-remplie avec la valeur courante formatée et le champ prend le focus une
+   * fois le DOM à jour.
    */
   private applySelectionEvent(event: WeightEditorEvent): void {
     this.selection = applyWeightEditorEvent(this.selection, event);
     this.weightDraft = '';
     this.weightError = null;
+    const view =
+      this.selection !== null && this.selection.kind === 'weight'
+        ? weightEditorView(this.selection, this.weights, this.filterCounts)
+        : null;
+    if (view !== null) {
+      this.weightDraft = view.text;
+      this.focusWeightInput();
+    }
     this.canvasesDirty = true;
   }
 
@@ -1803,6 +1826,74 @@ export class MnistCnn extends LitElement {
       kx,
     });
   };
+
+  /**
+   * Saisie du brouillon : le texte du champ devient `weightDraft`, que
+   * `handleApplyWeight` soumet à `applyWeightDraft`.
+   */
+  private readonly handleWeightInput = (event: Event): void => {
+    const target = event.currentTarget;
+    if (target instanceof HTMLInputElement) {
+      this.weightDraft = target.value;
+    }
+  };
+
+  /**
+   * Clavier du champ de saisie : Entrée applique le brouillon comme le bouton
+   * « Appliquer », Échap l'annule comme le bouton « Annuler ».
+   */
+  private readonly handleWeightKeyDown = (event: KeyboardEvent): void => {
+    if (event.key === 'Enter') {
+      event.preventDefault();
+      this.handleApplyWeight();
+    } else if (event.key === 'Escape') {
+      event.preventDefault();
+      this.handleCancelWeight();
+    }
+  };
+
+  /**
+   * Applique le brouillon au poids sélectionné : les poids écrits deviennent les
+   * poids affichés, l'indicateur d'édition manuelle est levé, l'inférence repart
+   * et le contrôleur est notifié. En cas d'erreur, le message s'affiche et le
+   * formulaire reste ouvert ; sinon la sélection et le focus sont conservés pour
+   * la modification suivante.
+   */
+  private readonly handleApplyWeight = (): void => {
+    const result = applyWeightDraft(
+      this.weightDraft,
+      this.selection,
+      this.weights,
+      this.filterCounts,
+    );
+    if (result.kind === 'error') {
+      this.weightError = result.message;
+      return;
+    }
+    this.weights = result.weights;
+    this.weightsEdited = true;
+    this.runInference();
+    void this.controller.notifyWeightsEdited(this.weights);
+    this.weightError = null;
+  };
+
+  /**
+   * Annule l'édition : sélection, saisie et erreur sont effacées — les toiles
+   * retombent sur la vue en moyenne des canaux.
+   */
+  private readonly handleCancelWeight = (): void => {
+    this.clearSelection();
+  };
+
+  /**
+   * Donne le focus au champ de saisie après la mise à jour du DOM : le champ
+   * n'existe qu'une fois la sélection de poids rendue par Lit.
+   */
+  private focusWeightInput(): void {
+    void this.updateComplete.then(() => {
+      this.renderRoot.querySelector<HTMLInputElement>('input.drl-weight-input')?.focus();
+    });
+  }
 
   private filterPalette(): {
     positive: readonly [number, number, number];
@@ -1969,8 +2060,8 @@ export class MnistCnn extends LitElement {
   protected renderHeader(): TemplateResult {
     return html`
       <div class="drl-status">
-        <span class="drl-badge">${this.badgeText}</span>
-        <span class="drl-status-text">${this.statusLine}</span>
+        <span class="drl-badge">${badgeText(this.demoStatus)}</span>
+        <span class="drl-status-text">${statusLine(this.demoStatus)}</span>
       </div>
     `;
   }
@@ -2051,7 +2142,7 @@ export class MnistCnn extends LitElement {
             </div>
             <div class="drl-stat">
               <p class="drl-stat-label">Poids</p>
-              <p class="drl-stat-value">${this.weightsOrigin}</p>
+              <p class="drl-stat-value">${weightsOriginText(this.demoStatus)}</p>
             </div>
           </div>
 
@@ -2184,6 +2275,7 @@ export class MnistCnn extends LitElement {
             Moyenne des canaux d'entrée pour chaque canal de sortie ; bleu = positif, violet =
             négatif.
           </p>
+          ${this.renderWeightEditor()}
           ${
             result
               ? repeat(
@@ -2262,6 +2354,54 @@ export class MnistCnn extends LitElement {
               : html`<p class="drl-hint">En attente du premier passage avant.</p>`
           }
         </section>
+      </div>
+    `;
+  }
+
+  /**
+   * Formulaire d'édition du poids sélectionné, en haut du panneau des filtres :
+   * libellé de la sélection, saisie au clavier pré-remplie, boutons « Appliquer »
+   * et « Annuler », ligne d'erreur. Une liaison sélectionnée sans case affiche
+   * le conseil de geste de `weight-editor.ts` à la place du formulaire.
+   */
+  private renderWeightEditor(): TemplateResult | typeof nothing {
+    const selection = this.selection;
+    if (selection !== null && selection.kind === 'link') {
+      return html`<p class="drl-hint">${weightEditorHint()}</p>`;
+    }
+    if (selection === null) {
+      return nothing;
+    }
+    const view = weightEditorView(selection, this.weights, this.filterCounts);
+    if (view === null) {
+      return nothing;
+    }
+    return html`
+      <div class="drl-weight-editor">
+        <div class="drl-weight-row">
+          <label class="drl-weight-label" for="drl-mnist-cnn-weight">${view.label}</label>
+          <input
+            id="drl-mnist-cnn-weight"
+            class="drl-weight-input"
+            type="text"
+            inputmode="decimal"
+            autocomplete="off"
+            .value=${this.weightDraft}
+            @input=${this.handleWeightInput}
+            @keydown=${this.handleWeightKeyDown}
+          />
+          <button type="button" class="drl-button drl-primary" @click=${this.handleApplyWeight}>
+            Appliquer
+          </button>
+          <button type="button" class="drl-button" @click=${this.handleCancelWeight}>
+            Annuler
+          </button>
+        </div>
+        ${
+          this.weightError !== null
+            ? html`<p class="drl-weight-error">${this.weightError}</p>`
+            : nothing
+        }
       </div>
     `;
   }

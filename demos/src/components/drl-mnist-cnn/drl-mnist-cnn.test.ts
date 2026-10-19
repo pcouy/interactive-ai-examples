@@ -18,9 +18,6 @@ import {
   filterKernelValues,
   filterLinkGeometry,
   filterViewMode,
-  formatLoss,
-  formatPercent,
-  formatSeconds,
   hexToRgb,
   linkCanvasSelectors,
   linkGroupIndices,
@@ -183,14 +180,6 @@ describe('mixRgb', () => {
   });
 });
 
-describe('formatPercent', () => {
-  it('formats with one decimal and a French comma', () => {
-    expect(formatPercent(12.34)).toBe('12,3 %');
-    expect(formatPercent(0)).toBe('0,0 %');
-    expect(formatPercent(99.96)).toBe('100,0 %');
-  });
-});
-
 describe('pointerToCell', () => {
   it('maps the canvas corners to the 28×28 grid corners', () => {
     const canvas = mockCanvas(280, 280, 10, 20);
@@ -207,27 +196,6 @@ describe('pointerToCell', () => {
     expect(pointerToCell(mockCanvas(0, 0), pointer(5, 5))).toBeNull();
     expect(pointerToCell(mockCanvas(0, 100), pointer(5, 5))).toBeNull();
     expect(pointerToCell(mockCanvas(100, 0), pointer(5, 5))).toBeNull();
-  });
-});
-
-describe('formatLoss', () => {
-  it('formats with three decimals and a French comma', () => {
-    expect(formatLoss(0.34567)).toBe('0,346');
-    expect(formatLoss(0)).toBe('0,000');
-  });
-
-  it('renders a dash for a null or non-finite loss', () => {
-    expect(formatLoss(null)).toBe('–');
-    expect(formatLoss(Number.NaN)).toBe('–');
-    expect(formatLoss(Number.POSITIVE_INFINITY)).toBe('–');
-  });
-});
-
-describe('formatSeconds', () => {
-  it('formats durations with one decimal and a French comma', () => {
-    expect(formatSeconds(0)).toBe('0,0 s');
-    expect(formatSeconds(1500)).toBe('1,5 s');
-    expect(formatSeconds(12345)).toBe('12,3 s');
   });
 });
 
