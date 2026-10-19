@@ -563,6 +563,9 @@ describe('MnistTrainingController weights edited by hand', () => {
     expect(ports.weightsChanges.length).toBe(changesBefore);
     expect(trainer.exportCount).toBe(0);
     expect(ports.errors).toHaveLength(0);
+    // L'édition met fin à la run : l'état n'est plus `training`.
+    expect(controller.state).not.toBe('training');
+    expect(controller.isRunActive()).toBe(false);
     // La prochaine run repart des poids édités.
     const pendingSecond = controller.startRun(makeRequest({ initialWeights: makeWeights(1) }));
     await flushMicrotasks();
@@ -575,11 +578,46 @@ describe('MnistTrainingController weights edited by hand', () => {
   it('leaves an inactive state and no active run after an edit', async () => {
     const ports = new FakePorts();
     const controller = new MnistTrainingController(ports);
-    await controller.startRun(makeRequest());
-    expect(controller.state).toBe('trained');
+    configureNextTrainer(ports, { nextTrainerHoldRun: true });
+    const pending = controller.startRun(makeRequest());
+    await flushMicrotasks();
+    expect(controller.state).toBe('training');
     await controller.notifyWeightsEdited(makeWeights(3));
+    // L'état retombe sur l'état initial selon le manifeste, jamais `training`.
+    expect(['deterministic', 'pretrained']).toContain(controller.state);
+    expect(controller.isRunActive()).toBe(false);
+    await pending;
+  });
+
+  it('ignores a late completion from a run cancelled by an edit', async () => {
+    const ports = new FakePorts();
+    const controller = new MnistTrainingController(ports);
+    configureNextTrainer(ports, {
+      nextTrainerHoldRun: true,
+      nextTrainerCancelResolvesRun: false,
+    });
+    const pending = controller.startRun(makeRequest());
+    await flushMicrotasks();
+    expect(controller.state).toBe('training');
+    const trainer = ports.trainers[0];
+    const edited = makeWeights(9);
+    await controller.notifyWeightsEdited(edited);
+    expect(controller.state).not.toBe('training');
+    // Fin tardive de la run annulée : elle ne doit rien rapporter.
+    trainer.finishRun('completed');
+    await flushMicrotasks();
+    expect(ports.weightsChanges).toHaveLength(0);
+    expect(ports.progresses).toHaveLength(0);
     expect(controller.state).not.toBe('training');
     expect(controller.isRunActive()).toBe(false);
+    // La prochaine run repart des poids édités.
+    configureNextTrainer(ports, { nextTrainerHoldRun: true });
+    const pendingSecond = controller.startRun(makeRequest({ initialWeights: makeWeights(1) }));
+    await flushMicrotasks();
+    expect(ports.trainers[1].appliedWeights[0]).toBe(edited);
+    await controller.notifyDisconnected();
+    await pendingSecond;
+    await pending;
   });
 });
 

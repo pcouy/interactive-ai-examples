@@ -17,7 +17,7 @@
  *   les 250 ms pendant une run, et toujours à la pause, en fin de course et en
  *   cas d'annulation ;
  * - chaque entraîneur créé est disposé en fin de course, en cas d'annulation,
- *   de changement de curseur et de déconnexion ;
+ *   de changement de curseur, d'édition manuelle des poids et de déconnexion ;
  * - une erreur de run est rapportée une seule fois par `onError`, sauf abandon
  *   volontaire (pause, curseur, déconnexion) qui ne rapporte rien ;
  * - un évènement tardif d'une run invalidée (identifiant de run incrémenté)
@@ -268,9 +268,9 @@ export class MnistTrainingController {
   async notifyWeightsEdited(weights: MnistCnnWeights): Promise<void> {
     await this.settleRun(false);
     this.lastTrainedWeights = weights;
+    this.ports.onWeightsReset(weights);
     this.currentState = onWeightsEdited(this.currentState, this.manifestMatches);
     this.ports.onStateChanged(this.currentState);
-    this.ports.onWeightsReset(weights);
   }
 
   /**

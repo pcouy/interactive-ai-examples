@@ -125,7 +125,6 @@ describe('onWeightsEdited', () => {
     for (const state of ALL_STATES) {
       expect(onWeightsEdited(state, true)).toBe('pretrained');
       expect(onWeightsEdited(state, false)).toBe('deterministic');
-      expect(onWeightsEdited(state, true)).not.toBe('training');
     }
   });
 });
