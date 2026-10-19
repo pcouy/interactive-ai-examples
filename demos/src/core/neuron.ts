@@ -1,5 +1,5 @@
-// biome-ignore lint/style/useImportType: BallMove is a type-only import from a value module
-import { BallMove, mulberry32 } from './gradient-descent.js';
+import type { BallMove } from './gradient-descent.js';
+import { mulberry32 } from './gradient-descent.js';
 
 export interface NeuronExample {
   x1: number;
@@ -229,7 +229,9 @@ export class NeuronCore {
         this.compileError = result.error;
       }
     }
-    if (options.count !== undefined) {
+    if (options.count !== undefined && Number.isFinite(options.count)) {
+      // A non-finite count keeps the current count; Math.round(NaN) would
+      // produce a zero-iteration dataset.
       this.count = Math.min(MAX_COUNT, Math.max(1, Math.round(options.count)));
     }
     this.buildDataset();
@@ -237,10 +239,20 @@ export class NeuronCore {
     this.reset();
   }
 
+  /**
+   * Switches the loss kind. Does not reset training state (epoch, weights,
+   * bias, phase). Call `reset()` afterwards to restart training; the
+   * drl-neuron component does this.
+   */
   setLoss(kind: LossKind): void {
     this.currentLossKind = kind;
   }
 
+  /**
+   * Enables or disables the bias term. Does not reset training state (epoch,
+   * weights, bias, phase). Call `reset()` afterwards to restart training; the
+   * drl-neuron component does this.
+   */
   setBiasEnabled(enabled: boolean): void {
     this.biasOn = enabled;
     if (!enabled) {
@@ -249,6 +261,11 @@ export class NeuronCore {
     this.computeDomain();
   }
 
+  /**
+   * Sets the mini-batch size. Does not reset training state (epoch, weights,
+   * bias, phase). Call `reset()` afterwards to restart training; the
+   * drl-neuron component does this.
+   */
   setBatchSize(size: number): void {
     this.currentBatchSize = Math.min(MAX_BATCH_SIZE, Math.max(MIN_BATCH_SIZE, Math.round(size)));
   }
@@ -285,6 +302,9 @@ export class NeuronCore {
 
   advance(learningRate: number, options: { detailed?: boolean } = {}): void {
     if (this.isDiverged || this.examples.length === 0) {
+      return;
+    }
+    if (!Number.isFinite(learningRate)) {
       return;
     }
     if (options.detailed === false) {
@@ -343,6 +363,9 @@ export class NeuronCore {
 
   advanceBatch(learningRate: number): BallMove | null {
     if (this.isDiverged || this.examples.length === 0) {
+      return null;
+    }
+    if (!Number.isFinite(learningRate)) {
       return null;
     }
     const targetEpoch = this.epochCount + 1;
@@ -478,11 +501,15 @@ export class NeuronCore {
       this.currentDomain = DOMAIN_FALLBACK;
       return;
     }
-    const scale = DOMAIN_FIT_SCALE * Math.max(Math.abs(fit.w1), Math.abs(fit.w2), 1);
+    // |b*| prevents spurious divergence on offset targets: 'x1 + x2 + 100' with
+    // bias on must get domain 20 (limit 200) instead of 5 (limit 50), which
+    // previously caused spurious divergence.
+    const scale =
+      DOMAIN_FIT_SCALE * Math.max(Math.abs(fit.w1), Math.abs(fit.w2), Math.abs(fit.b), 1);
     this.currentDomain = Math.min(DOMAIN_MAX, Math.max(DOMAIN_MIN, scale));
   }
 
-  private leastSquaresFit(): { w1: number; w2: number } | null {
+  private leastSquaresFit(): { w1: number; w2: number; b: number } | null {
     const n = this.examples.length;
     const dim = this.biasOn ? 3 : 2;
     if (n === 0 || n < dim) {
@@ -511,7 +538,7 @@ export class NeuronCore {
     if (solution === null) {
       return null;
     }
-    return { w1: solution[0], w2: solution[1] };
+    return { w1: solution[0], w2: solution[1], b: this.biasOn ? solution[2] : 0 };
   }
 
   private solveLinearSystem(matrix: number[][], rhs: number[]): number[] | null {
