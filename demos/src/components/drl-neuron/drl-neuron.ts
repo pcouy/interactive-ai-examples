@@ -240,7 +240,6 @@ export class Neuron extends DemoElement {
   @state()
   private gradMag = 0;
 
-  @state()
   private diverged = false;
 
   @state()
@@ -393,6 +392,9 @@ export class Neuron extends DemoElement {
   }
 
   regenerateDataset(): void {
+    // Both callers (the Nouveau jeu de données button and the count slider via
+    // willUpdate) pass a fresh seed; only an expression change keeps the
+    // current dataset seed.
     this.tweening = false;
     this.scene?.clearTween();
     this.core.setDataset({
@@ -748,7 +750,7 @@ export class Neuron extends DemoElement {
             stroke-opacity="0.7"
             visibility="hidden"
           ></circle>
-          <text class="drl-axis" x="40" y="358" text-anchor="start">x₁</text>
+          <text class="drl-axis" x="40" y="356" text-anchor="start">x₁</text>
           <text class="drl-axis" x="34" y="14" text-anchor="end">x₂</text>
           <rect
             class="drl-legend"
