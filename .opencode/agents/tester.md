@@ -3,94 +3,25 @@ description: "Writes and improves tests only. Use to add unit/integration/regres
 mode: subagent
 color: "#eab308"
 steps: 40
-model: opencode/weak   # alias defined in opencode.jsonc (-> deepseek-v4.1-flash)
+model: opencode-go/weak   # alias defined in opencode.jsonc (-> glm-5.3-flash)
 permissions:
-  - { action: "*", resource: "*", effect: deny }
-
-  # --- Discovery ---
-  - { action: read, resource: "*", effect: allow }
-  - { action: read, resource: "*.env", effect: deny }
-  - { action: read, resource: "*.env.*", effect: deny }
+  # Read-write policy, mirroring the built-in `build` agent, plus the git
+  # guards at the end.
+  - { action: "*", resource: "*", effect: allow }
+  - { action: read, resource: "*.env", effect: ask }
+  - { action: read, resource: "*.env.*", effect: ask }
   - { action: read, resource: "*.env.example", effect: allow }
-  - { action: read, resource: "*.pem", effect: deny }
-  - { action: read, resource: "*.key", effect: deny }
-  - { action: glob, resource: "*", effect: allow }
-  - { action: grep, resource: "*", effect: allow }
-  - { action: webfetch, resource: "*", effect: allow }
-  - { action: skill, resource: "*", effect: allow }
-
-  # --- Editing: TEST FILES ONLY. Adapt these globs to your repo's layout. ---
-  - { action: edit, resource: "*.test.*", effect: allow }
-  - { action: edit, resource: "*.spec.*", effect: allow }
-  - { action: edit, resource: "*_test.*", effect: allow }
-  - { action: edit, resource: "test_*", effect: allow }
-  - { action: edit, resource: "*/test_*", effect: allow }
-  - { action: edit, resource: "test/*", effect: allow }
-  - { action: edit, resource: "*/test/*", effect: allow }
-  - { action: edit, resource: "tests/*", effect: allow }
-  - { action: edit, resource: "*/tests/*", effect: allow }
-  - { action: edit, resource: "__tests__/*", effect: allow }
-  - { action: edit, resource: "*/__tests__/*", effect: allow }
-  - { action: edit, resource: "spec/*", effect: allow }
-  - { action: edit, resource: "*/spec/*", effect: allow }
-  - { action: edit, resource: "*/testdata/*", effect: allow }
-  - { action: edit, resource: "*/fixtures/*", effect: allow }
-  - { action: edit, resource: "*/__snapshots__/*", effect: allow }
-  - { action: edit, resource: "*/conftest.py", effect: allow }
-  - { action: edit, resource: "conftest.py", effect: allow }
-  # Protected paths win even if they match a test glob above
-  - { action: edit, resource: ".git/*", effect: deny }
-  - { action: edit, resource: "*/.git/*", effect: deny }
-  - { action: edit, resource: ".opencode/*", effect: deny }
-  - { action: edit, resource: "*/.opencode/*", effect: deny }
-  - { action: edit, resource: "*opencode.json*", effect: deny }
-  - { action: edit, resource: "*.env", effect: deny }
-  - { action: edit, resource: "*.env.*", effect: deny }
-  - { action: edit, resource: "*.pem", effect: deny }
-  - { action: edit, resource: "*.key", effect: deny }
-
-  # --- Shell: git read-only; test runners and test-adjacent tooling ---
-  - { action: shell, resource: "git status *", effect: allow }
-  - { action: shell, resource: "git diff *", effect: allow }
-  - { action: shell, resource: "git log *", effect: allow }
-  - { action: shell, resource: "git show *", effect: allow }
-  - { action: shell, resource: "git blame *", effect: allow }
-  - { action: shell, resource: "git grep *", effect: allow }
-  - { action: shell, resource: "git ls-files *", effect: allow }
-  - { action: shell, resource: "ls *", effect: allow }
-  - { action: shell, resource: "pwd", effect: allow }
-  - { action: shell, resource: "npm test *", effect: allow }
-  - { action: shell, resource: "npm run test*", effect: allow }
-  - { action: shell, resource: "npm run lint*", effect: allow }
-  - { action: shell, resource: "npm run typecheck*", effect: allow }
-  - { action: shell, resource: "npx tsc *--noEmit*", effect: allow }
-  - { action: shell, resource: "npx vitest *", effect: allow }
-  - { action: shell, resource: "npx jest *", effect: allow }
-  - { action: shell, resource: "npx prettier *", effect: allow }
-  - { action: shell, resource: "pnpm test *", effect: allow }
-  - { action: shell, resource: "yarn test *", effect: allow }
-  - { action: shell, resource: "bun test *", effect: allow }
-  - { action: shell, resource: "pytest *", effect: allow }
-  - { action: shell, resource: "python -m pytest *", effect: allow }
-  - { action: shell, resource: "uv run pytest *", effect: allow }
-  - { action: shell, resource: "mypy *", effect: allow }
-  - { action: shell, resource: "ruff *", effect: allow }
-  - { action: shell, resource: "cargo test *", effect: allow }
-  - { action: shell, resource: "cargo check *", effect: allow }
-  - { action: shell, resource: "go test *", effect: allow }
-  - { action: shell, resource: "go vet *", effect: allow }
-  - { action: shell, resource: "make test*", effect: allow }
-  - { action: shell, resource: "*--no-verify*", effect: deny }
-  - { action: shell, resource: "head *", effect: allow }
-  - { action: shell, resource: "tail *", effect: allow }
-  - { action: shell, resource: "echo *", effect: allow }
-  - { action: shell, resource: "find *", effect: allow }
-  - { action: shell, resource: "tree *", effect: allow }
-  - { action: shell, resource: "cat *", effect: allow }
-  - { action: shell, resource: "printf *", effect: allow }
-  - { action: shell, resource: "sort *", effect: allow }
-  - { action: shell, resource: "uniq *", effect: allow }
-  - { action: shell, resource: "cut *", effect: allow }
+  - { action: question, resource: "*", effect: allow }
+  - { action: browser, resource: "*", effect: deny }
+  # Git guards (override the allow-all above)
+  - { action: shell, resource: "git push *--force*", effect: deny }
+  - { action: shell, resource: "git push -f *", effect: deny }
+  - { action: shell, resource: "git push * -f", effect: deny }
+  - { action: shell, resource: "git push *--delete*", effect: deny }
+  - { action: shell, resource: "git reset --hard*", effect: deny }
+  - { action: shell, resource: "git reset * --hard*", effect: deny }
+  - { action: shell, resource: "git clean *", effect: deny }
+  - { action: shell, resource: "git branch -D *", effect: deny }
 ---
 
 You are the **Tester**. You write tests, and only tests. You can edit test files, fixtures, snapshots and test configuration shims that live in test directories; the permission system blocks any edit to production code.

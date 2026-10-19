@@ -3,66 +3,27 @@ description: "Read-only root-cause investigator. Use when something is broken an
 mode: subagent
 color: "#f59e0b"
 steps: 40
-model: opencode/weak   # alias defined in opencode.jsonc (-> deepseek-v4.1-flash)
+model: opencode-go/weak   # alias defined in opencode.jsonc (-> glm-5.3-flash)
 permissions:
-  - { action: "*", resource: "*", effect: deny }
-  - { action: read, resource: "*", effect: allow }
-  - { action: read, resource: "*.env", effect: deny }
-  - { action: read, resource: "*.env.*", effect: deny }
+  # Read-only policy, mirroring the built-in `plan` agent. Shell commands are
+  # unrestricted, except the git guards at the end.
+  - { action: "*", resource: "*", effect: allow }
+  - { action: read, resource: "*.env", effect: ask }
+  - { action: read, resource: "*.env.*", effect: ask }
   - { action: read, resource: "*.env.example", effect: allow }
-  - { action: read, resource: "*.pem", effect: deny }
-  - { action: read, resource: "*.key", effect: deny }
-  - { action: glob, resource: "*", effect: allow }
-  - { action: grep, resource: "*", effect: allow }
-  - { action: skill, resource: "*", effect: allow }
-  # Read-only inspection
-  - { action: shell, resource: "ls *", effect: allow }
-  - { action: shell, resource: "pwd", effect: allow }
-  - { action: shell, resource: "wc *", effect: allow }
-  - { action: shell, resource: "git status *", effect: allow }
-  - { action: shell, resource: "git diff *", effect: allow }
-  - { action: shell, resource: "git log *", effect: allow }
-  - { action: shell, resource: "git show *", effect: allow }
-  - { action: shell, resource: "git blame *", effect: allow }
-  - { action: shell, resource: "git grep *", effect: allow }
-  - { action: shell, resource: "git ls-files *", effect: allow }
-  - { action: shell, resource: "git rev-parse *", effect: allow }
-  # Reproduction: run existing tests / checks (extend for your stack)
-  - { action: shell, resource: "npm test *", effect: allow }
-  - { action: shell, resource: "npm run test*", effect: allow }
-  - { action: shell, resource: "npm run lint*", effect: allow }
-  - { action: shell, resource: "npm run typecheck*", effect: allow }
-  - { action: shell, resource: "npx tsc *--noEmit*", effect: allow }
-  - { action: shell, resource: "npx vitest *", effect: allow }
-  - { action: shell, resource: "npx jest *", effect: allow }
-  - { action: shell, resource: "pnpm test *", effect: allow }
-  - { action: shell, resource: "yarn test *", effect: allow }
-  - { action: shell, resource: "bun test *", effect: allow }
-  - { action: shell, resource: "pytest *", effect: allow }
-  - { action: shell, resource: "python -m pytest *", effect: allow }
-  - { action: shell, resource: "mypy *", effect: allow }
-  - { action: shell, resource: "ruff check *", effect: allow }
-  - { action: shell, resource: "cargo test *", effect: allow }
-  - { action: shell, resource: "cargo check *", effect: allow }
-  - { action: shell, resource: "cargo clippy *", effect: allow }
-  - { action: shell, resource: "go test *", effect: allow }
-  - { action: shell, resource: "go vet *", effect: allow }
-  # Nothing that rewrites files
-  - { action: shell, resource: "*--fix*", effect: deny }
-  - { action: shell, resource: "*--write*", effect: deny }
-  - { action: shell, resource: "*--update*", effect: deny }
-  - { action: shell, resource: "*--no-verify*", effect: deny }
+  - { action: question, resource: "*", effect: allow }
   - { action: edit, resource: "*", effect: deny }
-  - { action: shell, resource: "head *", effect: allow }
-  - { action: shell, resource: "tail *", effect: allow }
-  - { action: shell, resource: "echo *", effect: allow }
-  - { action: shell, resource: "find *", effect: allow }
-  - { action: shell, resource: "tree *", effect: allow }
-  - { action: shell, resource: "cat *", effect: allow }
-  - { action: shell, resource: "printf *", effect: allow }
-  - { action: shell, resource: "sort *", effect: allow }
-  - { action: shell, resource: "uniq *", effect: allow }
-  - { action: shell, resource: "cut *", effect: allow }
+  - { action: edit, resource: "/home/pierre/.opencode/plan/*", effect: allow }
+  - { action: browser, resource: "*", effect: deny }
+  # Git guards (override the allow-all above)
+  - { action: shell, resource: "git push *--force*", effect: deny }
+  - { action: shell, resource: "git push -f *", effect: deny }
+  - { action: shell, resource: "git push * -f", effect: deny }
+  - { action: shell, resource: "git push *--delete*", effect: deny }
+  - { action: shell, resource: "git reset --hard*", effect: deny }
+  - { action: shell, resource: "git reset * --hard*", effect: deny }
+  - { action: shell, resource: "git clean *", effect: deny }
+  - { action: shell, resource: "git branch -D *", effect: deny }
 ---
 
 You are the **Debugger**. You find out *why* something is broken. You do not fix it: you cannot edit files, and the Orchestrator will hand your findings to a `bug-fixer` or `developer`.
