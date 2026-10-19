@@ -1,9 +1,9 @@
 <!doctype html>
-<html lang="en">
+<html lang="fr">
   <head>
     <meta charset="utf-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1" />
-    <title>drl-frozen-lake — Playground</title>
+    <title>Frozen Lake — Q-learning tabulaire</title>
     <style>
       body {
         margin: 0;
@@ -16,6 +16,7 @@
       main {
         display: grid;
         gap: 1rem;
+        max-width: 640px;
         margin: 0 auto;
       }
 
@@ -27,15 +28,42 @@
   <body>
     <main>
       <p><a href="./index.html">← Playground</a></p>
-      <drl-card heading="drl-frozen-lake">
+      <drl-card heading="Frozen Lake — démonstration interactive">
+        <p>
+          Un agent apprend à traverser un lac gelé sans tomber dans un trou. Il découvre
+          la valeur de chaque paire case/action par essais et erreurs. Epsilon contrôle
+          l'exploration aléatoire. Les flèches indiquent le meilleur déplacement pour
+          chaque case au fil de l'apprentissage.
+        </p>
         <drl-frozen-lake speed="1"></drl-frozen-lake>
         <p>
           <drl-slider
-            label="Learning rate"
-            min="0.05"
+            data-param="learning-rate"
+            label="Taux d'apprentissage"
+            min="0.01"
             max="1"
-            step="0.05"
+            step="0.01"
             value="0.1"
+          ></drl-slider>
+        </p>
+        <p>
+          <drl-slider
+            data-param="epsilon"
+            label="Epsilon (exploration)"
+            min="0"
+            max="1"
+            step="0.01"
+            value="0.1"
+          ></drl-slider>
+        </p>
+        <p>
+          <drl-slider
+            data-param="discount-factor"
+            label="Facteur d'actualisation"
+            min="0.5"
+            max="1"
+            step="0.01"
+            value="0.99"
           ></drl-slider>
         </p>
       </drl-card>
@@ -43,10 +71,22 @@
     <script type="module" src="/src/index.ts"></script>
     <script type="module">
       const demo = document.querySelector('drl-frozen-lake');
-      const slider = document.querySelector('drl-slider');
-      slider?.addEventListener('drl-input', (event) => {
+      const learningRateSlider = document.querySelector('[data-param="learning-rate"]');
+      learningRateSlider?.addEventListener('drl-input', (event) => {
         if (demo) {
           demo.learningRate = event.detail;
+        }
+      });
+      const epsilonSlider = document.querySelector('[data-param="epsilon"]');
+      epsilonSlider?.addEventListener('drl-input', (event) => {
+        if (demo) {
+          demo.epsilon = event.detail;
+        }
+      });
+      const discountFactorSlider = document.querySelector('[data-param="discount-factor"]');
+      discountFactorSlider?.addEventListener('drl-input', (event) => {
+        if (demo) {
+          demo.discountFactor = event.detail;
         }
       });
     </script>
