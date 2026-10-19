@@ -16,6 +16,7 @@
     "postinstall": "node scripts/fetch-mnist-data.mjs --optional"
   },
   "dependencies": {
+    "@tensorflow/tfjs": "^4.22.0",
     "d3": "^7.9.0",
     "lit": "^3.3.1",
     "three": "^0.180.0"

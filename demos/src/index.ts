@@ -17,6 +17,7 @@ import './components/drl-mnist-cnn/drl-mnist-cnn.js';
 // @demos-imports
 
 export * from './base/demo-element.js';
+export * from './core/mnist-cnn-tfjs.js';
 export { DrlCard } from './ui/drl-card.js';
 export { DrlControls } from './ui/drl-controls.js';
 export { DrlSlider } from './ui/drl-slider.js';
