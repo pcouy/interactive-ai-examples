@@ -17,11 +17,16 @@ function mulberry32(seed: number): () => number {
 }
 
 const TERMINALS_4X4 = [5, 7, 11, 12, 15];
-const TERMINALS_6X6 = [7, 9, 15, 18, 19, 27, 35];
+const TERMINALS_6X6 = [7, 15, 18, 19, 27, 35];
 const TERMINALS_8X8 = [19, 29, 35, 41, 42, 46, 49, 52, 54, 59, 63];
 
 const CUSTOM_4X4 = ['SFFF', 'FFFF', 'FFFF', 'FFFG'];
 const CUSTOM_6X6 = ['SHFFFF', 'FFFFFF', 'FFFFFF', 'FFFFFF', 'FFFFFF', 'FFFFFG'];
+const CUSTOM_WALL_4X4 = ['SWFF', 'FFFF', 'FFFF', 'FFFG'];
+const CUSTOM_CANDY_4X4 = ['SCFF', 'FFFF', 'FFFF', 'FFFG'];
+// Candy next to the start and a hole one step further: an episode can collect
+// the candy and then fall in the hole, for a return strictly between 0 and 1.
+const CUSTOM_CANDY_HOLE_4X4 = ['SCFF', 'FHFF', 'FFFF', 'FFFG'];
 
 function terminalCells(env: FrozenLakeEnv): number[] {
   const cells: number[] = [];
@@ -98,6 +103,10 @@ describe('FrozenLakeEnv maps', () => {
     expect(env.cellAt(0)).toBe('start');
     expect(env.cellAt(35)).toBe('goal');
     expect(terminalCells(env)).toEqual(TERMINALS_6X6);
+    // The template showcases a wall at cell 9 and a candy at cell 22.
+    expect(env.cellAt(9)).toBe('wall');
+    expect(env.isWall(9)).toBe(true);
+    expect(env.cellAt(22)).toBe('candy');
   });
 
   it('accepts a custom map through desc', () => {
@@ -122,7 +131,7 @@ describe('FrozenLakeEnv maps', () => {
       () =>
         new FrozenLakeEnv({
           size: 6,
-          desc: ['SFFFFF', 'FHFHFF', 'FFFHFF', 'HHFFFF', 'FFFHFF'],
+          desc: ['SFFFFF', 'FHFWFF', 'FFFHFF', 'HHFFCF', 'FFFHFF'],
         }),
     ).toThrowError(/must have exactly 6 rows/);
   });
@@ -266,6 +275,55 @@ describe('FrozenLakeEnv slip', () => {
   });
 });
 
+describe('FrozenLakeEnv walls', () => {
+  it('parses W into a wall cell that is not terminal', () => {
+    const env = new FrozenLakeEnv({ size: 4, desc: CUSTOM_WALL_4X4 });
+    expect(env.cellAt(1)).toBe('wall');
+    expect(env.isTerminal(1)).toBe(false);
+    expect(env.isWall(1)).toBe(true);
+    expect(env.isWall(0)).toBe(false);
+    expect(terminalCells(env)).toEqual([15]);
+  });
+
+  it('blocks a move into a wall like a grid edge', () => {
+    const env = new FrozenLakeEnv({ size: 4, desc: CUSTOM_WALL_4X4, slipProbability: 0 });
+    expect(env.step('right')).toEqual({ observation: 0, reward: 0, done: false });
+    expect(env.observation).toBe(0);
+    expect(env.done).toBe(false);
+
+    // A normal move still works.
+    expect(env.step('down')).toEqual({ observation: 4, reward: 0, done: false });
+    expect(env.step('right')).toEqual({ observation: 5, reward: 0, done: false });
+  });
+});
+
+describe('FrozenLakeEnv candy', () => {
+  it('grants the candy reward on the visit and keeps the episode running', () => {
+    const env = new FrozenLakeEnv({ size: 4, desc: CUSTOM_CANDY_4X4, candyReward: 0.25 });
+    const result = env.step('right');
+    expect(result).toEqual({ observation: 1, reward: 0.25, done: false });
+    expect(env.cellAt(1)).toBe('candy');
+    expect(env.isTerminal(1)).toBe(false);
+    expect(env.done).toBe(false);
+  });
+
+  it('grants the candy reward again on every visit', () => {
+    const env = new FrozenLakeEnv({ size: 4, desc: CUSTOM_CANDY_4X4, candyReward: 0.25 });
+    expect(env.step('right').reward).toBe(0.25);
+    expect(env.step('left').reward).toBe(0);
+    expect(env.step('right').reward).toBe(0.25);
+    expect(env.step('left').reward).toBe(0);
+    expect(env.done).toBe(false);
+  });
+
+  it('defaults the candy reward to 0.1', () => {
+    const env = new FrozenLakeEnv({ size: 4 });
+    expect(env.candyReward).toBe(0.1);
+    env.candyReward = 5;
+    expect(env.candyReward).toBe(1);
+  });
+});
+
 describe('FrozenLakeCore training', () => {
   it('counts episodes, successes and steps at episode boundaries', () => {
     const core = new FrozenLakeCore({ size: 4, slipProbability: 0, epsilon: 1, seed: 3 });
@@ -279,6 +337,36 @@ describe('FrozenLakeCore training', () => {
     expect(successes).toBe(core.stats.successes);
     expect(core.stats.successRate).toBeCloseTo(core.stats.successes / core.stats.episodes);
     expect(core.observation).toBe(0);
+  });
+
+  it('counts a success only when the episode ends on the goal', () => {
+    // Scan seeds for a run that contains a candy-only episode: the agent
+    // collects the candy at cell 1 and then falls in the hole at cell 5, so
+    // the episode return is strictly between 0 and 1.
+    let seed = 0;
+    for (let candidate = 1; candidate <= 50; candidate += 1) {
+      const probe = new FrozenLakeCore({
+        size: 4,
+        desc: CUSTOM_CANDY_HOLE_4X4,
+        epsilon: 1,
+        seed: candidate,
+      });
+      train(probe, 200);
+      if (probe.rewardHistory.some((reward) => reward > 0 && reward < 1)) {
+        seed = candidate;
+        break;
+      }
+    }
+    expect(seed).toBeGreaterThan(0);
+
+    const core = new FrozenLakeCore({ size: 4, desc: CUSTOM_CANDY_HOLE_4X4, epsilon: 1, seed });
+    train(core, 200);
+    const history = [...core.rewardHistory];
+    // The run is not vacuous: it contains candy-only episodes.
+    expect(history.some((reward) => reward > 0 && reward < 1)).toBe(true);
+    // Goal episodes have a return of at least 1 and candy-only episodes have
+    // a return below 1, so the successes match the returns of at least 1.
+    expect(core.stats.successes).toBe(history.filter((reward) => reward >= 1).length);
   });
 
   it('trains to a success rate of at least 0.5', () => {
@@ -378,6 +466,25 @@ describe('FrozenLakeCore reporting', () => {
         expect(Number.isFinite(core.greedyValues[index])).toBe(true);
       }
     }
+  });
+
+  it('reports the Q values of all four actions and the cell type per cell', () => {
+    const core = new FrozenLakeCore({ size: 4, desc: CUSTOM_WALL_4X4, seed: 1 });
+    train(core, 1000);
+    const values = core.actionValues(0);
+    expect(values).toHaveLength(FROZEN_LAKE_ACTIONS.length);
+    for (const value of values) {
+      expect(Number.isFinite(value)).toBe(true);
+    }
+    // After training the four action values of the start cell are not all equal.
+    expect(new Set(values).size).toBeGreaterThan(1);
+
+    expect(core.cellTypeAt(0)).toBe('start');
+    expect(core.cellTypeAt(1)).toBe('wall');
+    expect(core.cellTypeAt(15)).toBe('goal');
+    // A wall has no policy, like a terminal cell.
+    expect(core.greedyActions[1]).toBeNull();
+    expect(core.greedyValues[1]).toBe(0);
   });
 
   it('records one reward per episode and caps the history at 300', () => {
@@ -492,6 +599,9 @@ describe('FrozenLakeCore configuration', () => {
       expect(core.greedyActions[index]).toBeNull();
       expect(core.greedyValues[index]).toBe(0);
     }
+    // The wall at cell 9 has no policy, like a terminal cell.
+    expect(core.greedyActions[9]).toBeNull();
+    expect(core.greedyValues[9]).toBe(0);
     expect(core.stats.episodes).toBeGreaterThan(0);
   });
 
@@ -557,5 +667,17 @@ describe('FrozenLakeCore configuration', () => {
     core.setSlipProbability(0);
     expect(core.stats).toEqual(stats);
     expect([...core.rewardHistory]).toEqual(history);
+  });
+
+  it('forwards the candy reward to the environment without resetting training', () => {
+    const core = new FrozenLakeCore({ size: 4, slipProbability: 0, seed: 1 });
+    expect(core.candyReward).toBe(0.1);
+    train(core, 50);
+    const stats = { ...core.stats };
+
+    core.candyReward = 0.5;
+    expect(core.candyReward).toBe(0.5);
+    expect(core.stats).toEqual(stats);
+    expect(core.stats.steps).toBe(stats.steps);
   });
 });

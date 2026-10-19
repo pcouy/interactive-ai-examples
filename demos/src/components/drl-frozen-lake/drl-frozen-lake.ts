@@ -4,8 +4,8 @@ import type { PropertyValues, TemplateResult } from 'lit';
 import { css, html } from 'lit';
 import { customElement, property } from 'lit/decorators.js';
 import { DemoElement } from '../../base/demo-element.js';
-import type { FrozenLakeAction, FrozenLakeCell } from '../../core/frozen-lake.js';
-import { FrozenLakeCore } from '../../core/frozen-lake.js';
+import type { FrozenLakeAction } from '../../core/frozen-lake.js';
+import { FROZEN_LAKE_ACTIONS, FrozenLakeCore } from '../../core/frozen-lake.js';
 import { drlTokens } from '../../styles/tokens.js';
 
 const GRID_SIZE = 480;
@@ -14,11 +14,21 @@ const CURVE_HEIGHT = 90;
 const ARROW_PATH =
   'M -0.30 -0.12 L 0.05 -0.12 L 0.05 -0.26 L 0.34 0 L 0.05 0.26 L 0.05 0.12 L -0.30 0.12 Z';
 
+// Tooltip offset from the cursor, in pixels.
+const TOOLTIP_OFFSET = 12;
+
 const ACTION_ROTATION: Record<FrozenLakeAction, number> = {
   right: 0,
   down: 90,
   left: 180,
   up: 270,
+};
+
+const ACTION_GLYPHS: Record<FrozenLakeAction, string> = {
+  left: '←',
+  down: '↓',
+  right: '→',
+  up: '↑',
 };
 
 type SingleSelection<ElementType extends BaseType> = Selection<
@@ -101,8 +111,45 @@ export class FrozenLake extends DemoElement {
         border-radius: var(--drl-radius);
       }
 
-      .drl-grid {
+      .drl-grid-wrap {
+        position: relative;
         margin-bottom: var(--drl-space-2);
+      }
+
+      .drl-tooltip {
+        position: absolute;
+        z-index: 2;
+        padding: var(--drl-space-1) var(--drl-space-2);
+        background: var(--drl-surface);
+        border: 1px solid var(--drl-border);
+        border-radius: var(--drl-radius);
+        box-shadow: 0 1px 2px rgb(15 23 42 / 6%);
+        color: var(--drl-fg);
+        font-size: 0.85em;
+        font-variant-numeric: tabular-nums;
+        white-space: nowrap;
+        pointer-events: none;
+      }
+
+      .drl-tooltip[hidden] {
+        display: none;
+      }
+
+      .drl-q-row {
+        display: flex;
+        align-items: baseline;
+        gap: var(--drl-space-2);
+      }
+
+      .drl-q-action {
+        display: inline-block;
+        min-width: 1.2ch;
+        text-align: center;
+      }
+
+      .drl-q-row--max {
+        font-weight: 700;
+        color: var(--drl-accent);
       }
 
       .drl-cell {
@@ -127,14 +174,24 @@ export class FrozenLake extends DemoElement {
         fill: var(--drl-accent);
       }
 
+      .drl-cell--wall {
+        fill: var(--drl-muted);
+      }
+
+      .drl-cell--candy {
+        fill: var(--drl-accent-2);
+      }
+
       .drl-arrow {
         fill: var(--drl-fg);
+        pointer-events: none;
       }
 
       .drl-agent {
         fill: var(--drl-accent-2);
         stroke: var(--drl-surface);
         stroke-width: 2;
+        pointer-events: none;
       }
 
       .drl-curve {
@@ -160,6 +217,9 @@ export class FrozenLake extends DemoElement {
   @property({ type: Number, attribute: 'slip-probability' })
   slipProbability = 0;
 
+  @property({ type: Number, attribute: 'candy-reward' })
+  candyReward = 0.1;
+
   @property({ type: Number, attribute: 'initial-value' })
   initialValue = 0;
 
@@ -179,6 +239,12 @@ export class FrozenLake extends DemoElement {
 
   private statusText: HTMLElement | null = null;
 
+  private tooltip: HTMLElement | null = null;
+
+  private hoveredCell: number | null = null;
+
+  private gridWrap: HTMLElement | null = null;
+
   private get size(): 4 | 6 | 8 {
     return this.gridSize === 8 ? 8 : this.gridSize === 6 ? 6 : 4;
   }
@@ -194,6 +260,8 @@ export class FrozenLake extends DemoElement {
     const curvePath = this.renderRoot.querySelector<SVGPathElement>('path.drl-curve');
     this.curve = curvePath ? select(curvePath) : null;
     this.statusText = this.renderRoot.querySelector<HTMLElement>('.drl-status-text');
+    this.gridWrap = this.renderRoot.querySelector<HTMLElement>('.drl-grid-wrap');
+    this.tooltip = this.renderRoot.querySelector<HTMLElement>('.drl-tooltip');
     this.buildGrid();
     this.draw();
   }
@@ -214,6 +282,7 @@ export class FrozenLake extends DemoElement {
     this.core.epsilon = this.epsilon;
     this.core.discountFactor = this.discountFactor;
     this.core.initialValue = this.initialValue;
+    this.core.candyReward = this.candyReward;
     if (changed.has('gridSize')) {
       this.core.setSize(this.size);
       this.buildGrid();
@@ -241,6 +310,9 @@ export class FrozenLake extends DemoElement {
   };
 
   private buildGrid(): void {
+    // The grid is rebuilt when the grid size changes, so the tooltip must not
+    // survive the rebuild.
+    this.hideTooltip();
     const cellsGroup = this.cellsGroup;
     const arrowsGroup = this.arrowsGroup;
     if (!cellsGroup || !arrowsGroup) {
@@ -258,7 +330,16 @@ export class FrozenLake extends DemoElement {
       .attr('width', cellSize)
       .attr('height', cellSize)
       .attr('x', (index) => (index % size) * cellSize)
-      .attr('y', (index) => Math.floor(index / size) * cellSize);
+      .attr('y', (index) => Math.floor(index / size) * cellSize)
+      .on('pointerenter', (event: PointerEvent, index: number) => {
+        this.handleCellEnter(event, index);
+      })
+      .on('pointermove', (event: PointerEvent) => {
+        this.handleCellMove(event);
+      })
+      .on('pointerleave', () => {
+        this.hideTooltip();
+      });
 
     this.arrows = arrowsGroup
       .selectAll<SVGPathElement, number>('path.drl-arrow')
@@ -269,18 +350,80 @@ export class FrozenLake extends DemoElement {
   }
 
   /**
-   * The pinned core API does not expose the grid, so derive the type from the
-   * standard FrozenLake layout: the start is the first cell, the goal is the
-   * last cell, and every other terminal cell is a hole.
+   * Walls and terminal cells have no policy, so they get no tooltip either.
+   * Navigable cells are the start, frozen and candy cells.
    */
-  private cellTypeAt(index: number, actions: readonly (FrozenLakeAction | null)[]): FrozenLakeCell {
-    if (index === 0) {
-      return 'start';
+  private handleCellEnter(event: PointerEvent, index: number): void {
+    const type = this.core.cellTypeAt(index);
+    if (type !== 'start' && type !== 'frozen' && type !== 'candy') {
+      return;
     }
-    if (index === this.size * this.size - 1) {
-      return 'goal';
+    this.hoveredCell = index;
+    this.showTooltip(event, index);
+  }
+
+  private handleCellMove(event: PointerEvent): void {
+    this.positionTooltip(event);
+  }
+
+  private hideTooltip(): void {
+    this.hoveredCell = null;
+    if (this.tooltip) {
+      this.tooltip.hidden = true;
     }
-    return actions[index] === null ? 'hole' : 'frozen';
+  }
+
+  private showTooltip(event: PointerEvent, index: number): void {
+    const tooltip = this.tooltip;
+    if (!tooltip) {
+      return;
+    }
+    this.fillTooltip(index);
+    // Unhide before positioning: a hidden tooltip has zero size, so the clamp
+    // inside positionTooltip needs the rendered dimensions.
+    tooltip.hidden = false;
+    this.positionTooltip(event);
+  }
+
+  /** Rebuilds the tooltip content for `index` from the current Q values. */
+  private fillTooltip(index: number): void {
+    const tooltip = this.tooltip;
+    if (!tooltip) {
+      return;
+    }
+    const values = this.core.actionValues(index);
+    const maxValue = Math.max(...values);
+    const allEqual = values.every((value) => value === values[0]);
+    tooltip.replaceChildren(
+      ...FROZEN_LAKE_ACTIONS.map((action, position) => {
+        const row = document.createElement('div');
+        const isMax = !allEqual && values[position] === maxValue;
+        row.className = `drl-q-row${isMax ? ' drl-q-row--max' : ''}`;
+        const glyph = document.createElement('span');
+        glyph.className = 'drl-q-action';
+        glyph.textContent = ACTION_GLYPHS[action];
+        const value = document.createElement('span');
+        value.textContent = values[position].toFixed(2);
+        row.append(glyph, value);
+        return row;
+      }),
+    );
+  }
+
+  /** Places the tooltip at the cursor with a small offset, inside the grid wrap. */
+  private positionTooltip(event: PointerEvent): void {
+    const tooltip = this.tooltip;
+    const wrap = this.gridWrap;
+    if (!tooltip || !wrap) {
+      return;
+    }
+    const bounds = wrap.getBoundingClientRect();
+    const x = event.clientX - bounds.left + TOOLTIP_OFFSET;
+    const y = event.clientY - bounds.top + TOOLTIP_OFFSET;
+    const left = Math.min(Math.max(0, x), Math.max(0, bounds.width - tooltip.offsetWidth));
+    const top = Math.min(Math.max(0, y), Math.max(0, bounds.height - tooltip.offsetHeight));
+    tooltip.style.left = `${left}px`;
+    tooltip.style.top = `${top}px`;
   }
 
   private draw(): void {
@@ -295,7 +438,7 @@ export class FrozenLake extends DemoElement {
     const count = size * size;
     const actions = this.core.greedyActions;
 
-    cells.attr('class', (index) => `drl-cell drl-cell--${this.cellTypeAt(index, actions)}`);
+    cells.attr('class', (index) => `drl-cell drl-cell--${this.core.cellTypeAt(index)}`);
 
     const values = this.core.greedyValues;
     let maxValue = 0;
@@ -341,15 +484,24 @@ export class FrozenLake extends DemoElement {
         curve.attr('visibility', 'hidden');
       } else {
         const length = history.length;
+        // Candy rewards can push a return past 1, so scale by the observed
+        // maximum instead of clipping the curve at the top edge. The floor of 1
+        // keeps early episodes at full height.
+        const maxReturn = Math.max(1, ...history);
         const d = history
           .map((reward, index) => {
             const x = length === 1 ? 0 : (index / (length - 1)) * CURVE_WIDTH;
-            const y = CURVE_HEIGHT - reward * CURVE_HEIGHT;
+            const y = CURVE_HEIGHT - (reward / maxReturn) * CURVE_HEIGHT;
             return `${index === 0 ? 'M' : 'L'} ${x.toFixed(2)} ${y.toFixed(2)}`;
           })
           .join(' ');
         curve.attr('visibility', 'visible').attr('d', d);
       }
+    }
+
+    // Refresh the tooltip while the pointer stays on a cell during training.
+    if (this.hoveredCell !== null && this.tooltip && !this.tooltip.hidden) {
+      this.fillTooltip(this.hoveredCell);
     }
   }
 
@@ -394,11 +546,14 @@ export class FrozenLake extends DemoElement {
           8×8
         </button>
       </div>
-      <svg class="drl-grid" viewBox="0 0 480 480" role="img" aria-label="Grille Frozen Lake">
-        <g class="drl-cells"></g>
-        <g class="drl-arrows"></g>
-        <circle class="drl-agent" r="10"></circle>
-      </svg>
+      <div class="drl-grid-wrap">
+        <svg class="drl-grid" viewBox="0 0 480 480" role="img" aria-label="Grille Frozen Lake">
+          <g class="drl-cells"></g>
+          <g class="drl-arrows"></g>
+          <circle class="drl-agent" r="10"></circle>
+        </svg>
+        <div class="drl-tooltip" hidden></div>
+      </div>
       <svg
         class="drl-curve-svg"
         viewBox="0 0 480 90"

@@ -2,11 +2,12 @@ import { QLearningAgent } from './q-learning.js';
 
 export type FrozenLakeAction = 'left' | 'down' | 'right' | 'up';
 
-export type FrozenLakeCell = 'start' | 'frozen' | 'hole' | 'goal';
+export type FrozenLakeCell = 'start' | 'frozen' | 'hole' | 'goal' | 'wall' | 'candy';
 
 export const FROZEN_LAKE_ACTIONS: readonly FrozenLakeAction[] = ['left', 'down', 'right', 'up'];
 
 const DEFAULT_SEED = 42;
+export const DEFAULT_CANDY_REWARD = 0.1;
 const REWARD_HISTORY_LIMIT = 300;
 
 export type FrozenLakeSize = 4 | 6 | 8;
@@ -14,8 +15,9 @@ export type FrozenLakeSize = 4 | 6 | 8;
 const MAPS: Readonly<Record<FrozenLakeSize, readonly string[]>> = {
   4: ['SFFF', 'FHFH', 'FFFH', 'HFFG'],
   // User-editable template: change these rows to build your own 6x6 lake.
-  // Every row must have exactly 6 characters and the map needs exactly one 'S'.
-  6: ['SFFFFF', 'FHFHFF', 'FFFHFF', 'HHFFFF', 'FFFHFF', 'FFFFFG'],
+  // The template showcases a wall (W) and a candy (C). Every row must have
+  // exactly 6 characters and the map needs exactly one 'S'.
+  6: ['SFFFFF', 'FHFWFF', 'FFFHFF', 'HHFFCF', 'FFFHFF', 'FFFFFG'],
   8: [
     'SFFFFFFF',
     'FFFFFFFF',
@@ -61,6 +63,7 @@ function mulberry32(seed: number): () => number {
   };
 }
 
+// Map symbols: S start, H hole, G goal, W wall, C candy, anything else frozen.
 function cellFromSymbol(symbol: string): FrozenLakeCell {
   if (symbol === 'S') {
     return 'start';
@@ -70,6 +73,12 @@ function cellFromSymbol(symbol: string): FrozenLakeCell {
   }
   if (symbol === 'G') {
     return 'goal';
+  }
+  if (symbol === 'W') {
+    return 'wall';
+  }
+  if (symbol === 'C') {
+    return 'candy';
   }
   return 'frozen';
 }
@@ -121,10 +130,13 @@ export class FrozenLakeEnv {
 
   private slip: number;
 
+  private candy: number;
+
   constructor(
     options: {
       size?: FrozenLakeSize;
       slipProbability?: number;
+      candyReward?: number;
       desc?: readonly string[];
       rng?: () => number;
     } = {},
@@ -132,6 +144,7 @@ export class FrozenLakeEnv {
     this.size = options.size ?? 4;
     this.cells = cellsFromMap(this.size, options.desc ?? MAPS[this.size]);
     this.slip = clampProbability(options.slipProbability ?? 0);
+    this.candy = clampProbability(options.candyReward ?? DEFAULT_CANDY_REWARD);
     this.rng = options.rng ?? Math.random;
     this.position = this.startIndex();
     this.finished = false;
@@ -147,6 +160,19 @@ export class FrozenLakeEnv {
 
   set slipProbability(value: number) {
     this.slip = clampProbability(value);
+  }
+
+  /**
+   * Reward collected when the agent steps on a candy cell. The episode
+   * continues and the reward is granted again on every visit. The setter
+   * clamps the stored value to [0, 1].
+   */
+  get candyReward(): number {
+    return this.candy;
+  }
+
+  set candyReward(value: number) {
+    this.candy = clampProbability(value);
   }
 
   get observation(): number {
@@ -179,8 +205,18 @@ export class FrozenLakeEnv {
       const outcomes = SLIP_OUTCOMES[action];
       chosen = outcomes[Math.floor(this.rng() * 2)];
     }
-    this.position = this.targetIndex(this.position, chosen);
+    const target = this.targetIndex(this.position, chosen);
+    // A wall blocks the move like a grid edge, so the agent stays put. A wall
+    // is never terminal, so the episode continues.
+    if (this.cells[target] === 'wall') {
+      return { observation: this.position, reward: 0, done: false };
+    }
+    this.position = target;
     const cell = this.cells[this.position];
+    // A candy cell is not terminal: the reward is granted on every visit.
+    if (cell === 'candy') {
+      return { observation: this.position, reward: this.candy, done: false };
+    }
     this.finished = cell === 'hole' || cell === 'goal';
     return { observation: this.position, reward: cell === 'goal' ? 1 : 0, done: this.finished };
   }
@@ -192,6 +228,10 @@ export class FrozenLakeEnv {
   isTerminal(index: number): boolean {
     const cell = this.cells[index];
     return cell === 'hole' || cell === 'goal';
+  }
+
+  isWall(index: number): boolean {
+    return this.cells[index] === 'wall';
   }
 
   private startIndex(): number {
@@ -250,6 +290,7 @@ export class FrozenLakeCore {
     options: {
       size?: FrozenLakeSize;
       slipProbability?: number;
+      candyReward?: number;
       learningRate?: number;
       discountFactor?: number;
       epsilon?: number;
@@ -260,7 +301,12 @@ export class FrozenLakeCore {
   ) {
     this.seed = options.seed ?? DEFAULT_SEED;
     this.customMap = options.desc;
-    this.env = this.buildEnv(options.size, options.slipProbability, this.customMap);
+    this.env = this.buildEnv(
+      options.size,
+      options.slipProbability,
+      options.candyReward,
+      this.customMap,
+    );
     this.agent = new QLearningAgent<number, FrozenLakeAction>(FROZEN_LAKE_ACTIONS, {
       learningRate: options.learningRate,
       discountFactor: options.discountFactor,
@@ -291,7 +337,7 @@ export class FrozenLakeCore {
     const total = this.env.size * this.env.size;
     const actions: (FrozenLakeAction | null)[] = [];
     for (let index = 0; index < total; index += 1) {
-      actions.push(this.env.isTerminal(index) ? null : this.agent.policyAction(index));
+      actions.push(this.hasPolicy(index) ? this.agent.policyAction(index) : null);
     }
     return actions;
   }
@@ -300,9 +346,19 @@ export class FrozenLakeCore {
     const total = this.env.size * this.env.size;
     const values: number[] = [];
     for (let index = 0; index < total; index += 1) {
-      values.push(this.env.isTerminal(index) ? 0 : this.agent.maxValue(index));
+      values.push(this.hasPolicy(index) ? this.agent.maxValue(index) : 0);
     }
     return values;
+  }
+
+  /** Q values of every action for `observation`, in FROZEN_LAKE_ACTIONS order. */
+  actionValues(observation: number): readonly number[] {
+    return FROZEN_LAKE_ACTIONS.map((action) => this.agent.valueOf(observation, action));
+  }
+
+  /** Cell type of `index` in the active map. */
+  cellTypeAt(index: number): FrozenLakeCell {
+    return this.env.cellAt(index);
   }
 
   get learningRate(): number {
@@ -352,7 +408,9 @@ export class FrozenLakeCore {
     this.steps += 1;
     if (result.done) {
       this.episodes += 1;
-      if (this.episodeReturn > 0) {
+      // Only the goal ends the episode as a success: an episode that
+      // collected candy and then fell in a hole has a positive return.
+      if (this.env.cellAt(result.observation) === 'goal') {
         this.successes += 1;
       }
       this.history.push(this.episodeReturn);
@@ -365,18 +423,31 @@ export class FrozenLakeCore {
   }
 
   reset(): void {
-    this.env = this.buildEnv(this.env.size, this.env.slipProbability, this.customMap);
+    this.env = this.buildEnv(
+      this.env.size,
+      this.env.slipProbability,
+      this.env.candyReward,
+      this.customMap,
+    );
     this.resetTraining();
   }
 
   setSize(size: FrozenLakeSize): void {
     this.customMap = undefined;
-    this.env = this.buildEnv(size, this.env.slipProbability, undefined);
+    this.env = this.buildEnv(size, this.env.slipProbability, this.env.candyReward, undefined);
     this.resetTraining();
   }
 
   setSlipProbability(value: number): void {
     this.env.slipProbability = value;
+  }
+
+  get candyReward(): number {
+    return this.env.candyReward;
+  }
+
+  set candyReward(value: number) {
+    this.env.candyReward = value;
   }
 
   /**
@@ -389,7 +460,12 @@ export class FrozenLakeCore {
   setCustomMap(rows: readonly string[]): void {
     const customMap = rows.slice();
     // Build first so an invalid map leaves the current environment untouched.
-    this.env = this.buildEnv(this.env.size, this.env.slipProbability, customMap);
+    this.env = this.buildEnv(
+      this.env.size,
+      this.env.slipProbability,
+      this.env.candyReward,
+      customMap,
+    );
     this.customMap = customMap;
     this.resetTraining();
   }
@@ -413,9 +489,14 @@ export class FrozenLakeCore {
     });
   }
 
+  private hasPolicy(index: number): boolean {
+    return !this.env.isTerminal(index) && !this.env.isWall(index);
+  }
+
   private buildEnv(
     size: FrozenLakeSize | undefined,
     slipProbability: number | undefined,
+    candyReward: number | undefined,
     desc: readonly string[] | undefined,
   ): FrozenLakeEnv {
     // A custom map defines its own grid size, so it overrides the size option
@@ -423,6 +504,7 @@ export class FrozenLakeCore {
     return new FrozenLakeEnv({
       size: desc ? sizeFromRows(desc) : size,
       slipProbability,
+      candyReward,
       desc,
       rng: mulberry32(this.seed),
     });
