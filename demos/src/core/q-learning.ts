@@ -31,6 +31,9 @@ export class QLearningAgent<O, A> {
   private table: Map<O, Map<A, number>> = new Map();
 
   constructor(actions: readonly A[], options: QLearningOptions = {}) {
+    if (actions.length === 0) {
+      throw new Error('QLearningAgent needs at least one action.');
+    }
     this.actions = actions.slice();
     this.learningRate = options.learningRate ?? DEFAULT_LEARNING_RATE;
     this.discountFactor = options.discountFactor ?? DEFAULT_DISCOUNT_FACTOR;
@@ -85,9 +88,6 @@ export class QLearningAgent<O, A> {
    * The candidates are tied, so one is picked uniformly at random with `this.rng()`.
    */
   greedyAction(observation: O): A {
-    if (this.actions.length === 0) {
-      return this.actions[0];
-    }
     const bestValue = this.maxValue(observation);
     const tied: A[] = [];
     for (const action of this.actions) {
@@ -100,6 +100,23 @@ export class QLearningAgent<O, A> {
       return tied[0];
     }
     return tied[Math.floor(this.rng() * tied.length)];
+  }
+
+  /**
+   * Greedy action for `observation` with a deterministic tie-break: the
+   * first action in the space wins. Does not consume the rng. For display.
+   */
+  policyAction(observation: O): A {
+    let bestAction: A = this.actions[0];
+    let bestValue = -Infinity;
+    for (const action of this.actions) {
+      const value = this.valueOf(observation, action);
+      if (value > bestValue) {
+        bestValue = value;
+        bestAction = action;
+      }
+    }
+    return bestAction;
   }
 
   get qTable(): ReadonlyMap<O, ReadonlyMap<A, number>> {

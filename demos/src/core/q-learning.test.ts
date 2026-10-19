@@ -160,6 +160,38 @@ describe('QLearningAgent table access', () => {
   });
 });
 
+describe('QLearningAgent construction', () => {
+  it('throws on an empty action space', () => {
+    expect(() => new QLearningAgent<string, number>([])).toThrowError(
+      'QLearningAgent needs at least one action.',
+    );
+  });
+});
+
+describe('QLearningAgent policy action', () => {
+  it('breaks an empty-table tie towards the first action every time', () => {
+    const agent = new QLearningAgent<string, string>(['first', 'second', 'third'], {
+      rng: () => 0.999999,
+    });
+    for (let step = 0; step < 10; step += 1) {
+      expect(agent.policyAction('unknown')).toBe('first');
+    }
+  });
+
+  it('does not consume the training rng', () => {
+    const make = (): QLearningAgent<string, number> =>
+      new QLearningAgent<string, number>([0, 1, 2], { epsilon: 0.5, rng: mulberry32(99) });
+    const plain = make();
+    const reading = make();
+    const observations = ['s0', 's1', 's2'];
+    for (let step = 0; step < 50; step += 1) {
+      const observation = observations[step % observations.length];
+      reading.policyAction(observation);
+      expect(reading.selectAction(observation)).toBe(plain.selectAction(observation));
+    }
+  });
+});
+
 describe('QLearningAgent determinism', () => {
   it('produces the same action sequence for the same seed', () => {
     const make = (): QLearningAgent<string, number> =>
