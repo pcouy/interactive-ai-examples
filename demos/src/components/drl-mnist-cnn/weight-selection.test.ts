@@ -82,6 +82,46 @@ describe('selectedWeightValue', () => {
         kx: 0,
       }),
     ).toBeNull();
+    expect(
+      selectedWeightValue(weights, {
+        kind: 'weight',
+        boundary: 1,
+        inputChannel: 0,
+        outputChannel: 0,
+        ky: 3,
+        kx: 0,
+      }),
+    ).toBeNull();
+    expect(
+      selectedWeightValue(weights, {
+        kind: 'weight',
+        boundary: 1,
+        inputChannel: 0,
+        outputChannel: 0,
+        ky: 0,
+        kx: -1,
+      }),
+    ).toBeNull();
+    expect(
+      selectedWeightValue(weights, {
+        kind: 'weight',
+        boundary: 1,
+        inputChannel: 0,
+        outputChannel: 5,
+        ky: 0,
+        kx: 0,
+      }),
+    ).toBeNull();
+    expect(
+      selectedWeightValue(weights, {
+        kind: 'weight',
+        boundary: 1,
+        inputChannel: -1,
+        outputChannel: 0,
+        ky: 0,
+        kx: 0,
+      }),
+    ).toBeNull();
   });
 
   it('returns null instead of throwing for a fractional kernel index', () => {
@@ -165,6 +205,36 @@ describe('selectedWeightValue', () => {
         inputChannel: 0,
         outputChannel: 2,
         ky: Number.NaN,
+        kx: 1,
+      }),
+    ).toBeNull();
+    expect(
+      selectedWeightValue(weights, {
+        kind: 'weight',
+        boundary: 1,
+        inputChannel: 0,
+        outputChannel: 2,
+        ky: 1,
+        kx: Number.NaN,
+      }),
+    ).toBeNull();
+    expect(
+      selectedWeightValue(weights, {
+        kind: 'weight',
+        boundary: 1,
+        inputChannel: Number.NaN,
+        outputChannel: 2,
+        ky: 1,
+        kx: 1,
+      }),
+    ).toBeNull();
+    expect(
+      selectedWeightValue(weights, {
+        kind: 'weight',
+        boundary: 1,
+        inputChannel: 0,
+        outputChannel: Number.NaN,
+        ky: 1,
         kx: 1,
       }),
     ).toBeNull();
