@@ -70,10 +70,10 @@ export function gridIndex(res: number): number[] {
 const FLAT_SPAN_EPSILON = 1e-9;
 
 /**
- * Maps a raw height sample into [min, min + span]. A field can evaluate to
- * Infinity or NaN (an L2 loss that overflows, for instance); those samples are
- * pushed to the nearest end of the range so scene heights stay finite. Exported
- * for testing.
+ * Clamps a raw height sample against [min, min + span]. Finite samples pass
+ * through unchanged. Non-finite samples (an L2 loss that overflows, for
+ * instance) move to the nearest end of the range, so scene heights stay finite.
+ * Exported for testing.
  */
 export function clampFiniteHeight(raw: number, min: number, span: number): number {
   if (Number.isFinite(raw)) {
@@ -81,6 +81,19 @@ export function clampFiniteHeight(raw: number, min: number, span: number): numbe
   }
   // NaN fails the > 0 comparison, so it also lands on the low end.
   return raw > 0 ? min + span : min;
+}
+
+/**
+ * Normalizes a raw height sample to scene units. A flat field (span at most
+ * FLAT_SPAN_EPSILON) collapses to 0. A non-flat field maps the clamped sample
+ * into [0, HEIGHT_SCALE]. Exported for testing.
+ */
+export function normalizeHeight(raw: number, min: number, span: number): number {
+  if (span <= FLAT_SPAN_EPSILON) {
+    return 0;
+  }
+  const h = clampFiniteHeight(raw, min, span);
+  return ((h - min) / span) * HEIGHT_SCALE;
 }
 
 export interface HeightRange {
@@ -92,7 +105,8 @@ export interface HeightRange {
  * Samples `heightFn` over the (res+1)² grid covering [-domain, domain] and
  * returns the minimum and the span (max - min). Exported for testing; a
  * constant field returns span 0. Non-finite samples are skipped, and a field
- * with no finite sample reports a flat range so callers stay finite.
+ * with no finite sample reports a flat range so callers stay finite. A finite
+ * field whose span overflows also reports a flat range.
  */
 export function sampleHeightRange(
   heightFn: (w1: number, w2: number) => number,
@@ -116,7 +130,11 @@ export function sampleHeightRange(
   if (!Number.isFinite(min) || !Number.isFinite(max)) {
     return { min: 0, span: 0 };
   }
-  return { min, span: max - min };
+  const span = max - min;
+  if (!Number.isFinite(span)) {
+    return { min: 0, span: 0 };
+  }
+  return { min, span };
 }
 
 /** Smoothstep ease used for ball tweens; exported for testing. */
@@ -204,11 +222,7 @@ export async function createLandscapeScene(canvas: HTMLCanvasElement): Promise<L
   let disposed = false;
 
   function heightAt(w1: number, w2: number): number {
-    if (gridSpan <= FLAT_SPAN_EPSILON) {
-      return 0;
-    }
-    const h = clampFiniteHeight(heightFn(w1, w2), gridMin, gridSpan);
-    return ((h - gridMin) / gridSpan) * HEIGHT_SCALE;
+    return normalizeHeight(heightFn(w1, w2), gridMin, gridSpan);
   }
 
   function buildLandscape(): void {

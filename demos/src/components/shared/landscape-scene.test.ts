@@ -3,6 +3,7 @@ import {
   clampFiniteHeight,
   easeSmoothstep,
   gridIndex,
+  normalizeHeight,
   sampleHeightRange,
 } from './landscape-scene.js';
 
@@ -76,6 +77,11 @@ describe('sampleHeightRange', () => {
     expect(min).toBeCloseTo(-2, 10);
     expect(span).toBeCloseTo(2, 10);
   });
+
+  it('flattens a finite field whose span overflows', () => {
+    const range = sampleHeightRange((w1: number) => 1e308 * w1, 70, 2);
+    expect(range).toEqual({ min: 0, span: 0 });
+  });
 });
 
 describe('clampFiniteHeight', () => {
@@ -110,5 +116,29 @@ describe('easeSmoothstep', () => {
       expect(current).toBeGreaterThanOrEqual(previous);
       previous = current;
     }
+  });
+});
+
+describe('normalizeHeight', () => {
+  it('maps finite values linearly to the scene height', () => {
+    expect(normalizeHeight(5, 3, 4)).toBeCloseTo(0.75, 12);
+  });
+
+  it('sends non-finite values to the nearest end', () => {
+    expect(normalizeHeight(Number.POSITIVE_INFINITY, 3, 4)).toBe(1.5);
+    expect(normalizeHeight(Number.NEGATIVE_INFINITY, 3, 4)).toBe(0);
+    expect(normalizeHeight(Number.NaN, 3, 4)).toBe(0);
+  });
+
+  it('returns zero for a flat range', () => {
+    expect(normalizeHeight(7, 3, 0)).toBe(0);
+    expect(normalizeHeight(7, 3, 1e-10)).toBe(0);
+  });
+
+  it('still overflows when the span is infinite (the sampler prevents this upstream)', () => {
+    // sampleHeightRange now returns span 0 for such fields; this pins the raw helper behavior.
+    expect(Number.isFinite(normalizeHeight(1.5e308, -1.771e308, Number.POSITIVE_INFINITY))).toBe(
+      false,
+    );
   });
 });
