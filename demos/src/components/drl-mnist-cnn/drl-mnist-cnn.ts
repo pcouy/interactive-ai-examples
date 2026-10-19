@@ -8,6 +8,7 @@ import {
   CONV_LAYER_NAMES,
   CONV_PADDINGS,
   CONV_STRIDES,
+  contributingTaps,
   convOutputLength,
   DEFAULT_FILTER_COUNTS,
   forwardMnistCnn,
@@ -161,18 +162,54 @@ export function paintDisc(pixels: Float32Array, gx: number, gy: number): void {
   }
 }
 
-/** Convertit un événement pointeur en coordonnées 28×28, ou null si la toile est vide. */
-export function pointerToCell(
+/**
+ * Convertit un événement pointeur en coordonnées de grille `size`×`size`, ou null
+ * si la toile est vide. Les coordonnées sont fractionnaires et peuvent dépasser
+ * [0, `size`] : le bornage est laissé à l'appelant.
+ */
+export function pointerToGrid(
   canvas: HTMLCanvasElement,
   event: PointerEvent,
+  size: number,
 ): [number, number] | null {
   const rect = canvas.getBoundingClientRect();
   if (rect.width === 0 || rect.height === 0) {
     return null;
   }
-  const gx = ((event.clientX - rect.left) / rect.width) * MNIST_INPUT_SIZE;
-  const gy = ((event.clientY - rect.top) / rect.height) * MNIST_INPUT_SIZE;
+  const gx = ((event.clientX - rect.left) / rect.width) * size;
+  const gy = ((event.clientY - rect.top) / rect.height) * size;
   return [gx, gy];
+}
+
+/** Convertit un événement pointeur en coordonnées 28×28, ou null si la toile est vide. */
+export function pointerToCell(
+  canvas: HTMLCanvasElement,
+  event: PointerEvent,
+): [number, number] | null {
+  return pointerToGrid(canvas, event, MNIST_INPUT_SIZE);
+}
+
+/**
+ * Convertit un événement pointeur en cellule entière d'une carte de
+ * caractéristiques, ou null si la toile est vide. La grille a pour dimensions les
+ * dimensions propres de la toile, qui doivent valoir le nombre de cellules de la
+ * carte (la mise à l'échelle éventuelle est laissée au CSS) ; le rectangle
+ * affiché sert de repli quand la toile n'expose pas ses dimensions. Les
+ * coordonnées sont plancher puis bornées à [0, taille − 1].
+ */
+export function pointerToMapCell(
+  canvas: HTMLCanvasElement,
+  event: PointerEvent,
+): [number, number] | null {
+  const rect = canvas.getBoundingClientRect();
+  const sizeX = canvas.width > 0 ? canvas.width : rect.width;
+  const sizeY = canvas.height > 0 ? canvas.height : rect.height;
+  if (rect.width === 0 || rect.height === 0 || sizeX <= 0 || sizeY <= 0) {
+    return null;
+  }
+  const gx = ((event.clientX - rect.left) / rect.width) * sizeX;
+  const gy = ((event.clientY - rect.top) / rect.height) * sizeY;
+  return [clamp(Math.floor(gx), 0, sizeX - 1), clamp(Math.floor(gy), 0, sizeY - 1)];
 }
 
 /**
@@ -198,6 +235,445 @@ export function filterKernelMean(
     }
   }
   return means;
+}
+
+/**
+ * Extrait le noyau 3×3 exact d'un couple (canal d'entrée, canal de sortie), dans
+ * l'ordre [ky][kx]. Les noyaux sont stockés à plat en HWIO ; contrairement à
+ * `filterKernelMean`, aucun canal n'est moyenné.
+ */
+export function filterKernelSlice(
+  kernel: Float32Array,
+  inputChannels: number,
+  outputChannel: number,
+  inputChannel: number,
+): Float32Array {
+  if (!Number.isInteger(inputChannels) || inputChannels <= 0) {
+    throw new RangeError(
+      `filterKernelSlice: inputChannels must be a positive integer, received ${String(inputChannels)}.`,
+    );
+  }
+  const outputChannels = kernel.length / (CONV_KERNEL_SIZE * CONV_KERNEL_SIZE * inputChannels);
+  if (!Number.isInteger(outputChannels) || outputChannels <= 0) {
+    throw new RangeError(
+      `filterKernelSlice: kernel length ${String(kernel.length)} is inconsistent with ${String(inputChannels)} input channels.`,
+    );
+  }
+  if (!Number.isInteger(outputChannel) || outputChannel < 0 || outputChannel >= outputChannels) {
+    throw new RangeError(
+      `filterKernelSlice: outputChannel must be an integer in [0, ${String(outputChannels - 1)}], received ${String(outputChannel)}.`,
+    );
+  }
+  if (!Number.isInteger(inputChannel) || inputChannel < 0 || inputChannel >= inputChannels) {
+    throw new RangeError(
+      `filterKernelSlice: inputChannel must be an integer in [0, ${String(inputChannels - 1)}], received ${String(inputChannel)}.`,
+    );
+  }
+  const slice = new Float32Array(CONV_KERNEL_SIZE * CONV_KERNEL_SIZE);
+  for (let ky = 0; ky < CONV_KERNEL_SIZE; ky += 1) {
+    for (let kx = 0; kx < CONV_KERNEL_SIZE; kx += 1) {
+      const index =
+        (ky * CONV_KERNEL_SIZE + kx) * inputChannels * outputChannels +
+        inputChannel * outputChannels +
+        outputChannel;
+      slice[ky * CONV_KERNEL_SIZE + kx] = kernel[index];
+    }
+  }
+  return slice;
+}
+
+/**
+ * Sélection de l'éditeur de poids : une liaison (canal d'entrée, canal de sortie)
+ * à une frontière entre couches, une cellule de carte de caractéristiques, un
+ * poids exact de noyau, ou null quand rien n'est sélectionné.
+ *
+ * Une frontière `boundary` relie la sortie de la couche `boundary` à l'entrée de
+ * la couche `boundary + 1` ; la frontière 0 relie l'image d'entrée à `conv1`.
+ * Une sélection de carte emporte les taps `taps` qui contribuent à la cellule :
+ * ils bornent les poids affichés sur les liaisons en amont, tous canaux d'entrée
+ * confondus (la condition ne dépend pas du canal).
+ */
+export type WeightSelection =
+  | { kind: 'link'; boundary: number; inputChannel: number; outputChannel: number }
+  | {
+      kind: 'map';
+      layer: number;
+      channel: number;
+      y: number;
+      x: number;
+      taps: ReadonlyArray<readonly [number, number]>;
+    }
+  | {
+      kind: 'weight';
+      boundary: number;
+      inputChannel: number;
+      outputChannel: number;
+      ky: number;
+      kx: number;
+    }
+  | null;
+
+/**
+ * Événement de l'éditeur de poids : clic sur une liaison, une carte ou une case de
+ * noyau. L'événement de carte porte la géométrie de la couche (`stride`,
+ * `padding`, `inputSize`) : c'est elle qui permet de calculer les taps, ce qui
+ * garde ce calcul à un seul endroit.
+ */
+export type WeightEditorEvent =
+  | { kind: 'link'; boundary: number; inputChannel: number; outputChannel: number }
+  | {
+      kind: 'map';
+      layer: number;
+      channel: number;
+      y: number;
+      x: number;
+      stride: number;
+      padding: number;
+      inputSize: number;
+    }
+  | {
+      kind: 'filterCell';
+      layer: number;
+      inputChannel: number;
+      outputChannel: number;
+      ky: number;
+      kx: number;
+    };
+
+/**
+ * Applique un événement de l'éditeur à la sélection courante. Un clic sur une
+ * liaison ou une cellule de carte sélectionne puis désélectionne (toggle) ; un
+ * clic sur une case de noyau ne produit une sélection de poids que si la
+ * sélection courante est la liaison de la frontière immédiatement en amont de la
+ * couche, ou une cellule de carte de la même couche et du même canal dont le tap
+ * contribue, et ne fait rien sinon. Un clic sur une liaison remplace une
+ * sélection de carte ou de poids.
+ */
+export function applyWeightEditorEvent(
+  selection: WeightSelection,
+  event: WeightEditorEvent,
+): WeightSelection {
+  switch (event.kind) {
+    case 'link':
+      if (
+        selection !== null &&
+        selection.kind === 'link' &&
+        selection.boundary === event.boundary &&
+        selection.inputChannel === event.inputChannel &&
+        selection.outputChannel === event.outputChannel
+      ) {
+        return null;
+      }
+      return {
+        kind: 'link',
+        boundary: event.boundary,
+        inputChannel: event.inputChannel,
+        outputChannel: event.outputChannel,
+      };
+    case 'map': {
+      if (
+        selection !== null &&
+        selection.kind === 'map' &&
+        selection.layer === event.layer &&
+        selection.channel === event.channel &&
+        selection.y === event.y &&
+        selection.x === event.x
+      ) {
+        return null;
+      }
+      return {
+        kind: 'map',
+        layer: event.layer,
+        channel: event.channel,
+        y: event.y,
+        x: event.x,
+        taps: contributingTaps(event.stride, event.padding, event.inputSize, event.y, event.x),
+      };
+    }
+    case 'filterCell': {
+      if (
+        selection !== null &&
+        selection.kind === 'link' &&
+        selection.boundary === event.layer - 1 &&
+        selection.outputChannel === event.outputChannel
+      ) {
+        return {
+          kind: 'weight',
+          boundary: selection.boundary,
+          inputChannel: selection.inputChannel,
+          outputChannel: event.outputChannel,
+          ky: event.ky,
+          kx: event.kx,
+        };
+      }
+      if (
+        selection !== null &&
+        selection.kind === 'map' &&
+        selection.layer === event.layer &&
+        selection.channel === event.outputChannel &&
+        selection.taps.some(([ky, kx]) => ky === event.ky && kx === event.kx)
+      ) {
+        return {
+          kind: 'weight',
+          boundary: selection.layer - 1,
+          inputChannel: event.inputChannel,
+          outputChannel: event.outputChannel,
+          ky: event.ky,
+          kx: event.kx,
+        };
+      }
+      return selection;
+    }
+  }
+}
+
+/**
+ * Mode de rendu d'une toile de filtre : `kernel` (tranche 3×3 du canal d'entrée)
+ * pour la toile désignée par une sélection de liaison ou de poids, `mapKernel`
+ * (même tranche plus les taps qui contribuent, pour éteindre les autres) pour la
+ * toile de la couche et du canal d'une sélection de carte, `mean` (moyenne des
+ * canaux d'entrée) pour toutes les autres.
+ */
+export type FilterView =
+  | { mode: 'mean' }
+  | { mode: 'kernel'; inputChannel: number }
+  | { mode: 'mapKernel'; inputChannel: number; taps: ReadonlyArray<readonly [number, number]> };
+
+export function filterViewMode(
+  selection: WeightSelection,
+  layer: number,
+  outputChannel: number,
+  inputChannel: number,
+): FilterView {
+  if (selection !== null && selection.kind === 'map') {
+    if (
+      selection.layer === layer &&
+      selection.channel === outputChannel &&
+      Number.isInteger(inputChannel) &&
+      inputChannel >= 0
+    ) {
+      return { mode: 'mapKernel', inputChannel, taps: selection.taps };
+    }
+    return { mode: 'mean' };
+  }
+  if (
+    selection !== null &&
+    (selection.kind === 'link' || selection.kind === 'weight') &&
+    selection.boundary + 1 === layer &&
+    selection.outputChannel === outputChannel
+  ) {
+    return { mode: 'kernel', inputChannel: selection.inputChannel };
+  }
+  return { mode: 'mean' };
+}
+
+/**
+ * État d'une ligne de liaison : `selected` pour la liaison sélectionnée,
+ * `highlighted` pour les liaisons qui alimentent le canal de la cellule de carte
+ * sélectionnée (frontière immédiatement en amont), `dimmed` pour les autres
+ * lignes dès qu'une sélection existe, `normal` quand rien n'est sélectionné.
+ */
+export function linkLineState(
+  selection: WeightSelection,
+  boundary: number,
+  inputChannel: number,
+  outputChannel: number,
+): 'selected' | 'highlighted' | 'dimmed' | 'normal' {
+  if (selection === null) {
+    return 'normal';
+  }
+  if (
+    selection.kind === 'link' &&
+    selection.boundary === boundary &&
+    selection.inputChannel === inputChannel &&
+    selection.outputChannel === outputChannel
+  ) {
+    return 'selected';
+  }
+  if (
+    selection.kind === 'map' &&
+    boundary === selection.layer - 1 &&
+    outputChannel === selection.channel
+  ) {
+    return 'highlighted';
+  }
+  return 'dimmed';
+}
+
+/**
+ * Vrai si la liaison `(boundary, inputChannel, outputChannel)` existe pour
+ * l'architecture donnée. La frontière 0 relie l'image (un seul canal) à `conv1`.
+ */
+function lineInArchitecture(
+  boundary: number,
+  inputChannel: number,
+  outputChannel: number,
+  filters: MnistCnnFilters,
+): boolean {
+  if (
+    !Number.isInteger(boundary) ||
+    boundary < 0 ||
+    boundary >= filters.length ||
+    !Number.isInteger(outputChannel) ||
+    outputChannel < 0 ||
+    outputChannel >= filters[boundary]
+  ) {
+    return false;
+  }
+  const inputChannels = boundary === 0 ? 1 : filters[boundary - 1];
+  return Number.isInteger(inputChannel) && inputChannel >= 0 && inputChannel < inputChannels;
+}
+
+/**
+ * Vrai si la sélection désigne des indices existants pour l'architecture donnée.
+ * Prédicat de type : après un appel positif, la sélection est non nulle.
+ */
+function selectionIsInArchitecture(
+  selection: WeightSelection,
+  filters: MnistCnnFilters,
+): selection is Exclude<WeightSelection, null> {
+  if (selection === null) {
+    return false;
+  }
+  if (selection.kind === 'map') {
+    return (
+      Number.isInteger(selection.layer) &&
+      selection.layer >= 0 &&
+      selection.layer < filters.length &&
+      Number.isInteger(selection.channel) &&
+      selection.channel >= 0 &&
+      selection.channel < filters[selection.layer]
+    );
+  }
+  return (
+    lineInArchitecture(
+      selection.boundary,
+      selection.inputChannel,
+      selection.outputChannel,
+      filters,
+    ) &&
+    (selection.kind === 'link' ||
+      (Number.isInteger(selection.ky) &&
+        selection.ky >= 0 &&
+        selection.ky < CONV_KERNEL_SIZE &&
+        Number.isInteger(selection.kx) &&
+        selection.kx >= 0 &&
+        selection.kx < CONV_KERNEL_SIZE))
+  );
+}
+
+/**
+ * Libellé français de la sélection pour l'éditeur de poids, ou null si rien n'est
+ * sélectionné ou si la sélection ne correspond pas à l'architecture. Les indices
+ * sont affichés en base 1 ; une sélection de carte précise le nombre de taps qui
+ * contribuent à la cellule.
+ */
+export function describeWeightSelection(
+  selection: WeightSelection,
+  filters: MnistCnnFilters,
+): string | null {
+  if (!selectionIsInArchitecture(selection, filters)) {
+    return null;
+  }
+  if (selection.kind === 'map') {
+    return `conv${selection.layer + 1} — canal ${selection.channel + 1}, position (${selection.y + 1}, ${selection.x + 1}) · ${selection.taps.length} poids sur ${CONV_KERNEL_SIZE * CONV_KERNEL_SIZE}`;
+  }
+  const link = `conv${selection.boundary + 1} — entrée ${selection.inputChannel + 1}, sortie ${selection.outputChannel + 1}`;
+  if (selection.kind === 'link') {
+    return link;
+  }
+  return `${link}, position (${selection.ky + 1}, ${selection.kx + 1})`;
+}
+
+/**
+ * Libellé français d'une ligne de liaison : le nom du couple (couche, canal
+ * d'entrée, canal de sortie) quand rien ne la restreint, suivi du nombre de poids
+ * qui comptent quand une sélection la restreint — les taps contribuant d'une
+ * cellule de carte, le poids unique d'une sélection de poids.
+ */
+export function describeLinkLabel(
+  selection: WeightSelection,
+  boundary: number,
+  inputChannel: number,
+  outputChannel: number,
+  filters: MnistCnnFilters,
+): string {
+  const name = `conv${boundary + 1} — entrée ${inputChannel + 1}, sortie ${outputChannel + 1}`;
+  if (selection === null || !lineInArchitecture(boundary, inputChannel, outputChannel, filters)) {
+    return name;
+  }
+  if (selection.kind === 'map') {
+    if (boundary === selection.layer - 1 && outputChannel === selection.channel) {
+      return `${name} · ${selection.taps.length} poids sur ${CONV_KERNEL_SIZE * CONV_KERNEL_SIZE}`;
+    }
+    return name;
+  }
+  if (
+    selection.kind === 'weight' &&
+    selection.boundary === boundary &&
+    selection.inputChannel === inputChannel &&
+    selection.outputChannel === outputChannel
+  ) {
+    return `${name} · 1 poids sur ${CONV_KERNEL_SIZE * CONV_KERNEL_SIZE}`;
+  }
+  return name;
+}
+
+/**
+ * Valeur courante d'un poids sélectionné, ou null si la sélection n'est pas un
+ * poids ou si ses indices sont hors bornes. Le nombre de canaux d'entrée est
+ * déduit de la longueur du noyau et du biais (nombre de canaux de sortie).
+ */
+export function selectedWeightValue(
+  weights: MnistCnnWeights,
+  selection: WeightSelection,
+): number | null {
+  if (selection === null || selection.kind !== 'weight') {
+    return null;
+  }
+  const layers = [weights.conv1, weights.conv2, weights.conv3, weights.conv4] as const;
+  const layer = layers[selection.boundary];
+  if (!layer) {
+    return null;
+  }
+  const outputChannels = layer.bias.length;
+  const inputChannels =
+    layer.kernel.length / (CONV_KERNEL_SIZE * CONV_KERNEL_SIZE * outputChannels);
+  if (
+    !Number.isInteger(inputChannels) ||
+    inputChannels <= 0 ||
+    selection.inputChannel < 0 ||
+    selection.inputChannel >= inputChannels ||
+    selection.outputChannel < 0 ||
+    selection.outputChannel >= outputChannels ||
+    selection.ky < 0 ||
+    selection.ky >= CONV_KERNEL_SIZE ||
+    selection.kx < 0 ||
+    selection.kx >= CONV_KERNEL_SIZE
+  ) {
+    return null;
+  }
+  const index =
+    (selection.ky * CONV_KERNEL_SIZE + selection.kx) * inputChannels * outputChannels +
+    selection.inputChannel * outputChannels +
+    selection.outputChannel;
+  return layer.kernel[index];
+}
+
+/** Motif d'un nombre décimal saisi au clavier : signe, chiffres, un séparateur `.` ou `,`. */
+const WEIGHT_INPUT_PATTERN = /^[+-]?\d+([.,]\d+)?$/;
+
+/**
+ * Analyse un poids saisi au clavier : accepte un signe initial, des chiffres et un
+ * séparateur décimal `.` ou `,`. Retourne null pour toute autre forme ou un
+ * résultat non fini.
+ */
+export function parseWeightInput(text: string): number | null {
+  if (!WEIGHT_INPUT_PATTERN.test(text)) {
+    return null;
+  }
+  const value = Number.parseFloat(text.replace(',', '.'));
+  return Number.isFinite(value) ? value : null;
 }
 
 /** Index du maximum d'un tableau (premier index en cas d'égalité). */
