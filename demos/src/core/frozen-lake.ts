@@ -419,7 +419,7 @@ export class FrozenLakeCore {
     desc: readonly string[] | undefined,
   ): FrozenLakeEnv {
     // A custom map defines its own grid size, so it overrides the size option
-    // and survives every rebuild.
+    // while it is active. setSize() clears it.
     return new FrozenLakeEnv({
       size: desc ? sizeFromRows(desc) : size,
       slipProbability,
