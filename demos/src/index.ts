@@ -13,6 +13,7 @@ import './components/drl-connect4/drl-connect4.js';
 import './components/drl-deep-blue-page/drl-deep-blue-page.js';
 
 import './components/drl-mnist-cnn/drl-mnist-cnn.js';
+import './components/drl-frozen-lake/drl-frozen-lake.js';
 
 // @demos-imports
 
