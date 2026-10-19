@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import type { VisitEvent, VisitKind } from '../contracts.js';
+import type { CutInfo, SearchWindow, VisitEvent, VisitKind } from '../contracts.js';
 import { createModelRecorder, TreeModel } from './tree-model.js';
 
 interface FakeState {
@@ -13,6 +13,7 @@ function visit(
   depth: number,
   kind: VisitKind = 'expand',
   stateId = nodeKey,
+  bounds: { window?: SearchWindow; cut?: CutInfo } = {},
 ): VisitEvent<FakeState> {
   return {
     nodeKey,
@@ -21,7 +22,12 @@ function visit(
     state: { id: stateId },
     depth,
     kind,
+    ...bounds,
   };
+}
+
+function cutOf(bound: 'alpha' | 'beta', triggerKey: string | null = null): CutInfo {
+  return { bound, strict: true, bestScore: 0.5, limit: 0.2, triggerKey };
 }
 
 describe('TreeModel insertion', () => {
@@ -148,6 +154,89 @@ describe('TreeModel applyValue', () => {
     expect(model.size()).toBe(1);
     expect(model.has('ghost')).toBe(true);
     expect(model.node('ghost')?.score).toBe(0.3);
+  });
+});
+
+describe('TreeModel alpha-bêta fields', () => {
+  const windowA: SearchWindow = { alpha: 0.1, beta: 0.4 };
+  const windowB: SearchWindow = { alpha: 0.2, beta: 0.9 };
+
+  it('stores window and cut on insert', () => {
+    const model = new TreeModel<FakeState>();
+    const cut = cutOf('beta', 'child');
+    model.insert(visit('root', null, null, 0));
+    model.insert(visit('n', 'root', 'mN', 1, 'expand', 'n', { window: windowA, cut }));
+    expect(model.node('n')?.window).toEqual(windowA);
+    expect(model.node('n')?.cut).toEqual(cut);
+  });
+
+  it('refreshes window and cut on re-visit', () => {
+    const model = new TreeModel<FakeState>();
+    model.insert(visit('root', null, null, 0));
+    model.insert(visit('n', 'root', 'mN', 1, 'expand', 'n', { window: windowA }));
+    const cut = cutOf('alpha');
+    model.insert(visit('n', 'root', 'mN', 1, 'expand', 'n', { window: windowB, cut }));
+    expect(model.node('n')?.window).toEqual(windowB);
+    expect(model.node('n')?.cut).toEqual(cut);
+  });
+
+  it('keeps stored bounds when a re-visit carries none', () => {
+    const model = new TreeModel<FakeState>();
+    const cut = cutOf('beta');
+    model.insert(visit('root', null, null, 0));
+    model.insert(visit('n', 'root', 'mN', 1, 'expand', 'n', { window: windowA, cut }));
+    model.insert(visit('n', 'root', 'mN', 1, 'expand', 'n'));
+    expect(model.node('n')?.window).toEqual(windowA);
+    expect(model.node('n')?.cut).toEqual(cut);
+  });
+
+  it('stores window and cut from an inexact value', () => {
+    const model = new TreeModel<FakeState>();
+    const cut = cutOf('beta', 'child');
+    model.insert(visit('root', null, null, 0));
+    model.insert(visit('n', 'root', 'mN', 1));
+    model.applyValue({
+      nodeKey: 'n',
+      score: 0.5,
+      depth: 1,
+      exact: false,
+      window: windowA,
+      cut,
+    });
+    expect(model.node('n')?.window).toEqual(windowA);
+    expect(model.node('n')?.cut).toEqual(cut);
+  });
+
+  it('clears cut but keeps window on an exact value', () => {
+    const model = new TreeModel<FakeState>();
+    model.insert(visit('root', null, null, 0));
+    model.insert(visit('n', 'root', 'mN', 1));
+    model.applyValue({
+      nodeKey: 'n',
+      score: 0.5,
+      depth: 1,
+      exact: false,
+      window: windowA,
+      cut: cutOf('beta'),
+    });
+    model.applyValue({ nodeKey: 'n', score: 0.7, depth: 1, exact: true, window: windowB });
+    expect(model.node('n')?.cut).toBeUndefined();
+    expect(model.node('n')?.window).toEqual(windowB);
+  });
+
+  it('stores bounds in the defensive branch when the node is absent', () => {
+    const model = new TreeModel<FakeState>();
+    const cut = cutOf('alpha', 'ghost-child');
+    model.applyValue({
+      nodeKey: 'ghost',
+      score: 0.3,
+      depth: 4,
+      exact: false,
+      window: windowA,
+      cut,
+    });
+    expect(model.node('ghost')?.window).toEqual(windowA);
+    expect(model.node('ghost')?.cut).toEqual(cut);
   });
 });
 

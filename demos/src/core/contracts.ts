@@ -58,6 +58,10 @@ export interface SearchStats {
   readonly ttMisses: number;
   readonly leavesEvaluated: number;
   readonly elapsedSteps: number;
+  /** Profondeur effective certifiée de la valeur retournée à la racine
+   * (`SOLVED_DEPTH` si la position racine est résolue indépendamment de
+   * l'horizon). */
+  readonly effectiveDepth: number;
 }
 
 export interface SearchAgent<S, M> {
@@ -69,6 +73,25 @@ export interface SearchAgent<S, M> {
 
 export type VisitKind = 'expand' | 'pruned' | 'tt-hit' | 'leaf' | 'terminal';
 
+/** Fenêtre alpha-bêta effective d'un nœud au moment de l'évènement. */
+export interface SearchWindow {
+  readonly alpha: number;
+  readonly beta: number;
+}
+
+export interface CutInfo {
+  /** Borne franchie : beta au niveau maximisant, alpha au niveau minimisant. */
+  readonly bound: 'alpha' | 'beta';
+  /** true quand strictPruning est actif : comparaison > / < au lieu de >= / <=. */
+  readonly strict: boolean;
+  /** Meilleur score du nœud au moment de la coupure (espace actualisé). */
+  readonly bestScore: number;
+  /** Valeur de la borne franchie. */
+  readonly limit: number;
+  /** Clé du fils qui a établi le meilleur score ayant déclenché la coupure. */
+  readonly triggerKey: string | null;
+}
+
 export interface VisitEvent<S> {
   readonly nodeKey: string;
   readonly parentKey: string | null;
@@ -76,6 +99,8 @@ export interface VisitEvent<S> {
   readonly state: S;
   readonly depth: number;
   readonly kind: VisitKind;
+  readonly window?: SearchWindow;
+  readonly cut?: CutInfo;
 }
 
 export interface ValueEvent {
@@ -83,6 +108,8 @@ export interface ValueEvent {
   readonly score: number;
   readonly depth: number;
   readonly exact: boolean;
+  readonly window?: SearchWindow;
+  readonly cut?: CutInfo;
 }
 
 export interface TreeRecorder<S> {

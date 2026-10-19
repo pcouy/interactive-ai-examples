@@ -132,6 +132,7 @@ describe('createRandomAgent', () => {
       ttMisses: 0,
       leavesEvaluated: 0,
       elapsedSteps: 1,
+      effectiveDepth: 0,
     });
   });
 });

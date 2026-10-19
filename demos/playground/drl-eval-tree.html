@@ -115,7 +115,10 @@
           Les scores sont du point de vue du joueur qui déplace à chaque nœud (négamax) : gras =
           valeur exacte, italique = valeur de remontée provisoire, nœud gris hachuré = coup élagué,
           badge violet = coup résolu via la table de transposition, bordure pleine = position
-          terminale. L'arc bleu part vers le meilleur enfant.
+          terminale. L'arc bleu part vers le meilleur enfant. Le panneau α/β sous le fil d'Ariane
+          décrit le nœud de détail (fenêtre, score, coupure) ; les nœuds élagués portent une
+          étiquette <code>&gt; β</code> à la place du score, et l'arête pointillée rouge relie le
+          nœud coupé au coup qui a déclenché la coupure.
         </p>
       </section>
     </main>
@@ -164,15 +167,24 @@
         const steps = [];
         let counter = 0;
         const tt = new Map();
-        const visit = (nodeKey, parentKey, move, state, depth, kind) => ({
+        const visit = (nodeKey, parentKey, move, state, depth, kind, window, cut) => ({
           nodeKey,
           parentKey,
           move,
           state,
           depth,
           kind,
+          ...(window ? { window } : {}),
+          ...(cut ? { cut } : {}),
         });
-        const value = (nodeKey, score, depth, exact) => ({ nodeKey, score, depth, exact });
+        const value = (nodeKey, score, depth, exact, window, cut) => ({
+          nodeKey,
+          score,
+          depth,
+          exact,
+          ...(window ? { window } : {}),
+          ...(cut ? { cut } : {}),
+        });
         const pushStep = (visitEvent, values) => {
           steps.push({ visits: visitEvent ? [visitEvent] : [], values: values ?? [] });
         };
@@ -180,55 +192,67 @@
         function negamax(state, ownDepth, alpha, beta, parentKey, move, emitVisit) {
           const nodeKey = `n${counter++}`;
           const stateKey = game.stateKey(state);
+          const window = { alpha, beta };
           const winner = game.winner(state);
           if (winner !== null) {
             const score =
               winner === 'draw' ? 0 : winner === game.currentPlayer(state) ? 1 : -1;
-            const event = visit(nodeKey, parentKey, move, state, ownDepth, 'terminal');
+            const event = visit(nodeKey, parentKey, move, state, ownDepth, 'terminal', window);
             if (emitVisit) {
-              pushStep(event, [value(nodeKey, score, ownDepth, true)]);
+              pushStep(event, [value(nodeKey, score, ownDepth, true, window)]);
             } else {
               rootVisit = event;
             }
-            return score;
+            return { score, key: nodeKey };
           }
           if (ownDepth >= maxDepth) {
             const score = heuristic(state);
-            const event = visit(nodeKey, parentKey, move, state, ownDepth, 'leaf');
+            const event = visit(nodeKey, parentKey, move, state, ownDepth, 'leaf', window);
             if (emitVisit) {
-              pushStep(event, [value(nodeKey, score, ownDepth, true)]);
+              pushStep(event, [value(nodeKey, score, ownDepth, true, window)]);
             } else {
               rootVisit = event;
             }
-            return score;
+            return { score, key: nodeKey };
           }
           if (emitVisit && tt.has(stateKey)) {
             const cached = tt.get(stateKey);
             pushStep(
-              visit(nodeKey, parentKey, move, state, ownDepth, 'tt-hit'),
-              [value(nodeKey, cached, ownDepth, true)],
+              visit(nodeKey, parentKey, move, state, ownDepth, 'tt-hit', window),
+              [value(nodeKey, cached, ownDepth, true, window)],
             );
-            return cached;
+            return { score: cached, key: nodeKey };
           }
-          const event = visit(nodeKey, parentKey, move, state, ownDepth, 'expand');
+          const event = visit(nodeKey, parentKey, move, state, ownDepth, 'expand', window);
           if (emitVisit) {
             pushStep(event);
           } else {
             rootVisit = event;
           }
           let best = -Infinity;
+          let bestChildKey = null;
           let alphaHere = alpha;
           let cutoff = false;
+          let cutInfo = null;
           const moves = game.legalMoves(state);
           for (let i = 0; i < moves.length; i++) {
             const childState = game.apply(state, moves[i]);
             if (cutoff) {
               pushStep(
-                visit(`n${counter++}`, nodeKey, moves[i], childState, ownDepth + 1, 'pruned'),
+                visit(
+                  `n${counter++}`,
+                  nodeKey,
+                  moves[i],
+                  childState,
+                  ownDepth + 1,
+                  'pruned',
+                  { alpha: alphaHere, beta },
+                  cutInfo,
+                ),
               );
               continue;
             }
-            const childScore = -negamax(
+            const child = negamax(
               childState,
               ownDepth + 1,
               -beta,
@@ -237,19 +261,30 @@
               moves[i],
               true,
             );
+            const childScore = -child.score;
             if (childScore > best) {
               best = childScore;
+              bestChildKey = child.key;
             }
             if (best > alphaHere) {
               alphaHere = best;
             }
             if (alphaHere >= beta) {
               cutoff = true;
+              cutInfo = {
+                bound: 'beta',
+                strict: false,
+                bestScore: best,
+                limit: beta,
+                triggerKey: bestChildKey,
+              };
             }
           }
-          pushStep(null, [value(nodeKey, best, ownDepth, !cutoff)]);
+          pushStep(null, [
+            value(nodeKey, best, ownDepth, !cutoff, { alpha: alphaHere, beta }, cutInfo),
+          ]);
           tt.set(stateKey, best);
-          return best;
+          return { score: best, key: nodeKey };
         }
         negamax(rootState, 0, -1, 1, null, null, false);
         return { rootVisit, steps };

@@ -22,6 +22,14 @@ import { createStepper, type Stepper } from '../../core/search/stepper.js';
 import { createModelRecorder, TreeModel, type TreeNode } from '../../core/search/tree-model.js';
 import { drlTokens } from '../../styles/tokens.js';
 import { DrlGameBoard, type PieceStyle } from '../drl-game-board/drl-game-board.js';
+import {
+  boundsSummary,
+  cutDescription,
+  cutLabel,
+  formatBound,
+  formatMove,
+  formatScore,
+} from './display.js';
 import '../../ui/drl-controls.js';
 import '../../ui/drl-slider.js';
 
@@ -61,6 +69,7 @@ interface EdgeDatum {
   readonly tx: number;
   readonly ty: number;
   readonly best: boolean;
+  readonly cut: boolean;
   readonly label: string;
 }
 
@@ -68,6 +77,17 @@ interface Crumb {
   readonly key: string;
   readonly label: string;
   readonly current: boolean;
+}
+
+/** Panneau α/β : chaînes déjà formatées pour éviter tout calcul au rendu. */
+interface BoundsView {
+  readonly key: string;
+  readonly title: string;
+  readonly alpha: string;
+  readonly beta: string;
+  readonly score: string;
+  readonly exact: boolean;
+  readonly cut: string | null;
 }
 
 const MAX_RENDER_NODES = 4000;
@@ -80,22 +100,9 @@ const COMPACT_HALF_HEIGHT = 12;
 const ZOOM_MIN = 0.15;
 const ZOOM_MAX = 4;
 const DEFAULT_BOX = 48;
-const MOVE_FIELDS = ['index', 'col', 'column', 'row'] as const;
 
 function clamp(value: number, min: number, max: number): number {
   return Math.min(max, Math.max(min, value));
-}
-
-function formatNumber(value: number): string {
-  return value.toFixed(2).replace('.', ',');
-}
-
-function formatScore(score: number | null): string {
-  if (score === null) {
-    return '';
-  }
-  const rounded = Math.abs(score) < 0.005 ? 0 : score;
-  return `${score > 0 ? '+' : ''}${formatNumber(rounded)}`;
 }
 
 function scoreClass(score: number | null, exact: boolean): string {
@@ -109,27 +116,6 @@ function scoreClass(score: number | null, exact: boolean): string {
     classes += exact ? ' drl-node-score--exact' : ' drl-node-score--provisional';
   }
   return classes;
-}
-
-function formatMove(move: unknown): string {
-  if (move === null || move === undefined) {
-    return '';
-  }
-  if (typeof move === 'number' || typeof move === 'string') {
-    return String(move);
-  }
-  if (typeof move === 'object') {
-    const record = move as Record<string, unknown>;
-    for (const field of MOVE_FIELDS) {
-      const value = record[field];
-      if (typeof value === 'number') {
-        return String(value);
-      }
-    }
-    const json = JSON.stringify(move);
-    return json.length <= 12 ? json : `${json.slice(0, 11)}…`;
-  }
-  return String(move);
 }
 
 function autoPieceStyle(view: { rows: number; cols: number }): PieceStyle {
@@ -245,6 +231,27 @@ export class DrlEvalTree<S> extends DemoElement {
         text-decoration: none;
       }
 
+      .drl-bounds {
+        display: flex;
+        flex-wrap: wrap;
+        align-items: baseline;
+        gap: var(--drl-space-2);
+        min-height: 1.6em;
+        margin-bottom: var(--drl-space-1);
+        color: var(--drl-muted);
+        font-size: 0.9em;
+        font-variant-numeric: tabular-nums;
+      }
+
+      .drl-bounds-title {
+        color: var(--drl-fg);
+        font-weight: 700;
+      }
+
+      .drl-bounds-cut {
+        color: var(--drl-arrow);
+      }
+
       .drl-canvas {
         position: relative;
         overflow: hidden;
@@ -285,6 +292,13 @@ export class DrlEvalTree<S> extends DemoElement {
       .drl-edge--best {
         stroke: var(--drl-accent);
         stroke-width: 2.5;
+      }
+
+      /* Après --best : une arête coupée doit primer sur l'arête « meilleure ». */
+      .drl-edge--cut {
+        stroke: var(--drl-arrow);
+        stroke-width: 2;
+        stroke-dasharray: 6 4;
       }
 
       .drl-edge-label {
@@ -396,6 +410,11 @@ export class DrlEvalTree<S> extends DemoElement {
         font-style: italic;
       }
 
+      .drl-node-score--cut {
+        color: var(--drl-arrow);
+        font-weight: 700;
+      }
+
       .drl-node--compact {
         justify-content: center;
         background: var(--drl-bg);
@@ -440,6 +459,7 @@ export class DrlEvalTree<S> extends DemoElement {
 
       :host(:fullscreen) .drl-toolbar,
       :host(:fullscreen) .drl-breadcrumbs,
+      :host(:fullscreen) .drl-bounds,
       :host(:fullscreen) .drl-status {
         flex: none;
       }
@@ -469,6 +489,9 @@ export class DrlEvalTree<S> extends DemoElement {
 
   @state()
   private isFullscreen = false;
+
+  @state()
+  private boundsText: BoundsView | null = null;
 
   readonly model = new TreeModel<S>();
 
@@ -881,11 +904,56 @@ export class DrlEvalTree<S> extends DemoElement {
   private draw(): void {
     this.updateToolbarState();
     this.updateBreadcrumbs();
+    this.updateBounds();
     this.updateTree();
     this.updateStatus();
     if (this.autoFit) {
       this.fit();
     }
+  }
+
+  /**
+   * Recalcule le panneau α/β. `draw()` tourne dans une frame d'animation :
+   * réassigner un objet équivalent relancerait un rendu, d'où la comparaison
+   * champ par champ avant affectation.
+   */
+  private updateBounds(): void {
+    const key =
+      this.viewRootKey ??
+      this.driver?.current() ??
+      this.model.lastVisited()?.nodeKey ??
+      this.model.root()?.nodeKey ??
+      null;
+    const summary = boundsSummary(this.model, key);
+    if (summary === null) {
+      if (this.boundsText !== null) {
+        this.boundsText = null;
+      }
+      return;
+    }
+    const next: BoundsView = {
+      key: summary.nodeKey,
+      title: summary.move === null ? 'Racine' : `Coup ${formatMove(summary.move)}`,
+      alpha: formatBound(summary.alpha),
+      beta: formatBound(summary.beta),
+      score: formatScore(summary.score),
+      exact: summary.exact,
+      cut: summary.cut === null ? null : cutDescription(summary.cut, summary.triggerMove),
+    };
+    const current = this.boundsText;
+    if (
+      current !== null &&
+      current.key === next.key &&
+      current.title === next.title &&
+      current.alpha === next.alpha &&
+      current.beta === next.beta &&
+      current.score === next.score &&
+      current.exact === next.exact &&
+      current.cut === next.cut
+    ) {
+      return;
+    }
+    this.boundsText = next;
   }
 
   private updateToolbarState(): void {
@@ -1003,6 +1071,17 @@ export class DrlEvalTree<S> extends DemoElement {
         bestEdges.set(entry.item.key, bestKey);
       }
     }
+    // Arête déclencheuse de coupure : parent → fils qui a franchi la borne.
+    const cutEdges = new Map<string, string>();
+    for (const entry of this.lastItems) {
+      if (entry.item.compact) {
+        continue;
+      }
+      const triggerKey = entry.item.node.cut?.triggerKey ?? null;
+      if (triggerKey !== null && rendered.has(triggerKey)) {
+        cutEdges.set(entry.item.key, triggerKey);
+      }
+    }
     const edgeData: EdgeDatum[] = [];
     for (const link of positioned.links()) {
       const source = positions.get(link.source.data);
@@ -1017,6 +1096,7 @@ export class DrlEvalTree<S> extends DemoElement {
         tx: target.x,
         ty: target.y - target.half - 1,
         best: bestEdges.get(link.source.data.key) === link.target.data.key,
+        cut: cutEdges.get(link.source.data.key) === link.target.data.key,
         // L'arête vers l'enfant factice porte le coup du parent : on la
         // laisse sans étiquette pour éviter la redite.
         label: link.target.data.compact ? '' : formatMove(link.target.data.node.move),
@@ -1031,7 +1111,11 @@ export class DrlEvalTree<S> extends DemoElement {
       .selectAll<SVGPathElement, EdgeDatum>('path')
       .data(edgeData, (edge) => edge.key)
       .join('path')
-      .attr('class', (edge) => `drl-edge${edge.best ? ' drl-edge--best' : ''}`)
+      .attr(
+        'class',
+        (edge) =>
+          `drl-edge${edge.best ? ' drl-edge--best' : ''}${edge.cut ? ' drl-edge--cut' : ''}`,
+      )
       .attr('d', (edge) => {
         const mid = (edge.sy + edge.ty) / 2;
         return `M ${edge.sx} ${edge.sy} C ${edge.sx} ${mid} ${edge.tx} ${mid} ${edge.tx} ${edge.ty}`;
@@ -1093,15 +1177,20 @@ export class DrlEvalTree<S> extends DemoElement {
     );
     const boardWrap = card.children[0] as HTMLDivElement;
     const score = card.children[1] as HTMLDivElement;
+    const cut = node.cut ?? null;
+    const pruned = cut !== null && node.kind === 'pruned';
+    card.classList.toggle('drl-node--cut', pruned);
     if (compact) {
       score.textContent = `+${entry.item.collapsedCount}`;
       score.className = 'drl-node-score';
       card.title = `${entry.item.collapsedCount} descendants masqués (profondeur maximale atteinte)`;
       return;
     }
-    card.title = '';
-    score.className = scoreClass(node.score, node.exact);
-    score.textContent = formatScore(node.score);
+    card.title = this.nodeTitle(node);
+    score.className = pruned
+      ? 'drl-node-score drl-node-score--cut'
+      : scoreClass(node.score, node.exact);
+    score.textContent = pruned && cut !== null ? cutLabel(cut) : formatScore(node.score);
     const game = this.game;
     if (!game || node.state === undefined) {
       return;
@@ -1122,6 +1211,26 @@ export class DrlEvalTree<S> extends DemoElement {
     boardEl.cellSize = BOARD_CELL_SIZE;
     boardEl.pieceStyle = this.pieceStyle ?? autoPieceStyle(view);
     boardEl.view = view;
+  }
+
+  /** Infobulle d'un nœud : score, fenêtre α/β et coupure éventuelle. */
+  private nodeTitle(node: TreeNode<S>): string {
+    const parts: string[] = [];
+    parts.push(
+      node.score === null
+        ? 'Score inconnu'
+        : `Score ${formatScore(node.score)}${node.exact ? ' (exact)' : ' (provisoire)'}`,
+    );
+    const alpha = node.window?.alpha ?? Number.NEGATIVE_INFINITY;
+    const beta = node.window?.beta ?? Number.POSITIVE_INFINITY;
+    parts.push(`α ${formatBound(alpha)} · β ${formatBound(beta)}`);
+    const cut = node.cut ?? null;
+    if (cut !== null) {
+      const triggerMove =
+        cut.triggerKey === null ? null : (this.model.node(cut.triggerKey)?.move ?? null);
+      parts.push(cutDescription(cut, triggerMove));
+    }
+    return parts.join(' · ');
   }
 
   private updateStatus(): void {
@@ -1239,6 +1348,26 @@ export class DrlEvalTree<S> extends DemoElement {
         </label>
       </div>
       <div class="drl-breadcrumbs" aria-label="Fil d'Ariane"></div>
+      <div class="drl-bounds" aria-live="polite">
+        ${
+          this.boundsText === null
+            ? nothing
+            : html`
+                <span class="drl-bounds-item drl-bounds-title">${this.boundsText.title}</span>
+                <span class="drl-bounds-item">α ${this.boundsText.alpha}</span>
+                <span class="drl-bounds-item">β ${this.boundsText.beta}</span>
+                <span class="drl-bounds-item">
+                  Score ${this.boundsText.score === '' ? '—' : this.boundsText.score}
+                  ${this.boundsText.exact ? '(exact)' : '(provisoire)'}
+                </span>
+                ${
+                  this.boundsText.cut === null
+                    ? nothing
+                    : html`<span class="drl-bounds-item drl-bounds-cut">${this.boundsText.cut}</span>`
+                }
+              `
+        }
+      </div>
       <div class="drl-canvas">
         <div class="drl-viewport">
           <svg class="drl-edges" width="1" height="1"></svg>

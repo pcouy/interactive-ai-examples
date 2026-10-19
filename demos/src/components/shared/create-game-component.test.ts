@@ -5,7 +5,7 @@ import {
   type TicTacToeState,
   ticTacToe,
 } from '../../core/games/tic-tac-toe.js';
-import { createTranspositionTable } from '../../core/search/transposition.js';
+import { createTranspositionTable, SOLVED_DEPTH } from '../../core/search/transposition.js';
 import { createRng, randomStates } from '../../core/testing/playouts.js';
 import {
   CONNECT4_GAME_CONFIG,
@@ -48,6 +48,36 @@ function runAgentToDone<S, M>(agent: SearchAgent<S, M>, state: S): M | null {
     }
   }
   return agent.bestMove();
+}
+
+/**
+ * Aplatit un `TemplateResult` Lit en texte. Le banc de test tourne sans DOM :
+ * on inspecte le template produit plutôt que le rendu effectif.
+ */
+function renderTemplateText(value: unknown): string {
+  if (value === null || value === undefined) {
+    return '';
+  }
+  if (Array.isArray(value)) {
+    return value.map(renderTemplateText).join('');
+  }
+  if (typeof value === 'object' && 'strings' in value && 'values' in value) {
+    const template = value as { strings: readonly string[]; values: readonly unknown[] };
+    let out = '';
+    for (let index = 0; index < template.strings.length; index += 1) {
+      out += template.strings[index];
+      if (index < template.values.length) {
+        out += renderTemplateText(template.values[index]);
+      }
+    }
+    return out;
+  }
+  return String(value);
+}
+
+/** Texte du template, espaces (retours de ligne compris) normalisés. */
+function renderTemplateTextFlat(value: unknown): string {
+  return renderTemplateText(value).replace(/\s+/g, ' ').trim();
 }
 
 describe('tic-tac-toe cell mapping', () => {
@@ -405,7 +435,30 @@ describe('persistent transposition table', () => {
       createGameAgent(ticTacToe, { ...baseOptions, transpositionTable: table }),
       nextState,
     );
+    // La seconde recherche ajoute de nouveaux nœuds plus profonds par-dessus
+    // ceux de la première, qui restent présents : la table grandit.
     expect(table.size()).toBeGreaterThan(sizeAfterFirstSearch);
+  });
+
+  it('reuses strictly deeper entries left by a previous search', () => {
+    const table = createTranspositionTable();
+    // Première recherche profonde : elle certifie les positions à une
+    // profondeur strictement supérieure à celle de la seconde recherche.
+    runAgentToDone(
+      createGameAgent(ticTacToe, { ...baseOptions, depth: 6, transpositionTable: table }),
+      ticTacToe.initialState(),
+    );
+    expect(table.size()).toBeGreaterThan(0);
+
+    const shallowAgent = createGameAgent(ticTacToe, {
+      ...baseOptions,
+      depth: 2,
+      transpositionTable: table,
+    });
+    runAgentToDone(shallowAgent, ticTacToe.initialState());
+    // Les entrées strictement plus profondes sont consommées quel que soit
+    // leur tour : la seconde recherche touche donc la table.
+    expect(shallowAgent.stats().ttHits).toBeGreaterThan(0);
   });
 
   it('keeps the component table alive across turns, undos and resets, and clears on demand', () => {
@@ -468,6 +521,37 @@ describe('persistent transposition table', () => {
     expect(svg).not.toContain('bestMove');
     expect(internals.ttStateSvg(state)).toBe(svg);
   });
+
+  it('renders a SOLVED_DEPTH entry as ∞ in the TT dialog', () => {
+    const element = createTicTacToeElement();
+    element.transposition = true;
+    const state = ticTacToe.initialState();
+    const key = ticTacToe.stateKey(state);
+    element.transpositionTable.store(key, { score: 0, depth: SOLVED_DEPTH, exact: true });
+
+    const internals = element as unknown as { renderTtDialog(): unknown };
+    const text = renderTemplateTextFlat(internals.renderTtDialog());
+    expect(text).toContain('Profondeur eff.');
+    expect(text).toContain('∞');
+    expect(text).not.toContain('Infinity');
+    expect(text).toContain(key);
+  });
+
+  it('shows the effective depth on the search status line', () => {
+    const element = createTicTacToeElement();
+    element.players = '["agent","agent"]';
+    element.transposition = true;
+    element.depth = 3;
+    element.stepTurn();
+
+    const stats = element.searchStats;
+    expect(stats).not.toBeNull();
+    const expected =
+      stats?.effectiveDepth === SOLVED_DEPTH ? '∞' : String(stats?.effectiveDepth ?? '');
+    const internals = element as unknown as { renderSearchStatus(): unknown };
+    const text = renderTemplateTextFlat(internals.renderSearchStatus());
+    expect(text).toContain(`profondeur effective : ${expected}`);
+  });
 });
 
 describe('alpha-beta vs minimax pruning', () => {
@@ -491,6 +575,44 @@ describe('alpha-beta vs minimax pruning', () => {
     expect(plain.stats().nodesPruned).toBe(0);
     expect(pruned.stats().nodesPruned).toBeGreaterThan(0);
     expect(pruned.stats().nodesVisited).toBeLessThan(plain.stats().nodesVisited);
+  });
+
+  it('forwards strictPruning to the engine: never prunes more than the standard cut', () => {
+    // Même position coupante : en strict, l'égalité exacte avec la borne ne
+    // coupe pas, donc l'arbre est au moins aussi grand et les coupures au plus
+    // aussi nombreuses qu'en alpha-bêta classique.
+    const state = playTicTacToe([1, 4, 2, 5]);
+    const standard = createGameAgent(ticTacToe, { ...baseOptions, prune: true });
+    const strict = createGameAgent(ticTacToe, {
+      ...baseOptions,
+      prune: true,
+      strictPruning: true,
+    });
+    const standardMove = runAgentToDone(standard, state);
+    const strictMove = runAgentToDone(strict, state);
+    expect(standardMove).not.toBeNull();
+    expect(strictMove).not.toBeNull();
+    const legal = ticTacToe.legalMoves(state);
+    expect(legal.some((move) => sameMove(move, standardMove as TicTacToeMove))).toBe(true);
+    expect(legal.some((move) => sameMove(move, strictMove as TicTacToeMove))).toBe(true);
+    expect(strict.stats().nodesVisited).toBeGreaterThanOrEqual(standard.stats().nodesVisited);
+    expect(strict.stats().nodesPruned).toBeLessThanOrEqual(standard.stats().nodesPruned);
+  });
+
+  it('exposes the strict pruning toggle in the toolbar, except for the random evaluator', () => {
+    const element = createTicTacToeElement();
+    const internals = element as unknown as { renderStrictPruningField(): unknown };
+
+    element.evaluator = 'windows';
+    expect(renderTemplateTextFlat(internals.renderStrictPruningField())).toContain(
+      'Élagage strict',
+    );
+
+    element.evaluator = 'random';
+    // Lit renvoie `nothing` : le champ n'apparaît pas dans le template rendu.
+    expect(renderTemplateTextFlat(internals.renderStrictPruningField())).not.toContain(
+      'Élagage strict',
+    );
   });
 });
 

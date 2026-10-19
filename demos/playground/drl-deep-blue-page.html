@@ -118,6 +118,9 @@
           score plus élevé qu'un gain lointain. L'agent tire au hasard parmi
           les coups à valeur exactement égale (départage aléatoire), si bien
           que la recherche rejouée dans l'arbre reste fidèle à la partie.
+          L'élagage strict ne coupe que sur un dépassement strict de la borne
+          et tire au hasard parmi les coups exactement ex æquo : l'arbre est
+          plus grand, mais le choix ne dépend plus de l'ordre de visite.
         </p>
       </header>
 
@@ -155,6 +158,8 @@
             <option value="pruning" selected>alpha-beta</option>
             <option value="nomin">minimax</option>
           </select>
+          <label for="page-strict">élagage strict</label>
+          <input id="page-strict" type="checkbox" />
           <label for="page-tt">transposition</label>
           <input id="page-tt" type="checkbox" />
         </div>
@@ -174,6 +179,7 @@
       const discountInput = document.getElementById('page-discount');
       const evaluatorSelect = document.getElementById('page-evaluator');
       const pruningSelect = document.getElementById('page-pruning');
+      const strictCheckbox = document.getElementById('page-strict');
       const transpositionCheckbox = document.getElementById('page-tt');
       const playerButtons = document.querySelectorAll('button[data-players]');
       const log = document.getElementById('log');
@@ -232,6 +238,10 @@
 
       transpositionCheckbox.addEventListener('change', () => {
         page.toggleAttribute('transposition', transpositionCheckbox.checked);
+      });
+
+      strictCheckbox.addEventListener('change', () => {
+        page.toggleAttribute('strict-pruning', strictCheckbox.checked);
       });
 
       page.addEventListener('drl-move-played', (event) => {

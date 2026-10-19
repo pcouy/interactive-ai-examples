@@ -97,7 +97,10 @@ Rappel du cadre `demos/README.md` :
   ne peuvent pas influencer la décision, et on les coupe.
 - **Playout / rollout** — partie simulée jusqu'au bout (ici : aléatoire).
 - **Table de transposition** — mémoire associative état → (score, profondeur)
-  qui évite de recalculer des positions déjà résolues.
+  qui évite de recalculer des positions déjà résolues ; la profondeur mémorisée
+  est une profondeur **certifiée** (nombre de plies pour lesquels le score est
+  exact), ce qui permet de réutiliser une position au-delà de l'horizon
+  courant.
 - **Nœud coupé / *pruned*** — sous-arbre non exploré parce qu'alpha-beta a
   prouvé son inutilité. Rendu grisé dans la visualisation, jamais omis.
 - **Ply / profondeur** — un *ply* = un demi-coup. La profondeur se compte en

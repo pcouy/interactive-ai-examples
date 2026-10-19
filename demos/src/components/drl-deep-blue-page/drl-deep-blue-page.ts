@@ -205,6 +205,9 @@ export class DrlDeepBluePage extends LitElement {
   @property({ type: Boolean, attribute: 'pruning' })
   pruning = true;
 
+  @property({ type: Boolean, attribute: 'strict-pruning' })
+  strictPruning = false;
+
   @property({ type: Number, attribute: 'discount' })
   discount = 1;
 
@@ -300,6 +303,7 @@ export class DrlDeepBluePage extends LitElement {
           .evaluator=${this.evaluator}
           .transposition=${this.transposition}
           .pruning=${this.pruning}
+          .strictPruning=${this.strictPruning}
           .discount=${this.discount}
           @drl-search-started=${this.onSearchStarted}
           @drl-game-reset=${this.onTreeReset}
@@ -315,6 +319,7 @@ export class DrlDeepBluePage extends LitElement {
         .evaluator=${this.evaluator}
         .transposition=${this.transposition}
         .pruning=${this.pruning}
+        .strictPruning=${this.strictPruning}
         .discount=${this.discount}
         @drl-search-started=${this.onSearchStarted}
         @drl-game-reset=${this.onTreeReset}
@@ -353,6 +358,7 @@ export class DrlDeepBluePage extends LitElement {
         transposition: this.transposition,
         transpositionTable: game?.transpositionTable,
         prune: this.pruning,
+        strictPruning: this.strictPruning,
         recorder: tree.recorder,
         heuristic: CONNECT4_GAME_CONFIG.heuristic,
         samples,
@@ -370,6 +376,7 @@ export class DrlDeepBluePage extends LitElement {
       transposition: this.transposition,
       transpositionTable: game?.transpositionTable,
       prune: this.pruning,
+      strictPruning: this.strictPruning,
       recorder: tree.recorder,
       heuristic: TIC_TAC_TOE_GAME_CONFIG.heuristic,
       samples,

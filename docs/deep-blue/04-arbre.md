@@ -21,7 +21,9 @@ core pur) :
 - insertion incrémentale : un `VisitEvent` crée un nœud sous `parentKey` ;
 - chaque nœud porte : `state` (pour le rendu `BoardView`), `move`, `depth`,
   `kind` (`expand`/`pruned`/`tt-hit`/`leaf`/`terminal`), le meilleur score
-  courant, `exact`, l'ordre DFS (séquence d'insertion) ;
+  courant, `exact`, l'ordre DFS (séquence d'insertion), la fenêtre `[α, β]`
+  effective et, pour un nœud coupé, le `CutInfo` de la coupure ; une valeur
+  exacte efface un `cut` devenu obsolète ;
 - un nœud peut être **visité plusieurs fois** (transpositions, révisions de
   score) : le modèle fusionne par `nodeKey` ; la position dans l'arbre reste
   la **première** insertion (l'arbre est un arbre de coups, pas un DAG).
@@ -41,7 +43,15 @@ core pur) :
   - `exact` (valeur définitive) = score en gras ; valeur provisoire = score
     en italique/muted ;
   - badges de type : `pruned` = miniature **grisée** avec hachure,
-    `tt-hit` = icône raccourci, `terminal` = bordure pleine.
+    `tt-hit` = icône raccourci, `terminal` = bordure pleine ;
+  - sur un nœud *pruned*, l'emplacement du score affiche une **étiquette de
+    coupure** compacte (`> β` / `≥ β` / `< α` / `≤ α`) colorée avec
+    `--drl-arrow`, qui rend la comparaison lisible d'un coup d'œil ;
+  - l'arête menant du nœud coupé à son **fils déclencheur** (`triggerKey`)
+    est **pointillée et rouge** (`--drl-arrow`) : on voit quelle branche a
+    provoqué la coupure, pas seulement qu'elle a eu lieu ;
+  - chaque nœud porte un **tooltip composé** (score, α/β, raison de coupure
+    et coup déclencheur).
 - Les nœuds *pruned* et *tt-hit* n'ont pas de descendants : placeholder
   grisé (point pédagogique : *ce que l'algorithme ne calcule pas*).
 - Étiquette des arêtes : le coup (ex. nom de colonne), discret.
@@ -70,6 +80,20 @@ l'exploration.
 - **Bouton « racine = état courant »** : retour à la racine réelle de la
   recherche (l'état courant de la partie).
 - Double-clic sur une zone vide : retour racine également.
+
+### Détails alpha-bêta
+
+Un panneau sous le fil d'Ariane décrit la fenêtre du **nœud de détail** :
+racine d'affichage explicite si elle est posée, sinon le curseur du stepper,
+sinon le dernier nœud visité, sinon la racine de recherche. Il affiche
+l'étiquette du nœud, α, β, le score et son exactitude, puis, pour un nœud
+coupé, une ligne rouge du type `meilleur +0,50 > β +0,20 · déclenché par le
+coup 4`.
+
+Le panneau est `aria-live="polite"` : le stepper le met à jour à chaque pas
+sans interrompre la lecture en cours. Il fonctionne dans les deux modes
+d'élagage — les détails sont affichés même quand `strictPruning` est faux —
+car ils décrivent la fenêtre effective, pas une option d'affichage.
 
 ### Contrôles de type débogueur
 

@@ -1,7 +1,7 @@
 import { describe, expect, it } from 'vitest';
 import type { VisitEvent } from '../../core/contracts.js';
 import { TreeModel } from '../../core/search/tree-model.js';
-import { firstMoveOnPath } from './drl-deep-blue-page.js';
+import { DrlDeepBluePage, firstMoveOnPath } from './drl-deep-blue-page.js';
 
 interface PageState {
   readonly id: number;
@@ -66,5 +66,39 @@ describe('firstMoveOnPath', () => {
     model.insert(visit('child', 'root', null, 1));
     model.insert(visit('grandchild', 'child', { index: 7 }, 2));
     expect(firstMoveOnPath(model, 'grandchild')).toBeNull();
+  });
+});
+
+/** Valeur liée à une propriété Lit (`.nom=`) dans un template, sans DOM. */
+function boundProperty(template: unknown, property: string): unknown {
+  if (typeof template !== 'object' || template === null) {
+    return undefined;
+  }
+  const { strings, values } = template as {
+    strings?: readonly string[];
+    values?: readonly unknown[];
+  };
+  if (strings === undefined || values === undefined) {
+    return undefined;
+  }
+  for (let index = 0; index < values.length; index += 1) {
+    if (strings[index]?.endsWith(`.${property}=`)) {
+      return values[index];
+    }
+  }
+  return undefined;
+}
+
+describe('DrlDeepBluePage strict pruning forwarding', () => {
+  it('binds strictPruning on both game elements', () => {
+    const page = new DrlDeepBluePage();
+    (page as unknown as { performUpdate(): void }).performUpdate = () => {};
+    page.strictPruning = true;
+    const internals = page as unknown as { renderGame(): unknown };
+    // Les deux branches partagent le même binding : on vérifie le morpion puis
+    // la puissance 4, la page ne devant jamais diverger de la recherche rejouée.
+    expect(boundProperty(internals.renderGame(), 'strictPruning')).toBe(true);
+    page.gameKey = 'connect4';
+    expect(boundProperty(internals.renderGame(), 'strictPruning')).toBe(true);
   });
 });

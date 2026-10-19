@@ -165,6 +165,8 @@ export interface VisitEvent<S> {
   readonly state: S;
   readonly depth: number;       // plies depuis la racine de recherche
   readonly kind: 'expand' | 'pruned' | 'tt-hit' | 'leaf' | 'terminal';
+  readonly window?: SearchWindow; // fenêtre [α, β] effective au moment de la visite
+  readonly cut?: CutInfo;        // seulement si kind === 'pruned' (coupure du parent)
 }
 
 export interface ValueEvent {
@@ -172,6 +174,22 @@ export interface ValueEvent {
   readonly score: number;       // meilleur score connu pour ce nœud (min/max)
   readonly depth: number;      // profondeur résolue
   readonly exact: boolean;     // true = valeur définitive du nœud
+  readonly window?: SearchWindow;
+  readonly cut?: CutInfo;      // seulement sur la valeur finale inexacte d'un nœud coupé
+}
+
+/** Fenêtre alpha-bêta effective d'un nœud au moment de l'événement. */
+export interface SearchWindow {
+  readonly alpha: number;
+  readonly beta: number;
+}
+
+export interface CutInfo {
+  readonly bound: 'alpha' | 'beta';  // beta au niveau maximisant, alpha au niveau minimisant
+  readonly strict: boolean;          // comparaison > / < (true) vs >= / <= (false)
+  readonly bestScore: number;        // meilleur score du nœud à la coupure (espace actualisé)
+  readonly limit: number;            // valeur de la borne franchie
+  readonly triggerKey: string | null;// clé du fils qui a établi ce meilleur score
 }
 ```
 
@@ -182,6 +200,9 @@ Règles :
 - Un nœud *pruned* est enregistré comme `kind: 'pruned'` **sans** explorer
   ses descendants : le visualiseur affiche un placeholder grisé.
 - Un nœud `tt-hit` peut être résolu sans `onVisit` de ses fils.
+- La `window` est émise sur **chaque** événement (racine `[-∞, +∞]`), `cut`
+  seulement sur une visite `pruned` et sur la valeur finale inexacte du nœud
+  coupé. Les deux champs sont optionnels : un recorder peut les ignorer.
 - Le recorder n'est pas dans le chemin critique : un recorder « no-op »
   (viz désactivée) ne coûte quasiment rien (compteur off).
 

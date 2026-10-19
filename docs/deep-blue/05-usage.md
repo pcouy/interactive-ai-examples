@@ -74,6 +74,7 @@ ce nœud, appliqué dans la partie).
 | `depth` | number | `null` → défaut du jeu (morpion 6, puissance 4 : 4) | horizon de recherche en plies |
 | `evaluator` | `'windows' \| 'rollout' \| 'random'` | `'windows'` | passé tel quel au composant de jeu |
 | `transposition` | boolean | `false` | active la table de transposition |
+| `strict-pruning` | boolean | `false` | élagage strict (`> β` / `< α`) ; transmis au jeu **et** aux deux agents rejoués dans l'arbre, pour que l'arbre enregistré corresponde à la recherche jouée |
 
 ```html
 <drl-deep-blue-page
@@ -147,17 +148,30 @@ const agent = createMinimaxAgent(ticTacToe, {
   depth: 6,                      // horizon en plies
   evaluator: ticTacToeHeuristic, // appelé aux feuilles non terminales
   prune: true,                   // false = minimax pur (sans élagage)
+  strictPruning: false,          // true = coupe seulement sur > β / < α
   recorder: noopRecorder,        // ou tree.recorder pour la visualisation
-  transposition,                 // optionnel : TranspositionTable<Move>
+  transposition,                 // optionnel : TranspositionTable
 });
 ```
 
-`MinimaxOptions<S, M>` : `{ depth, evaluator, prune, recorder, transposition? }`.
+`MinimaxOptions<S, M>` : `{ depth, evaluator, prune, recorder,
+transposition?, strictPruning?, rng? }`.
 Un seul moteur : alpha-beta est minimax avec fenêtre `[α, β]` resserrée. Les
 fils sont visités dans l'ordre de `legalMoves` (DFS strict, déterministe),
 ce qui rend le stepper possible. Un nœud est « maximisant » si son joueur au
-trait est `rootPlayer` ; tous les scores restent du point de vue de
-`rootPlayer` (pas de négation négamax).
+trait est `rootPlayer` ; les scores émis par le moteur restent du point de vue
+de `rootPlayer` (pas de négation négamax).
+
+`strictPruning: false` (défaut) coupe sur `bestScore ≥ β` (max) ou `≤ α`
+(min). Les ex æquo sont départagés au hasard dès que leurs valeurs sont
+exactes : c'est le cas en **minimax pur** (`prune: false`, tous les enfants
+évalués) comme en **élagage strict** (`> β` / `< α`). Le tirage est uniforme
+(échantillonnage réservoir) et, sans `rng` fourni, utilise `Math.random`.
+L'**alpha-bêta classique** (`prune: true`, `strictPruning: false`) reste au
+contraire déterministe sans `rng` : ses ex æquo peuvent être un artefact de
+fail-soft, et retenir le premier coup visité rend deux arbres comparables à
+l'identique. `strictPruning` est aussi passé à `isEntryUsable`, qui refuse
+alors une entrée bornée dont le score égale simplement la borne.
 
 Consommation step-chunkée (motif des tests `minimax.test.ts`) :
 
@@ -169,7 +183,9 @@ const stats = agent.stats();
 ```
 
 `SearchStats` (tous champs en lecture seule) : `nodesVisited`, `nodesPruned`,
-`ttHits`, `ttMisses`, `leavesEvaluated`, `elapsedSteps`. Un `step()` de l'agent
+`ttHits`, `ttMisses`, `leavesEvaluated`, `elapsedSteps`, `effectiveDepth`
+(profondeur certifiée de la valeur de racine ; `SOLVED_DEPTH` si la racine est
+entièrement résolue). Un `step()` de l'agent
 correspond à un `yield` du générateur interne : c'est l'unité de travail que
 le composant multiplie par un budget (voir 4.2).
 
@@ -199,18 +215,38 @@ terminal.
 ### 3.4 Table de transposition
 
 ```ts
-import { createTranspositionTable, isEntryUsable } from './core/search/transposition.js';
+import {
+  createTranspositionTable,
+  isEntryUsable,
+  SOLVED_DEPTH,
+} from './core/search/transposition.js';
 
-const tt = createTranspositionTable<Connect4Move>();
+const tt = createTranspositionTable();
 // tt.store(key, entry) | tt.probe(key) | tt.clear() | tt.size()
+// tt.beginTurn() | tt.currentTurn() | tt.snapshot()
 ```
 
-`TranspositionEntry<M>` : `{ score, depth, exact, bestMove }`. `store` conserve
-l'entrée la plus profonde (`entry.depth ≥ existante`). `isEntryUsable(entry,
-remainingDepth, alpha, beta, maximizing)` : hit valable ssi
-`entry.depth ≥ remainingDepth` et (`exact` ou borne compatible avec la fenêtre
-du nœud courant — `score ≥ beta` si maximisant, `score ≤ alpha` sinon).
-Le moteur namespace les clés par joueur racine : `` `${rootPlayer}:${game.stateKey(state)}` ``.
+`TranspositionEntry` : `{ score, depth, exact, samples? }`. Le score est vu du
+**joueur au trait** dans l'état (perspective intrinsèque), pas du joueur
+racine : la clé est `game.stateKey(state)` seul, sans préfixe de joueur, et
+l'entrée sert d'un tour à l'autre. `store` conserve l'entrée la plus profonde
+(`entry.depth ≥ existante`). `depth` est la **profondeur effective certifiée**
+(nombre de plies pour lesquels `score` est exact) ; une position résolue au
+terminal porte le sentinelle `SOLVED_DEPTH` (`Infinity`). `samples` n'existe
+que pour les feuilles rollout (cache à profondeur 0).
+
+`isEntryUsable(entry, remainingDepth, alpha, beta, maximizing, currentTurn)` :
+hit valable ssi `entry.depth > remainingDepth` et (`exact` ou borne compatible
+avec la fenêtre du nœud courant — `score ≥ beta` si maximisant, `score ≤ alpha`
+sinon). À profondeur **égale**, l'entrée n'est réutilisée que si elle porte le
+tour courant (`entry.turn === currentTurn`) : les tours précédents ne
+fournissent que du strictement plus profond. C'est ce strictement-plus-profond
+qui augmente la profondeur effective. Seule exception : la feuille rollout à
+profondeur 0 (cache-feuille), qui étend la moyenne mémorisée et met à jour
+`samples`.
+`currentTurn` sert donc à la fois à cette clause de profondeur égale et à
+`probeTurns: 'previous'`, où l'agent rejoué refuse en plus les entrées du tour
+courant.
 
 ### 3.5 Instrumenter une recherche : `TreeModel` et `createStepper`
 
@@ -273,6 +309,7 @@ leur API commune est `GameComponentApi<S, M>` (alias
 | `depth` | number | 6 / 4 | horizon des agents ; non fini → défaut du jeu (`sanitizeDepth`) |
 | `evaluator` | string | `'windows'` | `'windows'` \| `'rollout'` \| `'random'` (autre valeur → `'windows'`) |
 | `transposition` | boolean | `false` | table de transposition pour les agents minimax |
+| `strict-pruning` | boolean | `false` | élagage strict (`> β` / `< α`) ; case à cocher « Élagage strict » dans la barre d'outils (masquée quand `evaluator="random"`) |
 | `cell-size` | number | 72 / 48 | taille des cases du plateau |
 
 Propriétés en lecture : `game`, `title`, `pieceStyle`, `playerNames`
@@ -286,8 +323,8 @@ Méthodes : `applyMove(move: M): boolean` (coup légal uniquement, refuse si
 partie finie ou recherche en cours) et `reset()` (héritée). `step()` est géré
 par la boucle `DemoElement` : chaque tick consomme
 `min(256, max(1, round(speed × 32)))` itérations de l'agent en cours, joue
-`bestMove()` à `'done'`. Changer `players`/`depth`/`evaluator`/`transposition`
-annule la recherche en attente.
+`bestMove()` à `'done'`. Changer `players`/`depth`/`evaluator`/`transposition`/
+`strictPruning` annule la recherche en attente.
 
 Événements (charges exactes) :
 
@@ -328,10 +365,15 @@ nœud, double-clic fond, bouton « Racine = état courant », fil d'Ariane).
 
 Contrôles intégrés : pas-à-pas débogueur (`stepper`), zoom d3-zoom (extent
 0.15–4, slider + « Ajuster » + « 100 % »), champ « Prof. max », fil d'Ariane,
+panneau α/β du nœud de détail (score, fenêtre, coupure et coup déclencheur),
 barre de statut (nœuds, masqués, curseur, état). `step()` applique la
 primitive sélectionnée (in/over/out) ; `running`/`speed` hérités pilotent la
 replay continue. Rendu plafonné à 4000 nœuds affichés (au-delà : nœuds
 compacts comptés).
+
+L'arbre n'a **aucun nouvel attribut** pour l'élagage strict : il lit
+`window`/`cut` dans les événements et affiche les détails quel que soit le
+mode du moteur.
 
 ### 4.4 `<drl-deep-blue-page>`
 
@@ -341,9 +383,11 @@ composant de jeu, la page crée un agent parallèle (mêmes options, recorder =
 `drl-game-reset` et `drl-move-undone` elle vide l'arbre. Exports utiles :
 `firstMoveOnPath(model, nodeKey): unknown` (premier coup du chemin
 racine→nœud, `null` si racine ou clé inconnue) et
-`DeepBlueGameId = 'tic-tac-toe' | 'connect4'`. Attributs : voir section 2.
-Elle n'hérite pas de `DemoElement` : les contrôles de lecture sont ceux des
-composants enfants.
+`DeepBlueGameId = 'tic-tac-toe' | 'connect4'`. Attributs : voir section 2 —
+`strict-pruning` y est transmis à la fois au composant de jeu et aux deux
+agents rejoués, pour que l'arbre enregistré reflète la recherche réellement
+jouée. Elle n'hérite pas de `DemoElement` : les contrôles de lecture sont ceux
+des composants enfants.
 
 ## 5. Étendre la bibliothèque
 
@@ -434,11 +478,17 @@ minimax, `prune: true`), `parsePlayersConfig`, `parseEvaluatorMode`,
 - **`ValueEvent.depth`** — contrairement à `VisitEvent.depth` (plies depuis
   la racine), le `depth` des `ValueEvent` porte la profondeur **restante**
   jusqu'à l'horizon au moment de l'évaluation.
-- **Table de transposition** — clés namespacées par `rootPlayer`
-  (`rootPlayer:stateKey`), pas par `stateKey` seul : deux recherches démarrées
-  par des joueurs différents ne partagent pas leurs entrées. La validité d'un
-  hit distingue la direction du nœud (`maximizing`), `exact` signant une valeur
-  non coupée.
+- **Table de transposition** — clé `game.stateKey(state)` seule (plus de
+  préfixe `rootPlayer:`) : les entrées sont partagées entre tours et entre
+  recherches démarrées par des joueurs différents. Les scores sont mémorisés du
+  point de vue du **joueur au trait** (perspective intrinsèque). La validité
+  d'un hit distingue la direction du nœud (`maximizing`), `exact` signant une
+  valeur non coupée, et `depth` une **profondeur certifiée** (`SOLVED_DEPTH`
+  pour une position résolue au terminal). Un hit exige une profondeur
+  **strictement supérieure** ; à profondeur égale, seule une entrée du tour
+  courant est consommée (une entrée d'un tour antérieur doit être plus
+  profonde). Exception : la feuille rollout à profondeur 0, dont le cache
+  étend la moyenne mémorisée.
 - **Persistance de l'arbre** — la spec 04 prévoyait un modèle vidé « à chaque
   coup ». L'implémentation le vide au **démarrage de la recherche suivante**
   (`startSearch`) et sur reset/undo ; après un coup sans recherche (tour

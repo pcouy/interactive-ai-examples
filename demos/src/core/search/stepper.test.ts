@@ -86,6 +86,7 @@ class ScriptedAgent implements SearchAgent<string, number> {
       ttMisses: 0,
       leavesEvaluated: 0,
       elapsedSteps: 0,
+      effectiveDepth: 0,
     };
   }
 }

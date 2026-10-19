@@ -49,6 +49,7 @@ analogues à ceux qui ont fait les titres ces derniers mois.
         2. La descente de gradient : démo avec l'analogie de la balle qui roule dans
              un paysage vallonné
         3. Les réseaux de neurones : Perceptron multi couche
+           [Démo](https://playground.tensorflow.org)
         4. Classifieur de chiffre MNIST (démo interactive)
     3. Comment les deux fonctionnent ensemble
         - Limites de l'observation-engineering pour le RL : quel problème on cherchait à

@@ -90,6 +90,8 @@ function createTicTacToeAgent(
   depth: number,
   prune: boolean,
   transposition?: TranspositionTable,
+  strictPruning = false,
+  rng?: () => number,
 ): SearchAgent<TicTacToeState, TicTacToeMove> {
   return createMinimaxAgent(ticTacToe, {
     depth,
@@ -97,6 +99,8 @@ function createTicTacToeAgent(
     prune,
     recorder,
     transposition,
+    strictPruning,
+    rng,
   });
 }
 
@@ -192,6 +196,8 @@ describe('isEntryUsable', () => {
       exact: true,
       turn: 3,
     };
+    // À profondeur égale, seule une entrée du tour courant sert : les tours
+    // précédents ne peuvent fournir que du strictement plus profond.
     expect(isEntryUsable(entry, 1, -Infinity, Infinity, true, 3)).toBe(true);
     expect(isEntryUsable(entry, 1, -Infinity, Infinity, true, 4)).toBe(false);
     expect(isEntryUsable(entry, 0, -Infinity, Infinity, true, 99)).toBe(true);
@@ -233,6 +239,24 @@ describe('isEntryUsable', () => {
     expect(isEntryUsable(upper, 2, -0.4, Infinity, false, 2)).toBe(false);
     expect(isEntryUsable(upper, 3, -0.2, Infinity, false, 3)).toBe(false);
     expect(isEntryUsable(upper, 3, -0.2, Infinity, false, 2)).toBe(true);
+  });
+
+  it('rejects a bound entry exactly on the bound in strict mode', () => {
+    // Le mode strict reflète la règle de coupure du moteur : seule une valeur
+    // qui DÉPASSE strictement la borne est équivalente au résultat élagué.
+    const atBeta: ProbedEntry = { score: 0.5, depth: 3, exact: false, turn: 2 };
+    expect(isEntryUsable(atBeta, 2, -Infinity, 0.5, true, 2)).toBe(true);
+    expect(isEntryUsable(atBeta, 2, -Infinity, 0.5, true, 2, false)).toBe(true);
+    expect(isEntryUsable(atBeta, 2, -Infinity, 0.5, true, 2, true)).toBe(false);
+    const atAlpha: ProbedEntry = { score: -0.5, depth: 3, exact: false, turn: 2 };
+    expect(isEntryUsable(atAlpha, 2, -0.5, Infinity, false, 2)).toBe(true);
+    expect(isEntryUsable(atAlpha, 2, -0.5, Infinity, false, 2, false)).toBe(true);
+    expect(isEntryUsable(atAlpha, 2, -0.5, Infinity, false, 2, true)).toBe(false);
+    // Une entrée exacte reste utilisable dans les deux modes, fenêtre ou non.
+    const exact: ProbedEntry = { score: 0.5, depth: 3, exact: true, turn: 2 };
+    expect(isEntryUsable(exact, 2, 0.5, Infinity, true, 2)).toBe(true);
+    expect(isEntryUsable(exact, 2, 0.5, Infinity, true, 2, true)).toBe(true);
+    expect(isEntryUsable(exact, 2, -Infinity, -0.5, false, 2, true)).toBe(true);
   });
 });
 
@@ -290,7 +314,10 @@ describe('minimax with a transposition table', () => {
     expect(replay.agent.bestMove()).toEqual(first.agent.bestMove());
     // Après beginTurn, la même ré-exécution à profondeur égale ne peut plus
     // consommer les entrées du tour précédent : elle ré-explore tout, exactement
-    // comme une recherche à table fraîche.
+    // comme une recherche à table fraîche. À profondeur 4 depuis l'état initial
+    // de tic-tac-toe aucun terminal n'est atteignable (victoire minimale en 5
+    // plies) : aucune entrée ne peut donc porter une profondeur certifiée
+    // STRICTEMENT supérieure, seule capable de traverser un changement de tour.
     shared.beginTurn();
     const stale = recordSearch(
       (recorder) => createTicTacToeAgent(recorder, 4, true, shared),
@@ -307,12 +334,17 @@ describe('minimax with a transposition table', () => {
     const rootPlayer = ticTacToe.currentPlayer(ticTacToe.initialState());
     const expected = naiveMinimax(ticTacToe.initialState(), 5, rootPlayer);
     for (const prune of [false, true]) {
+      // Le minimax pur (prune: false) départage désormais les ex æquo au
+      // hasard : on fige la source pour que la table et le moteur sans table
+      // retiennent le même coup (rng ≈ 1 conserve le premier ex æquo visité).
+      const rng = () => 0.999999;
       const off = recordSearch(
-        (recorder) => createTicTacToeAgent(recorder, 5, prune),
+        (recorder) => createTicTacToeAgent(recorder, 5, prune, undefined, false, rng),
         ticTacToe.initialState(),
       );
       const on = recordSearch(
-        (recorder) => createTicTacToeAgent(recorder, 5, prune, createTranspositionTable()),
+        (recorder) =>
+          createTicTacToeAgent(recorder, 5, prune, createTranspositionTable(), false, rng),
         ticTacToe.initialState(),
       );
       expect(finalRootScore(on.values, rootKeyOf(on.visits))).toBe(expected);
@@ -335,9 +367,10 @@ describe('minimax with a transposition table', () => {
     );
     const rootKey = rootKeyOf(deep.visits);
     const deepStats = deep.agent.stats();
-    // Les entrées de la recherche à 2 sont strictement moins profondes :
-    // impossibles à consommer. Les touches de la recherche profonde viennent
-    // de ses propres transpositions, à profondeur égale et au même tour.
+    // Les entrées de la recherche à 2 sont strictement moins profondes que le
+    // budget des nœuds de la recherche à 4 : impossibles à consommer là-bas.
+    // Les touches de la recherche profonde viennent de ses propres
+    // transpositions, à profondeur égale et au même tour.
     expect(deepStats.ttMisses).toBeGreaterThan(0);
     expect(deepStats.ttHits).toBeGreaterThan(0);
     expect(finalRootScore(deep.values, rootKey)).toBe(naiveMinimax(ticTacToe.initialState(), 4, 0));
@@ -347,13 +380,18 @@ describe('minimax with a transposition table', () => {
       ticTacToe.initialState(),
     );
     const againStats = again.agent.stats();
-    // La racine de cette nouvelle recherche à 2 est toujours ré-explorée :
-    // seulement 1 ne serait plus possible. En revanche ses nœuds internes peu
-    // profonds consomment les entrées à profondeur égale ou supérieure du
-    // même tour.
+    // La racine de cette nouvelle recherche à 2 est toujours ré-explorée.
+    // En revanche ses nœuds internes consomment les entrées de la recherche à 4
+    // strictement plus profondes (même tour) : la valeur retournée est celle,
+    // résolue, de la recherche profonde.
     expect(againStats.nodesVisited).toBeGreaterThan(1);
     expect(againStats.ttHits).toBeGreaterThan(0);
     expect(again.agent.bestMove()).toEqual(deep.agent.bestMove());
+    // La valeur restituée est celle de la recherche profonde réutilisée ; ici
+    // elle coïncide avec la valeur naïve à l'horizon 2 (partie indécise).
+    expect(finalRootScore(again.values, rootKeyOf(again.visits))).toBe(
+      finalRootScore(deep.values, rootKey),
+    );
     expect(finalRootScore(again.values, rootKeyOf(again.visits))).toBe(
       naiveMinimax(ticTacToe.initialState(), 2, 0),
     );
@@ -374,6 +412,29 @@ describe('minimax with a transposition table', () => {
         finalRootScore(off.values, rootKeyOf(off.visits)),
       );
       expect(on.agent.bestMove()).toEqual(off.agent.bestMove());
+    }
+  });
+
+  it('stays exact in strict mode with a transposition table on corpus positions', () => {
+    // L'élagage strict refuse les entrées exactement sur la borne : la table ne
+    // doit jamais faire dévier la valeur racine de la référence naïve.
+    const corpus = randomStates(ticTacToe, 2, {
+      rng: createRng(CORPUS_SEED + 5),
+      minPly: 2,
+      maxPly: 4,
+    });
+    for (const state of corpus) {
+      const rootPlayer = ticTacToe.currentPlayer(state);
+      const expected = naiveMinimax(state, 4, rootPlayer);
+      const strict = recordSearch(
+        (recorder) => createTicTacToeAgent(recorder, 4, true, createTranspositionTable(), true),
+        state,
+      );
+      expect(finalRootScore(strict.values, rootKeyOf(strict.visits))).toBe(expected);
+      const move = strict.agent.bestMove();
+      if (move !== null) {
+        expect(naiveMinimax(ticTacToe.apply(state, move), 3, rootPlayer)).toBe(expected);
+      }
     }
   });
 

@@ -48,6 +48,7 @@ export function createRandomAgent<S, M>(
         ttMisses: 0,
         leavesEvaluated: 0,
         elapsedSteps: 1,
+        effectiveDepth: 0,
       };
     },
   };

@@ -33,6 +33,7 @@ import { createMinimaxAgent } from '../../core/search/minimax.js';
 import { createRandomAgent } from '../../core/search/random-agent.js';
 import {
   createTranspositionTable,
+  SOLVED_DEPTH,
   type TranspositionTable,
 } from '../../core/search/transposition.js';
 import { drlTokens } from '../../styles/tokens.js';
@@ -49,6 +50,11 @@ const TT_BROWSER_ROW_LIMIT = 200;
 
 function formatScoreValue(value: number): string {
   return value.toFixed(2).replace('.', ',');
+}
+
+/** Profondeur effective certifiée : `SOLVED_DEPTH` s'affiche « ∞ ». */
+function formatDepth(value: number): string {
+  return value === SOLVED_DEPTH ? '∞' : String(value);
 }
 const STEP_TURN_STEP_CAP = 100_000;
 
@@ -82,6 +88,7 @@ export interface GameComponentApi<S, M> extends LitElement {
   discount: number;
   transposition: boolean;
   pruning: boolean;
+  strictPruning: boolean;
   cellSize: number;
   running: boolean;
   autoRestart: boolean;
@@ -204,6 +211,8 @@ export interface GameAgentOptions<S, M> {
   readonly transposition: boolean;
   readonly transpositionTable?: TranspositionTable;
   readonly prune?: boolean;
+  /** Élagage strict : coupure sur dépassement strict seulement, ex æquo tirés au hasard. */
+  readonly strictPruning?: boolean;
   readonly recorder: TreeRecorder<S>;
   readonly heuristic: Evaluator<S, M>;
   readonly samples?: number;
@@ -231,6 +240,7 @@ export function createGameAgent<S, M>(
     depth: sanitizeDepth(options.depth, options.fallbackDepth),
     evaluator,
     prune: options.prune ?? true,
+    strictPruning: options.strictPruning,
     recorder: options.recorder,
     transposition,
     discount: options.discount,
@@ -268,9 +278,9 @@ export function createGameComponent<S, M>(
           /* Hauteur constante entre les états « recherche en cours » et
            * « bannière de fin de partie » : la rangée est dimensionnée pour
            * la statistique de recherche qui peut s'étaler sur plusieurs lignes
-           * (5 × 1,5em) plus les espacements et les bordures de bannière,
+           * (6 × 1,5em) plus les espacements et les bordures de bannière,
            * ce qui évite tout décalage de mise en page entre les parties. */
-          min-height: calc(7.5em + 4 * var(--drl-space-1) + 2px);
+          min-height: calc(9em + 5 * var(--drl-space-1) + 2px);
         }
 
         .drl-turn {
@@ -470,6 +480,9 @@ export function createGameComponent<S, M>(
     @property({ type: Boolean, attribute: 'pruning' })
     pruning = true;
 
+    @property({ type: Boolean, attribute: 'strict-pruning' })
+    strictPruning = false;
+
     @property({ type: Number, attribute: 'cell-size' })
     cellSize = config.defaultCellSize;
 
@@ -648,7 +661,8 @@ export function createGameComponent<S, M>(
         changed.has('rolloutSamples') ||
         changed.has('discount') ||
         changed.has('transposition') ||
-        changed.has('pruning')
+        changed.has('pruning') ||
+        changed.has('strictPruning')
       ) {
         this.pending = null;
       }
@@ -709,6 +723,7 @@ export function createGameComponent<S, M>(
           ${this.renderAutoRestartField()}
           ${this.renderSamplesField()}
           ${this.renderDiscountField()}
+          ${this.renderStrictPruningField()}
         </div>
         <drl-game-board
           .view=${this.boardView()}
@@ -825,8 +840,13 @@ export function createGameComponent<S, M>(
           </header>
           <p class="drl-tt-summary">
             ${all.length} entrée${all.length > 1 ? 's' : ''} · tour courant :
-            ${this.tt.currentTurn()} · les entrées à profondeur égale d'un tour
-            antérieur ne sont plus consommées.
+            ${this.tt.currentTurn()} · un nœud déjà développé plus profondément
+            (profondeur certifiée stockée strictement supérieure à la profondeur
+            requise) est réutilisé, y compris depuis un tour antérieur. À
+            profondeur égale, le nœud est redéveloppé ; seule exception, une
+            feuille rollout rencontrée à profondeur 0 voit sa moyenne stockée
+            étendue de nouveaux échantillons (samples). L'agent rejoué
+            (probeTurns previous) ignore les entrées du tour courant.
           </p>
           <label class="drl-tt-filter">
             <span>Filtrer par clé</span>
@@ -844,7 +864,7 @@ export function createGameComponent<S, M>(
                   <th scope="col">Position</th>
                   <th scope="col">Clé</th>
                   <th scope="col">Score</th>
-                  <th scope="col">Profondeur</th>
+                  <th scope="col">Profondeur eff.</th>
                   <th scope="col">Éch.</th>
                   <th scope="col">Exact</th>
                   <th scope="col">Tour</th>
@@ -857,7 +877,7 @@ export function createGameComponent<S, M>(
                       <td class="drl-tt-svg" data-entry-key="${row.key}"></td>
                       <td class="drl-tt-key">${row.key}</td>
                       <td>${formatScoreValue(row.score)}</td>
-                      <td>${row.depth}</td>
+                      <td>${formatDepth(row.depth)}</td>
                       <td>${row.samples ?? '–'}</td>
                       <td>${row.exact ? 'oui' : 'non'}</td>
                       <td>${row.turn}</td>
@@ -947,6 +967,33 @@ export function createGameComponent<S, M>(
         </label>
       `;
     }
+
+    private renderStrictPruningField(): TemplateResult | typeof nothing {
+      if (parseEvaluatorMode(this.evaluator) === 'random') {
+        return nothing;
+      }
+      return html`
+        <label
+          class="drl-field"
+          title="Ne coupe que sur un dépassement strict de la borne (max : > β, min : < α) et départage au hasard les coups à valeur égale. Décochez pour l'alpha-bêta classique (>= / <=, premier coup retenu à égalité)."
+        >
+          <input
+            type="checkbox"
+            .checked=${this.strictPruning}
+            @change=${this.onStrictPruningChange}
+          />
+          Élagage strict
+        </label>
+      `;
+    }
+
+    private readonly onStrictPruningChange = (event: Event): void => {
+      const input = event.target;
+      if (input instanceof HTMLInputElement) {
+        this.strictPruning = input.checked;
+        this.requestUpdate();
+      }
+    };
 
     private readonly onSamplesInput = (event: Event): void => {
       const input = event.target;
@@ -1111,6 +1158,7 @@ export function createGameComponent<S, M>(
         transposition: this.transposition,
         transpositionTable: this.tt,
         prune: this.pruning,
+        strictPruning: this.strictPruning,
         recorder,
         heuristic: config.heuristic,
         samples: this.rolloutSamples,
@@ -1165,7 +1213,8 @@ export function createGameComponent<S, M>(
       const label = this.pending === null ? 'Recherche terminée' : 'Recherche en cours';
       return html`<span class="drl-search">
         ${label} · ${stats.nodesVisited} nœuds · ${stats.nodesPruned} coupures ·
-        ${stats.ttHits} touches TT · ${stats.elapsedSteps} étapes
+        ${stats.ttHits} touches TT · ${stats.elapsedSteps} étapes · profondeur
+        effective : ${formatDepth(stats.effectiveDepth)}
       </span>`;
     }
 

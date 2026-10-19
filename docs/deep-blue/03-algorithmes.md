@@ -34,6 +34,7 @@ export interface MinimaxOptions {
   readonly prune: boolean;         // false = minimax pur
   readonly recorder: TreeRecorder<S>;
   readonly transposition?: TranspositionTable;
+  readonly strictPruning?: boolean; // true = coupure sur dépassement strict (défaut false)
 }
 ```
 
@@ -59,6 +60,38 @@ Quand `score ≥ beta` (ou `≤ alpha` au niveau adversaire), les frères
 restants sont enregistrés `kind: 'pruned'` **sans récursion**. Le
 visualiseur affiche ces nœuds grisés (`04-arbre.md`) — c'est le point
 pédagogique central : *montrer ce qu'alpha-beta ne calcule pas*.
+
+Chaque événement porte la fenêtre effective (`SearchWindow { alpha, beta }`)
+et, pour les nœuds coupés, un `CutInfo` (`bound`, `strict`, `bestScore`,
+`limit`, `triggerKey`). C'est `triggerKey` qui permet au visualiseur de
+tracer l'arête vers le fils qui a déclenché la coupure, et `limit`/`bestScore`
+d'afficher la comparaison exacte (`+0,50 > β +0,20`).
+
+### Élagage strict
+
+`strictPruning: true` déplace la coupure sur un **dépassement strict** :
+`bestScore > beta` au niveau maximisant, `bestScore < alpha` au niveau
+minimisant (au lieu de `>=` / `<=`). Un score exactement égal à la borne ne
+coupe donc plus : tous les ex æquo sont évalués, et le coup retenu est tiré
+uniformément parmi eux par échantillonnage réservoir. Sans `rng` fourni, ce
+départage utilise `Math.random`.
+
+Le **minimax pur** (`prune: false`) fait de même : tous ses enfants sont
+évalués exactement, donc ses ex æquo sont eux aussi authentiques et tirés au
+hasard. Seul l'**alpha-bêta classique** ne tire pas par défaut — un enfant
+coupé peut renvoyer par fail-soft une valeur égale à la borne sans l'atteindre,
+et retenir le premier coup visité garde deux arbres comparables à l'identique.
+
+L'option est aussi transmise à `isEntryUsable` : une entrée de table
+inexacte dont le score **égale** simplement la borne est refusée en mode
+strict, par symétrie avec la règle de coupure du moteur (les entrées exactes
+ne sont pas concernées).
+
+**Pourquoi** : le mode strict produit un arbre plus large (moins de coupures)
+mais supprime le biais d'ordre des coups. C'est la comparaison honnête
+« alpha-beta vs minimax » quand on veut montrer que le **même ensemble de
+coups optimaux** survit — le mode classique, lui, peut retenir un ex æquo
+arbitraire simplement parce qu'il a été visité en premier.
 
 ### Profondeurs par défaut
 
@@ -133,20 +166,52 @@ lisible — et son coût unitaire est réglable (`samples`).
 Couche de **mémoïsation** optionnelle, activable sur le moteur minimax/
 alpha-beta (indépendamment de `prune`) :
 
-- clé : `game.stateKey(state)` (canonique par symétries, `02-jeux.md`) ;
+- clé : `game.stateKey(state)` (canonique par symétries, `02-jeux.md`), **sans
+  préfixe de joueur racine** : une même position partage son entrée d'un tour
+  à l'autre ;
+- **perspective intrinsèque** : le score mémorisé est celui du **joueur au
+  trait** dans l'état, et non celui du joueur racine de la recherche. C'est ce
+  qui rend l'entrée réutilisable quel que soit le tour qui la sonde ;
 - valeur : `TranspositionEntry` :
   ```ts
   interface TranspositionEntry {
     score: number;
-    depth: number;    // plies résolues pour cette valeur
-    exact: boolean;   // false = borne (coupure alpha-beta), pas valeur exacte
-    bestMove: Move | null;
+    depth: number;     // profondeur certifiée (plies) pour laquelle score est exact
+    exact: boolean;    // false = borne (coupure alpha-beta), pas valeur exacte
+    samples?: number;  // présent uniquement pour les feuilles rollout (depth 0)
   }
   ```
-- hit valide ssi `entry.depth ≥ remaining depth` et (`entry.exact` ou la
-  fenêtre est compatible) ;
+- `depth` est une **profondeur effective certifiée** : le nombre de plies pour
+  lesquels `score` est exact. Une position résolue au terminal reçoit le
+  sentinelle `SOLVED_DEPTH` (`Infinity`, exporté) : sa valeur est indépendante
+  de l'horizon. `completeFrame` mémorise
+  `frame.cut ? frame.remaining : 1 + min(profondeurs certifiées des enfants
+  résolus)` — l'avantage de profondeur remonte de proche en proche, si bien
+  qu'un nœud développé lors d'une évaluation précédente est réutilisé **plus
+  profond que l'horizon nominal courant** ;
+- hit valide ssi `entry.depth > remainingDepth` et (`entry.exact` ou la borne
+  est compatible avec la fenêtre du nœud). À profondeur **égale**, l'entrée
+  n'est réutilisée que si elle porte le tour courant (`entry.turn ===
+  currentTurn`) : les tours précédents ne fournissent que du strictement plus
+  profond. C'est précisément cette réutilisation strictement plus profonde qui
+  augmente la profondeur effective — un nœud développé plus profond lors d'une
+  évaluation antérieure est réutilisé au-delà de l'horizon nominal courant ;
+- **exception** : une feuille rollout rencontrée à profondeur 0 ne passe pas
+  par cette règle — le cache-feuille étend la moyenne mémorisée avec les
+  nouveaux tirages et met à jour `samples` (seul cas de réutilisation « à
+  profondeur égale ») ;
 - hit → `onVisit({ kind: 'tt-hit' })` : le nœud est résolu sans visiter ses
   fils. Le visualiseur l'affiche comme un raccourci (`04-arbre.md`).
+
+`beginTurn()` / `currentTurn()` et `ProbedEntry.turn` servent à deux choses :
+d'une part la clause « à profondeur égale » de `isEntryUsable` (une entrée du
+tour courant est réutilisable, une entrée d'un tour antérieur doit être
+strictement plus profonde), d'autre part l'option
+`MinimaxOptions.probeTurns === 'previous'` — l'agent **rejoué** dans l'arbre
+refuse alors les entrées stockées pendant le tour courant (il veut ré-explorer
+à l'écran ce qui vient d'être joué) et ne consomme que celles des tours
+antérieurs. La consommation par défaut (`'all'`) n'ajoute pas ce refus : seule
+la clause de profondeur égale dépend du tour.
 
 **Pédagogie visée** : « deux positions différentes mènent au même sous-arbre ;
 on ne le calcule qu'une fois » — visible dans la viz via le compteur
@@ -165,8 +230,13 @@ export interface SearchStats {
   readonly ttMisses: number;
   readonly leavesEvaluated: number;
   readonly elapsedSteps: number;
+  readonly effectiveDepth: number;
 }
 ```
+
+`effectiveDepth` est la profondeur certifiée de la valeur retournée à la
+racine — `SOLVED_DEPTH` (`Infinity`) si la position racine est entièrement
+résolue (valeur indépendante de l'horizon).
 
 ## Tests
 

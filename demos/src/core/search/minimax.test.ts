@@ -19,7 +19,11 @@ import { createRng, randomStates } from '../testing/playouts.js';
 import { connect4Heuristic, ticTacToeHeuristic } from './evaluators/heuristic.js';
 import { createRandomRolloutEvaluator } from './evaluators/random-rollout.js';
 import { createMinimaxAgent } from './minimax.js';
-import { createTranspositionTable, type TranspositionTable } from './transposition.js';
+import {
+  createTranspositionTable,
+  SOLVED_DEPTH,
+  type TranspositionTable,
+} from './transposition.js';
 
 const CORPUS_SEED = 20261018;
 const CORPUS_DEPTH = 4;
@@ -117,6 +121,7 @@ function createTicTacToeAgent(
     rng?: () => number;
     transposition?: TranspositionTable;
     probeTurns?: 'all' | 'previous';
+    strictPruning?: boolean;
   } = {},
 ): SearchAgent<TicTacToeState, TicTacToeMove> {
   return createMinimaxAgent(ticTacToe, { depth, evaluator, prune, recorder, ...extra });
@@ -159,8 +164,18 @@ describe('createMinimaxAgent', () => {
       ticTacToe.initialState(),
     );
     for (const state of [ticTacToe.initialState(), midgame]) {
-      const off = recordSearch((recorder) => createTicTacToeAgent(recorder, 5, false), state);
-      const on = recordSearch((recorder) => createTicTacToeAgent(recorder, 5, true), state);
+      // Sans rng, le minimax pur (prune: false) départage désormais au hasard :
+      // on fige la source pour comparer les deux modes sur le même tirage
+      // (rng ≈ 1 conserve le premier ex æquo visité).
+      const rng = () => 0.999999;
+      const off = recordSearch(
+        (recorder) => createTicTacToeAgent(recorder, 5, false, ticTacToeHeuristic, { rng }),
+        state,
+      );
+      const on = recordSearch(
+        (recorder) => createTicTacToeAgent(recorder, 5, true, ticTacToeHeuristic, { rng }),
+        state,
+      );
       const rootKey = rootKeyOf(off.visits);
       expect(rootKeyOf(on.visits)).toBe(rootKey);
       const offStats = off.agent.stats();
@@ -477,6 +492,193 @@ describe('createMinimaxAgent', () => {
     expect(picked.size).toBeGreaterThanOrEqual(2);
   });
 
+  it('randomizes plain minimax ties by default when no rng is supplied', () => {
+    // Sans élagage, tous les enfants sont exacts : les ex æquo sont donc
+    // authentiques et le moteur tire par défaut sur Math.random, sans qu'il
+    // faille injecter une source. Le coup retenu reste optimal.
+    const optimalIndexes = new Set(optimalMoves(TIE_STATE, TIE_DEPTH).map((move) => move.index));
+    const expected = naiveMinimax(TIE_STATE, TIE_DEPTH, ticTacToe.currentPlayer(TIE_STATE));
+    const picked = new Set<number>();
+    for (let run = 0; run < 200; run += 1) {
+      const { agent, values, visits } = recordSearch(
+        (recorder) => createTicTacToeAgent(recorder, TIE_DEPTH, false),
+        TIE_STATE,
+      );
+      const move = agent.bestMove();
+      const index = moveIndex(move);
+      expect(optimalIndexes.has(index)).toBe(true);
+      expect(naiveMoveValue(TIE_STATE, move as TicTacToeMove, TIE_DEPTH, 0)).toBe(expected);
+      expect(finalRootScore(values, rootKeyOf(visits))).toBe(expected);
+      picked.add(index);
+    }
+    expect(picked.size).toBeGreaterThanOrEqual(2);
+  });
+
+  it('keeps classic alpha-beta deterministic without an rng, unlike plain minimax', () => {
+    // L'alpha-bêta classique conserve le premier ex æquo visité : ses arbres
+    // restent comparables à l'identique. Seuls `prune: false` et l'élagage
+    // strict tirent par défaut.
+    const run = () =>
+      recordSearch((recorder) => createTicTacToeAgent(recorder, 4, true), ticTacToe.initialState());
+    const first = run();
+    const replay = run();
+    expect(replay.visits).toEqual(first.visits);
+    expect(replay.values).toEqual(first.values);
+    expect(replay.agent.bestMove()).toEqual(first.agent.bestMove());
+  });
+
+  it('does not cut on equality in strict mode and still matches the naive reference', () => {
+    // Position de milieu de partie où l'élagage standard coupe réellement :
+    // c'est le témoin qui prouve que le mode strict change bien le comportement.
+    const midgame = [4, 0, 2, 6].reduce(
+      (state, index) => ticTacToe.apply(state, { index }),
+      ticTacToe.initialState(),
+    );
+    const rootPlayer = ticTacToe.currentPlayer(midgame);
+    const expected = naiveMinimax(midgame, CORPUS_DEPTH, rootPlayer);
+    const standard = recordSearch(
+      (recorder) => createTicTacToeAgent(recorder, CORPUS_DEPTH, true),
+      midgame,
+    );
+    const strict = recordSearch(
+      (recorder) =>
+        createTicTacToeAgent(recorder, CORPUS_DEPTH, true, ticTacToeHeuristic, {
+          strictPruning: true,
+        }),
+      midgame,
+    );
+    expect(standard.agent.stats().nodesPruned).toBeGreaterThan(0);
+    // L'égalité ne coupant plus, le mode strict visite au moins autant de
+    // nœuds et en élague au plus autant, sans changer la valeur racine.
+    expect(strict.agent.stats().nodesVisited).toBeGreaterThanOrEqual(
+      standard.agent.stats().nodesVisited,
+    );
+    expect(strict.agent.stats().nodesPruned).toBeLessThanOrEqual(
+      standard.agent.stats().nodesPruned,
+    );
+    expect(finalRootScore(strict.values, rootKeyOf(strict.visits))).toBe(expected);
+    const move = strict.agent.bestMove();
+    if (move !== null) {
+      expect(naiveMoveValue(midgame, move, CORPUS_DEPTH, rootPlayer)).toBe(expected);
+    }
+  });
+
+  it('randomizes strict-mode ties with the injected rng: first with rng≈1, last with rng=0', () => {
+    const optimal = optimalMoves(TIE_STATE, TIE_DEPTH);
+    expect(optimal.length).toBeGreaterThanOrEqual(2);
+    const optimalIndexes = new Set(optimal.map((move) => move.index));
+    const keepFirst = recordSearch(
+      (recorder) =>
+        createTicTacToeAgent(recorder, TIE_DEPTH, true, ticTacToeHeuristic, {
+          strictPruning: true,
+          rng: () => 0.999999,
+        }),
+      TIE_STATE,
+    );
+    const keepLast = recordSearch(
+      (recorder) =>
+        createTicTacToeAgent(recorder, TIE_DEPTH, true, ticTacToeHeuristic, {
+          strictPruning: true,
+          rng: () => 0,
+        }),
+      TIE_STATE,
+    );
+    const first = keepFirst.agent.bestMove();
+    const last = keepLast.agent.bestMove();
+    expect(optimalIndexes.has(moveIndex(first))).toBe(true);
+    expect(optimalIndexes.has(moveIndex(last))).toBe(true);
+    expect(first).not.toEqual(last);
+    expect(first).toEqual(optimal[0]);
+    expect(last).toEqual(optimal[optimal.length - 1]);
+  });
+
+  it('falls back to Math.random to break strict-mode ties when no rng is provided', () => {
+    const optimalIndexes = new Set(optimalMoves(TIE_STATE, TIE_DEPTH).map((move) => move.index));
+    const picked = new Set<number>();
+    for (let run = 0; run < 200; run += 1) {
+      const { agent } = recordSearch(
+        (recorder) =>
+          createTicTacToeAgent(recorder, TIE_DEPTH, true, ticTacToeHeuristic, {
+            strictPruning: true,
+          }),
+        TIE_STATE,
+      );
+      const index = moveIndex(agent.bestMove());
+      // Les ex æquo stricts sont authentiques (aucune coupure sur égalité) :
+      // chaque coup retenu est donc optimal.
+      expect(optimalIndexes.has(index)).toBe(true);
+      picked.add(index);
+    }
+    expect(picked.size).toBeGreaterThanOrEqual(2);
+  });
+
+  it('reports cut metadata consistent with the window on every pruned visit', () => {
+    const state = ticTacToe.initialState();
+    const rootPlayer = ticTacToe.currentPlayer(state);
+    // Profondeur 4 pour le mode standard, comme la référence. En mode strict il
+    // faut descendre à 5 : à 4 plies aucun terminal n'est atteignable depuis
+    // l'état initial et l'heuristique vaut partout zéro, donc aucune inégalité
+    // STRICTE n'apparaît et le mode strict ne coupe jamais (0 nœud élagué).
+    const cases = [
+      { depth: 4, strictPruning: false },
+      { depth: 5, strictPruning: true },
+    ] as const;
+    for (const { depth, strictPruning } of cases) {
+      const { visits, values } = recordSearch(
+        (recorder) =>
+          createTicTacToeAgent(recorder, depth, true, ticTacToeHeuristic, { strictPruning }),
+        state,
+      );
+      // Chaque évènement porte la fenêtre du nœud qui l'émet.
+      for (const visit of visits) {
+        expect(visit.window).toBeDefined();
+      }
+      for (const value of values) {
+        expect(value.window).toBeDefined();
+      }
+      const pruned = visits.filter((visit) => visit.kind === 'pruned');
+      expect(pruned.length).toBeGreaterThan(0);
+      for (const visit of pruned) {
+        const cut = visit.cut;
+        const window = visit.window;
+        if (cut === undefined || window === undefined) {
+          throw new Error('expected cut and window on a pruned visit');
+        }
+        const parent = visits.find((candidate) => candidate.nodeKey === visit.parentKey);
+        if (parent === undefined) {
+          throw new Error('expected the pruned visit parent to be recorded');
+        }
+        // Le parent maximise quand c'est le joueur racine qui doit jouer.
+        const parentMaximizes = ticTacToe.currentPlayer(parent.state) === rootPlayer;
+        expect(cut.bound).toBe(parentMaximizes ? 'beta' : 'alpha');
+        expect(cut.strict).toBe(strictPruning);
+        expect(cut.limit).toBe(parentMaximizes ? window.beta : window.alpha);
+        // Le déclencheur est un frère : même parent, visité avant la coupure.
+        const trigger = visits.find((candidate) => candidate.nodeKey === cut.triggerKey);
+        expect(trigger).toBeDefined();
+        expect(trigger?.parentKey).toBe(visit.parentKey);
+      }
+    }
+    // Une recherche sans coupure n'émet aucun `cut` : le champ reste absent
+    // plutôt que présent à undefined. Tous ses évènements portent une fenêtre.
+    const cutFree = recordSearch((recorder) => createTicTacToeAgent(recorder, 4, false), state);
+    for (const visit of cutFree.visits) {
+      expect(visit.window).toBeDefined();
+    }
+    for (const value of cutFree.values) {
+      expect(value.window).toBeDefined();
+    }
+    const rootKey = rootKeyOf(cutFree.visits);
+    const rootValue = cutFree.values
+      .filter((value) => value.nodeKey === rootKey && value.exact)
+      .at(-1);
+    expect(rootValue).toBeDefined();
+    if (rootValue !== undefined) {
+      expect('cut' in rootValue).toBe(false);
+    }
+    expect(cutFree.visits.some((visit) => visit.kind === 'pruned')).toBe(false);
+  });
+
   it('discounts the value reaching the root by γ per ply while emitting raw child scores', () => {
     // X gagne immédiatement avec { index: 2 } : l'enfant terminal est à un ply
     // de la racine, la racine voit donc γ × WIN_SCORE.
@@ -595,17 +797,20 @@ describe('createMinimaxAgent', () => {
       (current, index) => ticTacToe.apply(current, { index }),
       ticTacToe.initialState(),
     );
-    // Recherche profonde au tour 0 : ses entrées (profondeur restante ≥ 2)
-    // restent consommables, strictement plus profondes, au tour suivant.
+    // Recherche profonde au tour 0 : ses entrées (profondeur certifiée ≥ leur
+    // profondeur réelle) restent consommables, strictement plus profondes, au
+    // tour suivant.
     const table = createTranspositionTable();
-    recordSearch(
+    const deeper = recordSearch(
       (recorder) =>
         createTicTacToeAgent(recorder, 4, true, ticTacToeHeuristic, { transposition: table }),
       state,
     );
     table.beginTurn();
-    // Rejoué moins profond : il consomme les entrées antérieures strictement
-    // plus profondes mais ignore tout le reste (tour courant ou trop superficiel).
+    // Rejoué moins profond : avec F1 (scores intrinsèques) et F2 (profondeur
+    // certifiée), il consomme les entrées antérieures plus profondes que son
+    // budget et hérite donc de LEUR valeur, plus profonde que sa propre
+    // horizon nominale.
     const shorter = recordSearch(
       (recorder) =>
         createTicTacToeAgent(recorder, 2, true, ticTacToeHeuristic, {
@@ -614,7 +819,7 @@ describe('createMinimaxAgent', () => {
         }),
       state,
     );
-    // Témoin : même recherche sur une table vierge.
+    // Témoin : même recherche sur une table vierge, bornée à son horizon.
     const control = recordSearch(
       (recorder) =>
         createTicTacToeAgent(recorder, 2, true, ticTacToeHeuristic, {
@@ -624,9 +829,146 @@ describe('createMinimaxAgent', () => {
     );
     expect(shorter.agent.stats().ttHits).toBeGreaterThan(0);
     expect(shorter.agent.stats().nodesVisited).toBeLessThan(control.agent.stats().nodesVisited);
+    // Le rejoué restitue le résultat PROFOND réutilisé, pas celui du témoin
+    // superficiel.
     expect(finalRootScore(shorter.values, rootKeyOf(shorter.visits))).toBe(
-      finalRootScore(control.values, rootKeyOf(control.visits)),
+      finalRootScore(deeper.values, rootKeyOf(deeper.visits)),
     );
+  });
+
+  // Contrat de la table partagée : les entrées sont intrinsèques à l'état
+  // (perspective du joueur au trait) et portent une profondeur certifiée, si
+  // bien qu'elles sont réutilisables d'un tour et d'un joueur racine à l'autre
+  // et permettent de dépasser l'horizon nominal d'une recherche superficielle.
+  it('reuses a deep search from the opposite perspective by exact negation', () => {
+    const table = createTranspositionTable();
+    const base = [4, 0, 2, 6].reduce(
+      (current, index) => ticTacToe.apply(current, { index }),
+      ticTacToe.initialState(),
+    );
+    // Recherche pleine profondeur, racine = joueur 0.
+    recordSearch(
+      (recorder) =>
+        createTicTacToeAgent(recorder, 9, false, ticTacToeHeuristic, { transposition: table }),
+      base,
+    );
+    table.beginTurn();
+    const children = ticTacToe.legalMoves(base).slice(0, 3);
+    expect(children.length).toBeGreaterThan(0);
+    for (const move of children) {
+      const childState = ticTacToe.apply(base, move);
+      // L'enfant a le joueur 1 au trait : perspective opposée à la racine
+      // profonde, la restitution passe donc par une négation exacte.
+      expect(ticTacToe.currentPlayer(childState)).toBe(1);
+      const shallow = recordSearch(
+        (recorder) =>
+          createTicTacToeAgent(recorder, 2, true, ticTacToeHeuristic, { transposition: table }),
+        childState,
+      );
+      expect(shallow.agent.stats().ttHits).toBeGreaterThan(0);
+      // La négation d'un zéro produit -0 : on compare la valeur, pas le bit de
+      // signe du zéro.
+      const reference = naiveMinimax(childState, 9, 1);
+      expect(finalRootScore(shallow.values, rootKeyOf(shallow.visits)) + 0).toBe(reference + 0);
+    }
+  });
+
+  it('reuses a solved position to search deeper than its nominal horizon', () => {
+    const table = createTranspositionTable();
+    // Position où la valeur pleine profondeur diffère de la valeur à horizon 1
+    // (résultat forcé à au moins 2 plies).
+    let target: TicTacToeState | null = null;
+    let fullValue = 0;
+    let shallowValue = 0;
+    for (const candidate of randomStates(ticTacToe, 400, {
+      rng: createRng(CORPUS_SEED + 11),
+      minPly: 4,
+      maxPly: 6,
+    })) {
+      if (ticTacToe.winner(candidate) !== null) {
+        continue;
+      }
+      const player = ticTacToe.currentPlayer(candidate);
+      const full = naiveMinimax(candidate, 9, player);
+      const atHorizon = naiveMinimax(candidate, 1, player);
+      if (full !== atHorizon) {
+        target = candidate;
+        fullValue = full;
+        shallowValue = atHorizon;
+        break;
+      }
+    }
+    if (target === null) {
+      throw new Error('expected a corpus position with a forced result');
+    }
+    expect(fullValue).not.toBe(shallowValue);
+    // Recherche pleine profondeur : résout la position et peuple la table.
+    recordSearch(
+      (recorder) =>
+        createTicTacToeAgent(recorder, 9, false, ticTacToeHeuristic, { transposition: table }),
+      target,
+    );
+    table.beginTurn();
+    // Recherche à profondeur 1 sur la MÊME table : elle réutilise la valeur
+    // résolue, donc dépasse son horizon nominal.
+    const reused = recordSearch(
+      (recorder) =>
+        createTicTacToeAgent(recorder, 1, true, ticTacToeHeuristic, { transposition: table }),
+      target,
+    );
+    expect(reused.agent.stats().ttHits).toBeGreaterThan(0);
+    // Profondeur effective certifiée : strictement au-delà du budget nominal
+    // (les enfants racine sont des tt-hits résolus plus profond).
+    expect(reused.agent.stats().effectiveDepth).toBeGreaterThan(1);
+    expect(finalRootScore(reused.values, rootKeyOf(reused.visits))).toBe(fullValue);
+    // Témoin : même recherche sur table vierge, bornée à son horizon.
+    const control = recordSearch(
+      (recorder) =>
+        createTicTacToeAgent(recorder, 1, true, ticTacToeHeuristic, {
+          transposition: createTranspositionTable(),
+        }),
+      target,
+    );
+    expect(finalRootScore(control.values, rootKeyOf(control.visits))).toBe(shallowValue);
+  });
+
+  it('stores solved positions with the certified SOLVED_DEPTH and reports it', () => {
+    const table = createTranspositionTable();
+    const state = [4, 0, 2, 6].reduce(
+      (current, index) => ticTacToe.apply(current, { index }),
+      ticTacToe.initialState(),
+    );
+    const solved = recordSearch(
+      (recorder) =>
+        createTicTacToeAgent(recorder, 9, false, ticTacToeHeuristic, { transposition: table }),
+      state,
+    );
+    // Au moins une position entièrement résolue : profondeur certifiée infinie.
+    expect(table.snapshot().some((entry) => entry.depth === SOLVED_DEPTH)).toBe(true);
+    // La profondeur effective de la racine est elle aussi certifiée résolue.
+    expect(solved.agent.stats().effectiveDepth).toBe(SOLVED_DEPTH);
+  });
+
+  it('does not understate the certified depth of a pruned, bounded search', () => {
+    const depth = 4;
+    const state = ticTacToe.initialState();
+    const table = createTranspositionTable();
+    const bounded = recordSearch(
+      (recorder) =>
+        createTicTacToeAgent(recorder, depth, true, ticTacToeHeuristic, { transposition: table }),
+      state,
+    );
+    const stats = bounded.agent.stats();
+    // L'élagage produit réellement des frames coupés (donc des enfants bornés)…
+    expect(stats.nodesPruned).toBeGreaterThan(0);
+    // … sans effondrer la profondeur effective à 1 : un enfant borné certifie
+    // son budget restant, donc la racine atteint la profondeur nominale ici
+    // (position non résolue : aucun terminal atteignable en 4 plies, et pas de
+    // réutilisation plus profonde). La profondeur ne se sous-estime jamais.
+    expect(stats.effectiveDepth).toBe(depth);
+    // L'entrée stockée pour la racine porte cette même profondeur certifiée.
+    const rootEntry = table.snapshot().find((entry) => entry.key === ticTacToe.stateKey(state));
+    expect(rootEntry?.depth).toBe(depth);
   });
 
   // Cache-feuille rollout : les feuilles d'horizon des évaluateurs
@@ -673,22 +1015,25 @@ describe('createMinimaxAgent', () => {
   });
 
   it('merges a pre-stored depth-0 entry with the fresh draws in closed form', () => {
-    // Position à trois coups joués (joueur 0 à la main). Recherche à
+    // Position à trois coups joués (joueur 1 à la main). Recherche à
     // profondeur 1 : chaque enfant est une feuille d'horizon. On pré-stocke
-    // la moyenne (0,5 · 4 tirages) de l'enfant { index: 5 } et on laisse le
-    // moteur la fusionner avec ses 2 tirages frais, puis JOUER avec la
-    // moyenne élargie.
+    // la moyenne de l'enfant { index: 5 } — exprimée du POINT DE VUE DU
+    // JOUEUR AU TRAIT de l'enfant (joueur 0, opposé de la racine) — et on
+    // laisse le moteur la fusionner avec ses 2 tirages frais, puis JOUER avec
+    // la moyenne élargie ramenée à la perspective racine.
     const state = [4, 0, 2].reduce(
       (current, index) => ticTacToe.apply(current, { index }),
       ticTacToe.initialState(),
     );
     const childState = ticTacToe.apply(state, { index: 5 });
-    const childKey = `${ticTacToe.currentPlayer(state)}:${ticTacToe.stateKey(childState)}`;
+    const childKey = ticTacToe.stateKey(childState);
     // Espion autour de l'évaluateur rollout : capture le tirage frais de
     // chaque état évalué avant toute fusion par le moteur.
     const run = () => {
       const table = createTranspositionTable();
-      table.store(childKey, { score: 0.5, depth: 0, exact: true, samples: 4 });
+      // Moyenne intrinsèque 0,5 vue par le joueur au trait dans l'enfant :
+      // la racine (perspective opposée) la lit comme -0,5.
+      table.store(childKey, { score: -0.5, depth: 0, exact: true, samples: 4 });
       const draws = new Map<string, number>();
       const inner = rolloutEvaluator();
       const spyEvaluator: Evaluator<TicTacToeState, TicTacToeMove> = {
@@ -737,16 +1082,19 @@ describe('createMinimaxAgent', () => {
     expect(replay.snapshot.filter((entry) => entry.depth === 0)).toEqual(
       first.snapshot.filter((entry) => entry.depth === 0),
     );
-    // Formule fermée : (0,5·4 + frais·2) / 6, avec 4 + 2 = 6 tirages.
-    const expected = (0.5 * 4 + first.fresh * ROLLOUT_SAMPLES) / (4 + ROLLOUT_SAMPLES);
-    // La table stocke la moyenne élargie…
+    // Formule fermée dans la perspective intrinsèque du joueur au trait :
+    // (4·(-0,5) + 2·(-frais)) / 6, le tirage frais étant relatif à la racine
+    // puis ramené à cette perspective par négation (4 + 2 = 6 tirages).
+    const storedExpected = (4 * -0.5 + ROLLOUT_SAMPLES * -first.fresh) / (4 + ROLLOUT_SAMPLES);
+    // … et le moteur ramène la moyenne stockée à la racine par négation.
+    const playedExpected = -storedExpected;
     const merged = first.snapshot.find((entry) => entry.key === childKey);
     expect(merged?.samples).toBe(4 + ROLLOUT_SAMPLES);
-    expect(Math.abs((merged?.score ?? 0) - expected)).toBeLessThan(1e-9);
+    expect(merged?.score).toBe(storedExpected);
     expect(merged?.exact).toBe(true);
-    // … et le moteur la joue : l'événement de valeur porte la moyenne élargie,
-    // pas le tirage frais isolé.
-    expect(first.played).toBe(expected);
+    // Le moteur joue la moyenne élargie ramenée à la racine, pas le tirage
+    // frais isolé.
+    expect(first.played).toBe(playedExpected);
   });
 
   it('never pollutes the root state with a depth-0 rollout entry', () => {
@@ -760,7 +1108,7 @@ describe('createMinimaxAgent', () => {
         createTicTacToeAgent(recorder, 2, true, rolloutEvaluator(), { transposition: table }),
       state,
     );
-    const rootKey = `${ticTacToe.currentPlayer(state)}:${ticTacToe.stateKey(state)}`;
+    const rootKey = ticTacToe.stateKey(state);
     // La racine est déployée, jamais évaluée comme feuille : elle ne peut
     // porter qu'une entrée de frame complète (profondeur > 0), pas une
     // entrée profondeur 0 de cache-feuille.
