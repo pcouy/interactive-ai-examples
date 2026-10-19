@@ -1,4 +1,4 @@
-import { describe, expect, it } from 'vitest';
+import { describe, expect, it, vi } from 'vitest';
 import type { VisitEvent } from '../../core/contracts.js';
 import { TreeModel } from '../../core/search/tree-model.js';
 import { DrlDeepBluePage, firstMoveOnPath } from './drl-deep-blue-page.js';
@@ -89,6 +89,26 @@ function boundProperty(template: unknown, property: string): unknown {
   return undefined;
 }
 
+/** Gestionnaire lié à un événement Lit (`@nom=`) dans un template, sans DOM. */
+function boundEvent(template: unknown, event: string): unknown {
+  if (typeof template !== 'object' || template === null) {
+    return undefined;
+  }
+  const { strings, values } = template as {
+    strings?: readonly string[];
+    values?: readonly unknown[];
+  };
+  if (strings === undefined || values === undefined) {
+    return undefined;
+  }
+  for (let index = 0; index < values.length; index += 1) {
+    if (strings[index]?.endsWith(`@${event}=`)) {
+      return values[index];
+    }
+  }
+  return undefined;
+}
+
 describe('DrlDeepBluePage strict pruning forwarding', () => {
   it('binds strictPruning on both game elements', () => {
     const page = new DrlDeepBluePage();
@@ -100,5 +120,53 @@ describe('DrlDeepBluePage strict pruning forwarding', () => {
     expect(boundProperty(internals.renderGame(), 'strictPruning')).toBe(true);
     page.gameKey = 'connect4';
     expect(boundProperty(internals.renderGame(), 'strictPruning')).toBe(true);
+  });
+});
+
+describe('DrlDeepBluePage step forwarding', () => {
+  function newPage(): DrlDeepBluePage {
+    const page = new DrlDeepBluePage();
+    (page as unknown as { performUpdate(): void }).performUpdate = () => {};
+    return page;
+  }
+
+  /** Remplace le getter `treeElement` par un faux arbre, sans DOM. */
+  function stubTree(page: DrlDeepBluePage, tree: unknown): void {
+    Object.defineProperty(page, 'treeElement', { configurable: true, value: tree });
+  }
+
+  it('binds drl-step on both game elements', () => {
+    const page = newPage();
+    const internals = page as unknown as { renderGame(): unknown };
+    // Identité vérifiée par rapport au gestionnaire de l'instance : un mauvais
+    // handler lié sur un jeu ne doit pas passer inaperçu.
+    const handler = (page as unknown as { onGameStep: unknown }).onGameStep;
+    // Les deux branches partagent le même binding : on vérifie le morpion puis
+    // la puissance 4, la page ne devant jamais diverger entre les deux jeux.
+    expect(boundEvent(internals.renderGame(), 'drl-step')).toBe(handler);
+    page.gameKey = 'connect4';
+    expect(boundEvent(internals.renderGame(), 'drl-step')).toBe(handler);
+  });
+
+  it('forwards one step to the tree when the tree is paused', () => {
+    const page = newPage();
+    const step = vi.fn();
+    stubTree(page, { running: false, step });
+    (page as unknown as { onGameStep(): void }).onGameStep();
+    expect(step).toHaveBeenCalledTimes(1);
+  });
+
+  it('does not forward a step when the tree is running', () => {
+    const page = newPage();
+    const step = vi.fn();
+    stubTree(page, { running: true, step });
+    (page as unknown as { onGameStep(): void }).onGameStep();
+    expect(step).not.toHaveBeenCalled();
+  });
+
+  it('does nothing when the tree element is missing', () => {
+    const page = newPage();
+    stubTree(page, null);
+    expect(() => (page as unknown as { onGameStep(): void }).onGameStep()).not.toThrow();
   });
 });

@@ -306,6 +306,7 @@ export class DrlDeepBluePage extends LitElement {
           .strictPruning=${this.strictPruning}
           .discount=${this.discount}
           @drl-search-started=${this.onSearchStarted}
+          @drl-step=${this.onGameStep}
           @drl-game-reset=${this.onTreeReset}
           @drl-move-undone=${this.onMoveUndone}
         ></drl-connect4>
@@ -322,6 +323,7 @@ export class DrlDeepBluePage extends LitElement {
         .strictPruning=${this.strictPruning}
         .discount=${this.discount}
         @drl-search-started=${this.onSearchStarted}
+        @drl-step=${this.onGameStep}
         @drl-game-reset=${this.onTreeReset}
         @drl-move-undone=${this.onMoveUndone}
       ></drl-tic-tac-toe>
@@ -399,6 +401,16 @@ export class DrlDeepBluePage extends LitElement {
     const { state } = (event as CustomEvent<{ state: unknown }>).detail;
     this.replayMove = null;
     this.startParallelSearch(state);
+  };
+
+  // Le bouton Step de la partie est le même geste pour l'arbre : on avance la
+  // recherche rejouée d'un pas. On respecte la pause propre à l'arbre, car son
+  // bouton Step gère déjà ce cas de son côté.
+  private readonly onGameStep = (): void => {
+    const tree = this.treeElement;
+    if (tree !== null && !tree.running) {
+      tree.step();
+    }
   };
 
   private readonly onTreeReset = (): void => {
