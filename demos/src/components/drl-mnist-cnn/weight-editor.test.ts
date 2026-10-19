@@ -20,6 +20,9 @@ import {
 
 const FILTERS: MnistCnnFilters = DEFAULT_FILTER_COUNTS;
 
+/** Autre architecture, pour éprouver l'incohérence poids / filtres. */
+const OTHER_FILTERS: MnistCnnFilters = [2, 2, 2, 2];
+
 /** Poids déterministes de l'architecture par défaut, pour les tests. */
 const WEIGHTS = initializeMnistCnnWeights({ filters: FILTERS }, 42);
 
@@ -75,6 +78,35 @@ describe('weightEditorView', () => {
       kx: 0,
     };
     expect(weightEditorView(outside, WEIGHTS, FILTERS)).toBeNull();
+  });
+
+  it('returns null without throwing for a non-integer or missing index', () => {
+    const nonIntegerKy: WeightSelection = {
+      kind: 'weight',
+      boundary: 1,
+      inputChannel: 0,
+      outputChannel: 2,
+      ky: 1.5,
+      kx: 1,
+    };
+    const nanKx: WeightSelection = {
+      kind: 'weight',
+      boundary: 1,
+      inputChannel: 0,
+      outputChannel: 2,
+      ky: 1,
+      kx: Number.NaN,
+    };
+    const missingKx = {
+      kind: 'weight',
+      boundary: 1,
+      inputChannel: 0,
+      outputChannel: 2,
+      ky: 1,
+    } as unknown as WeightSelection;
+    expect(weightEditorView(nonIntegerKy, WEIGHTS, FILTERS)).toBeNull();
+    expect(weightEditorView(nanKx, WEIGHTS, FILTERS)).toBeNull();
+    expect(weightEditorView(missingKx, WEIGHTS, FILTERS)).toBeNull();
   });
 });
 
@@ -167,6 +199,43 @@ describe('applyWeightDraft', () => {
     expect(result).toEqual({
       kind: 'error',
       message: expect.stringContaining("n'existe pas"),
+    });
+  });
+
+  it('reports an out-of-architecture selection before an unreadable draft', () => {
+    const outside: WeightSelection = {
+      kind: 'weight',
+      boundary: 1,
+      inputChannel: 0,
+      outputChannel: 5,
+      ky: 0,
+      kx: 0,
+    };
+    const result = applyWeightDraft('abc', outside, WEIGHTS, FILTERS);
+    expect(result).toEqual({
+      kind: 'error',
+      message: expect.stringContaining("n'existe pas"),
+    });
+  });
+
+  it('trims surrounding whitespace before parsing', () => {
+    const blank = applyWeightDraft('   ', WEIGHT_SELECTION, WEIGHTS, FILTERS);
+    expect(blank).toEqual({ kind: 'error', message: expect.stringContaining('Saisissez') });
+    const padded = applyWeightDraft(' 0.5 ', WEIGHT_SELECTION, WEIGHTS, FILTERS);
+    expect(padded.kind).toBe('applied');
+    if (padded.kind !== 'applied') {
+      return;
+    }
+    expect(padded.value).toBe(0.5);
+    expect(requiredValue(padded.weights, WEIGHT_SELECTION)).toBe(0.5);
+  });
+
+  it('returns an error when the weights do not match the filters', () => {
+    const mismatched = initializeMnistCnnWeights({ filters: OTHER_FILTERS }, 42);
+    const result = applyWeightDraft('0.5', WEIGHT_SELECTION, mismatched, FILTERS);
+    expect(result).toEqual({
+      kind: 'error',
+      message: expect.stringContaining('correspondent'),
     });
   });
 

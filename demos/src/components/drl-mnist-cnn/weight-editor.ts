@@ -86,19 +86,28 @@ export function weightEditorView(
     return null;
   }
   const label = describeWeightSelection(selection, filters);
+  if (label === null) {
+    return null;
+  }
   const value = selectedWeightValue(weights, selection);
-  if (label === null || value === null || !Number.isFinite(value)) {
+  if (value === null || !Number.isFinite(value)) {
     return null;
   }
   return { label, value, text: formatWeightValue(value) };
 }
 
 /**
- * Applique un brouillon saisi au clavier au poids sélectionné : analyse le texte
- * (`.` ou `,` comme séparateur décimal), puis écrit le poids avec
- * `withKernelWeight`. `weights` n'est jamais modifié. En cas d'échec, retourne
- * un message français qui nomme le problème : champ vide, nombre illisible,
- * valeur non finie, sélection qui n'est pas un poids, ou poids hors architecture.
+ * Applique un brouillon saisi au clavier au poids sélectionné.
+ *
+ * Le brouillon est rogné de ses espaces (`trim`) avant analyse ; `.` ou `,`
+ * sert de séparateur décimal. La sélection doit désigner un poids de
+ * l'architecture : cette vérification passe avant l'analyse du texte, pour
+ * qu'une sélection invalide ne soit pas masquée par un brouillon illisible. Le
+ * poids est ensuite écrit avec `withKernelWeight` ; `weights` n'est jamais
+ * modifié. En cas d'échec, retourne un message français qui nomme le problème :
+ * sélection qui n'est pas un poids, poids hors architecture, champ vide, nombre
+ * illisible, valeur non finie, ou poids incohérents avec l'architecture. La
+ * fonction ne lève jamais pour une entrée d'appelant incohérente.
  */
 export function applyWeightDraft(
   draft: string,
@@ -109,6 +118,9 @@ export function applyWeightDraft(
   if (selection === null || selection.kind !== 'weight') {
     return { kind: 'error', message: "La sélection courante n'est pas un poids." };
   }
+  if (describeWeightSelection(selection, filters) === null) {
+    return { kind: 'error', message: "Ce poids n'existe pas dans l'architecture courante." };
+  }
   const text = draft.trim();
   if (text === '') {
     return { kind: 'error', message: 'Saisissez une valeur.' };
@@ -117,27 +129,31 @@ export function applyWeightDraft(
   if (value === null) {
     const numeric = Number(text.replace(',', '.'));
     if (!Number.isFinite(numeric) && !Number.isNaN(numeric)) {
-      return { kind: 'error', message: 'Valeur non finie : le nombre est trop grand.' };
+      return { kind: 'error', message: 'Valeur non finie : le nombre dépasse les limites.' };
     }
     return {
       kind: 'error',
       message: 'Nombre illisible : utilisez un décimal, par exemple 0,5.',
     };
   }
-  if (describeWeightSelection(selection, filters) === null) {
-    return { kind: 'error', message: "Ce poids n'existe pas dans l'architecture courante." };
+  try {
+    const applied = withKernelWeight(
+      weights,
+      filters,
+      selection.boundary,
+      selection.inputChannel,
+      selection.outputChannel,
+      selection.ky,
+      selection.kx,
+      value,
+    );
+    return { kind: 'applied', weights: applied, value };
+  } catch {
+    return {
+      kind: 'error',
+      message: "Les poids affichés ne correspondent pas à l'architecture courante.",
+    };
   }
-  const applied = withKernelWeight(
-    weights,
-    filters,
-    selection.boundary,
-    selection.inputChannel,
-    selection.outputChannel,
-    selection.ky,
-    selection.kx,
-    value,
-  );
-  return { kind: 'applied', weights: applied, value };
 }
 
 /** Une phrase française qui décrit le geste de l'éditeur de poids. */
