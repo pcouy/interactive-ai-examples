@@ -1,7 +1,7 @@
 import type { BaseType, ScaleLinear, Selection } from 'd3';
 import { scaleLinear, select } from 'd3';
 import type { PropertyValues, TemplateResult } from 'lit';
-import { css, html, nothing } from 'lit';
+import { css, html } from 'lit';
 import { customElement, property, state } from 'lit/decorators.js';
 import { DemoElement } from '../../base/demo-element.js';
 import type { LossKind, NeuronExample, NeuronPhase } from '../../core/neuron.js';
@@ -36,6 +36,11 @@ const CANVAS_HEIGHT = 1080;
 
 const MIN_BATCH = 1;
 const MAX_BATCH = 12;
+
+/** Minimum delay between two bias-only height-field rebuilds during play. */
+const FIELD_REBUILD_INTERVAL_MS = 200;
+/** Minimum bias delta that triggers a rebuild outside the time window. */
+const FIELD_B_STEP = 0.1;
 
 const COLOR_LOW_FALLBACK = '#2563eb';
 const COLOR_HIGH_FALLBACK = '#7c3aed';
@@ -132,16 +137,6 @@ export class Neuron extends DemoElement {
       .drl-stat-value {
         margin: 0;
         font-variant-numeric: tabular-nums;
-      }
-
-      .drl-diverged {
-        margin: 0 0 var(--drl-space-2);
-        color: var(--drl-arrow);
-      }
-
-      .drl-target-warning {
-        margin: 0 0 var(--drl-space-2);
-        color: var(--drl-muted);
       }
 
       .drl-views {
@@ -258,6 +253,8 @@ export class Neuron extends DemoElement {
 
   private scene: LandscapeScene | null = null;
 
+  private setupPromise: Promise<void> | null = null;
+
   private tweening = false;
 
   private animFrame: number | null = null;
@@ -281,6 +278,8 @@ export class Neuron extends DemoElement {
   private fieldBias: boolean | null = null;
 
   private fieldB = Number.NaN;
+
+  private fieldRebuiltAt = 0;
 
   private colorScale: ScaleLinear<string, string> | null = null;
 
@@ -318,18 +317,31 @@ export class Neuron extends DemoElement {
     this.core.setBiasEnabled(this.bias);
     this.core.setBatchSize(clamp(Math.round(this.batchSize), MIN_BATCH, MAX_BATCH));
     this.dispatchTargetError();
-
-    await this.setupScene();
-
     this.sync();
     this.draw();
+
+    await this.setupScene();
   }
 
   /**
    * Creates the 3D scene on the current canvas. Called once from firstUpdated
    * and again on reconnect, because Lit runs firstUpdated only once.
+   *
+   * The guard returns the in-flight promise so a reconnect during an async
+   * scene creation does not start a second WebGL context.
    */
-  private async setupScene(): Promise<void> {
+  private setupScene(): Promise<void> {
+    const pending = this.setupPromise;
+    if (pending !== null) {
+      return pending;
+    }
+    this.setupPromise = this.createScene().finally(() => {
+      this.setupPromise = null;
+    });
+    return this.setupPromise;
+  }
+
+  private async createScene(): Promise<void> {
     const canvas = this.renderRoot.querySelector('canvas');
     if (!(canvas instanceof HTMLCanvasElement)) {
       return;
@@ -375,20 +387,23 @@ export class Neuron extends DemoElement {
       this.core.advance(this.learningRate, { detailed: true });
       scene?.moveBall(this.core.w1, this.core.w2);
     }
-    this.rebuildHeightField();
+    this.rebuildHeightField(!this.running);
     this.sync();
     this.draw();
   }
 
   regenerateDataset(): void {
+    this.tweening = false;
+    this.scene?.clearTween();
     this.core.setDataset({
       expression: this.expression,
       count: Math.max(1, Math.round(this.count)),
       seed: (Math.random() * 0xffffffff) >>> 0,
     });
     this.dispatchTargetError();
-    this.rebuildHeightField();
     this.scene?.clearTrail();
+    this.rebuildHeightField(true);
+    this.scene?.moveBall(this.core.w1, this.core.w2);
     this.sync();
     this.draw();
   }
@@ -398,7 +413,7 @@ export class Neuron extends DemoElement {
     this.scene?.clearTween();
     this.core.reset();
     this.scene?.clearTrail();
-    this.rebuildHeightField();
+    this.rebuildHeightField(true);
     this.scene?.moveBall(this.core.w1, this.core.w2);
     this.sync();
     this.draw();
@@ -406,6 +421,9 @@ export class Neuron extends DemoElement {
 
   protected override willUpdate(changed: PropertyValues<this>): void {
     super.willUpdate(changed);
+    if (changed.has('running') && !this.running) {
+      this.rebuildHeightField(true);
+    }
     if (!this.hasUpdated) {
       return;
     }
@@ -442,7 +460,7 @@ export class Neuron extends DemoElement {
     if (!reconfigured) {
       return;
     }
-    this.rebuildHeightField();
+    this.rebuildHeightField(true);
     this.scene?.clearTrail();
     this.sync();
     this.scene?.moveBall(this.core.w1, this.core.w2);
@@ -554,33 +572,47 @@ export class Neuron extends DemoElement {
     this.colorDataset = this.core.dataset;
   }
 
-  private rebuildHeightField(): void {
+  private rebuildHeightField(force = false): void {
     const scene = this.scene;
     if (!scene) {
       return;
     }
     const { domain, dataset, lossKind, biasEnabled, b } = this.core;
-    if (
-      domain === this.fieldDomain &&
-      dataset === this.fieldDataset &&
-      lossKind === this.fieldLoss &&
-      biasEnabled === this.fieldBias &&
-      b === this.fieldB
-    ) {
+    const structural =
+      domain !== this.fieldDomain ||
+      dataset !== this.fieldDataset ||
+      lossKind !== this.fieldLoss ||
+      biasEnabled !== this.fieldBias;
+    const bChanged = b !== this.fieldB;
+    if (!force && !structural && !bChanged) {
       return;
+    }
+    // During play the bias moves on every batch. Rebuilding the whole surface
+    // each frame is wasteful, so a bias-only change is throttled. The surface
+    // may then lag the bias by up to FIELD_REBUILD_INTERVAL_MS; a forced rebuild
+    // (pause, reset, reconfigure) restores exactness.
+    if (!force && !structural && bChanged) {
+      const stepped = Math.abs(b - this.fieldB) >= FIELD_B_STEP;
+      const due = performance.now() - this.fieldRebuiltAt >= FIELD_REBUILD_INTERVAL_MS;
+      if (!stepped && !due) {
+        return;
+      }
     }
     this.fieldDomain = domain;
     this.fieldDataset = dataset;
     this.fieldLoss = lossKind;
     this.fieldBias = biasEnabled;
     this.fieldB = b;
+    this.fieldRebuiltAt = performance.now();
     scene.setHeightField((w1, w2) => this.core.landscapeLoss(w1, w2), domain);
   }
 
   private dispatchTargetError(): void {
     const error = this.core.targetError;
     const detail =
-      error === null ? null : `Expression invalide : ${this.core.expression} utilisé par défaut.`;
+      error === null
+        ? null
+        : `Expression invalide : « ${this.expression} » — « x1 + x2 » utilisée par défaut.`;
     this.dispatchEvent(
       new CustomEvent<string | null>('drl-target-error', {
         detail,
@@ -655,7 +687,7 @@ export class Neuron extends DemoElement {
           <p class="drl-stat-value">${formatNumber(this.b)}</p>
         </div>
         <div class="drl-stat">
-          <p class="drl-stat-label">Loss</p>
+          <p class="drl-stat-label">Loss (moyenne)</p>
           <p class="drl-stat-value">${formatNumber(this.lossValue)}</p>
         </div>
         <div class="drl-stat">
@@ -663,24 +695,10 @@ export class Neuron extends DemoElement {
           <p class="drl-stat-value">${formatNumber(this.gradMag)}</p>
         </div>
         <div class="drl-stat">
-          <p class="drl-stat-label">Époque</p>
+          <p class="drl-stat-label">Itérations</p>
           <p class="drl-stat-value">${this.epoch}</p>
         </div>
       </div>
-      ${
-        this.diverged
-          ? html`<p class="drl-diverged">
-            Divergence détectée : les poids sont ramenés à leur valeur de départ.
-          </p>`
-          : nothing
-      }
-      ${
-        this.core.targetError !== null
-          ? html`<p class="drl-target-warning">
-            Expression invalide : « ${this.core.expression} » utilisé par défaut.
-          </p>`
-          : nothing
-      }
     `;
   }
 
@@ -730,7 +748,7 @@ export class Neuron extends DemoElement {
             stroke-opacity="0.7"
             visibility="hidden"
           ></circle>
-          <text class="drl-axis" x="40" y="368" text-anchor="start">x₁</text>
+          <text class="drl-axis" x="40" y="358" text-anchor="start">x₁</text>
           <text class="drl-axis" x="34" y="14" text-anchor="end">x₂</text>
           <rect
             class="drl-legend"
@@ -751,6 +769,7 @@ export class Neuron extends DemoElement {
             : html`<canvas
               width=${CANVAS_WIDTH}
               height=${CANVAS_HEIGHT}
+              role="img"
               aria-label="Surface de loss 3D et descente de la bille par batch"
             ></canvas>`
         }
@@ -760,7 +779,7 @@ export class Neuron extends DemoElement {
 
   override connectedCallback(): void {
     super.connectedCallback();
-    if (this.hasUpdated && this.scene === null) {
+    if (this.hasUpdated && this.scene === null && this.setupPromise === null) {
       void this.setupScene();
     }
   }
