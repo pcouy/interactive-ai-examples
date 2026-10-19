@@ -26,7 +26,6 @@ import {
 import { type MnistCnnAssets, parseMnistCnnManifestJson } from '../../core/mnist-cnn-assets.js';
 import {
   createMnistCnnTfjsTrainer,
-  type MnistCnnTfjsTrainer,
   type MnistTrainingProgress,
 } from '../../core/mnist-cnn-tfjs.js';
 import {
@@ -37,22 +36,8 @@ import {
 import { createIdxTrainSource } from '../../core/mnist-train-source.js';
 import { drlTokens } from '../../styles/tokens.js';
 import { fetchMnistCnnManifest, loadMnistGallery, loadMnistSplits } from './mnist-assets.js';
-import {
-  initialTrainingState,
-  isTrainingActive,
-  onComponentDisconnected,
-  onFiltersChanged,
-  onManifestFailed,
-  onManifestLoaded,
-  onPauseRequested,
-  onProgressReceived,
-  onRunCancelled,
-  onRunCompleted,
-  onRunStarted,
-  onWeightsReset,
-  type TrainingState,
-  trainingStateBadge,
-} from './training-state.js';
+import { MnistTrainingController } from './training-controller.js';
+import { isTrainingActive, type TrainingState, trainingStateBadge } from './training-state.js';
 
 /**
  * Démonstration interactive du CNN MNIST de référence (`tf-playground/mnist/train.py`) :
@@ -108,9 +93,6 @@ const TRAIN_BATCH_SIZE = 64;
 
 /** Nombre d'époques par entraînement. */
 const TRAIN_EPOCHS = 1;
-
-/** Intervalle minimal entre deux rafraîchissements des poids d'inférence, en ms. */
-const WEIGHT_REFRESH_INTERVAL_MS = 250;
 
 /** Effectifs officiels des jeux IDX, pour estimer les sélections avant téléchargement. */
 const MNIST_TRAIN_SPLIT_SIZE = 60000;
@@ -596,16 +578,6 @@ export class MnistCnn extends LitElement {
   @state()
   private trainingState: TrainingState = 'deterministic';
 
-  /** Vrai pendant la préparation d'une run (téléchargement, création du modèle). */
-  @state()
-  private startingTraining = false;
-
-  /** Vrai dès qu'une run a démarré : le manifeste ne s'applique plus. */
-  private hasStartedRun = false;
-
-  /** Vrai après `disconnectedCallback` : toute run en préparation est abandonnée. */
-  private disconnected = false;
-
   /** Dernière erreur d'entraînement, affichée dans le panneau d'entraînement. */
   @state()
   private trainingError: string | null = null;
@@ -658,19 +630,41 @@ export class MnistCnn extends LitElement {
     negative: readonly [number, number, number];
   } | null = null;
 
-  /** Entraîneur TensorFlow.js de la run courante (null hors entraînement). */
-  private trainer: MnistCnnTfjsTrainer | null = null;
+  /** Contrôleur du cycle de vie de l'entraînement (pur, sans DOM ni TFJS). */
+  private readonly controller = new MnistTrainingController({
+    loadSplits: async () => {
+      const splits = await loadMnistSplits();
+      this.splits = splits;
+      return splits;
+    },
+    createTrainer: (config) => createMnistCnnTfjsTrainer(config),
+    createSource: (dataset, indices) => createIdxTrainSource(dataset, indices),
+    selectIndices: (dataset, fraction, seed) =>
+      selectStratifiedIndices(dataset, { fraction, seed }),
+    onStateChanged: (state) => {
+      this.trainingState = state;
+    },
+    onProgress: (progress) => {
+      this.applyProgress(progress);
+    },
+    onWeightsChanged: (weights) => {
+      this.weights = weights;
+      this.runInference();
+    },
+    onWeightsReset: (weights) => {
+      this.weights = weights;
+      this.runInference();
+    },
+    onError: (message) => {
+      this.trainingError = message;
+    },
+    onCountsChanged: (trainCount, validationCount) => {
+      this.trainExampleCount = trainCount;
+      this.validationExampleCount = validationCount;
+    },
+  });
 
-  /** Promesse de la run courante ; rejetée ou non, elle se termine en un lot. */
-  private trainRunPromise: Promise<MnistTrainingProgress> | null = null;
-
-  /** Identifiant de run : incrémenté pour invalider les rappels d'une run arrêtée. */
-  private trainRunId = 0;
-
-  /** Horodatage du dernier rafraîchissement des poids d'inférence. */
-  private lastWeightsRefreshAt = 0;
-
-  /** Jeux IDX chargés (mis en cache par `loadMnistSplits`), ou null. */
+  /** Jeux IDX chargés (mis en cache par le port `loadSplits`), ou null. */
   private splits: Awaited<ReturnType<typeof loadMnistSplits>> | null = null;
 
   private get predictedClass(): number | null {
@@ -744,16 +738,12 @@ export class MnistCnn extends LitElement {
 
   override connectedCallback(): void {
     super.connectedCallback();
-    this.disconnected = false;
+    this.controller.notifyConnected();
   }
 
   override disconnectedCallback(): void {
-    this.disconnected = true;
     super.disconnectedCallback();
-    this.trainingState = onComponentDisconnected(this.trainingState);
-    // L'arrêt est asynchrone (un lot au plus) ; les rappels de la run sont
-    // invalidés par l'incrément de `trainRunId` dans `settleTraining`.
-    void this.settleTraining();
+    void this.controller.notifyDisconnected();
   }
 
   /**
@@ -770,14 +760,13 @@ export class MnistCnn extends LitElement {
       this.pretrainedAssets = assets;
       this.manifestError = null;
       const matches = sameFilters(assets.config.filters, this.filterCounts);
-      const next = onManifestLoaded(this.trainingState, matches);
-      if (next !== this.trainingState) {
-        this.trainingState = next;
+      this.controller.notifyManifestChanged(matches);
+      if (this.trainingState === 'pretrained') {
         this.applyPretrainedWeights();
       }
     } catch (error) {
       this.manifestError = (error as Error).message;
-      this.trainingState = onManifestFailed(this.trainingState);
+      this.controller.notifyManifestChanged(false);
     }
   }
 
@@ -857,155 +846,38 @@ export class MnistCnn extends LitElement {
   }
 
   /**
-   * Lance un entraînement : charge les jeux IDX, sélectionne les deux
-   * sous-ensembles stratifiés, crée l'entraîneur (chargement paresseux de
-   * TensorFlow.js), y pousse les poids de départ et démarre la boucle par lots
-   * bornés. La préparation est abandonnée après chaque `await` dès que la
-   * run n'est plus active (pause, curseur changé, déconnexion) ; le premier
-   * abandon possible est la déconnexion, l'état n'étant pas encore `training`.
+   * Lance un entraînement via le contrôleur : charge les jeux IDX, sélectionne
+   * les deux sous-ensembles stratifiés, crée l'entraîneur (chargement
+   * paresseux de TensorFlow.js), y pousse les poids de départ et démarre la
+   * boucle par lots bornés. Les poids de départ sont les poids pré-entraînés du
+   * manifeste à la première run (si l'architecture correspond), les poids
+   * affichés sinon.
    */
-  private async startTraining(): Promise<void> {
-    if (this.startingTraining || this.disconnected) {
-      return;
-    }
-    this.startingTraining = true;
+  private readonly handleStartTraining = (): void => {
     this.trainingError = null;
-    try {
-      await this.settleTraining();
-      // Point de départ : le bouton « Entraîner » est désactivé pendant une
-      // run, donc l'état est inactif ici et une run peut démarrer. Seule la
-      // déconnexion peut abandonner à ce point — une assertion « run active »
-      // échouerait ici, l'état ne passe à `training` qu'avec `onRunStarted`,
-      // juste après.
-      if (this.disconnected) {
-        return;
-      }
-      this.trainingState = onRunStarted(this.trainingState);
-      // Poids de départ évalués AVANT le drapeau : la première run part des
-      // poids pré-entraînés du manifeste, les suivantes des poids affichés.
-      const startingWeights = this.initialWeightsForRun();
-      this.hasStartedRun = true;
-      this.resetMetrics();
-      const splits = await loadMnistSplits();
-      this.assertRunActive();
-      this.splits = splits;
-      const trainIndices = selectStratifiedIndices(splits.train, {
-        fraction: this.trainPercent / 100,
-        seed: SEED,
-      });
-      const validationIndices = selectStratifiedIndices(splits.test, {
-        fraction: this.validationPercent / 100,
-        seed: SEED,
-      });
-      this.trainExampleCount = trainIndices.length;
-      this.validationExampleCount = validationIndices.length;
-      const trainer = await createMnistCnnTfjsTrainer({
-        filters: this.filterCounts,
-        learningRate: this.learningRate,
-        batchSize: TRAIN_BATCH_SIZE,
-        seed: SEED,
-      });
-      this.assertRunActive();
-      const runId = ++this.trainRunId;
-      this.trainer = trainer;
-      // Poids de départ : pré-entraînés à la première run, poids affichés ensuite.
-      await trainer.applyWeights(startingWeights);
-      this.assertRunActive();
-      const run = trainer.train({
-        train: createIdxTrainSource(splits.train, trainIndices),
-        validation: createIdxTrainSource(splits.test, validationIndices),
-        epochs: TRAIN_EPOCHS,
-        onProgress: (progress) => this.handleTrainingProgress(runId, progress),
-      });
-      this.trainRunPromise = run;
-      const final = await run;
-      if (runId !== this.trainRunId || this.disconnected) {
-        return;
-      }
-      this.applyProgress(final);
-      // Rafraîchissement systématique en fin de course, quelle que soit la cadence.
-      await this.refreshWeightsFromTrainer();
-      this.trainingState = onRunCompleted(this.trainingState);
-      await this.settleTraining();
-    } catch (error) {
-      if (!isTrainingActive(this.trainingState)) {
-        // Abandon volontaire (pause, curseur, déconnexion) : pas d'erreur
-        // affichée, l'état a déjà été mis à jour par la transition.
-      } else {
-        this.trainingError = (error as Error).message;
-        this.trainingState = this.metricsStarted
-          ? onRunCancelled(this.trainingState)
-          : initialTrainingState(this.manifestMatches);
-      }
-      await this.settleTraining();
-    } finally {
-      this.startingTraining = false;
-    }
-  }
-
-  /** Aborte la préparation si la run n'est plus active (pause, curseur, déconnexion). */
-  private assertRunActive(): void {
-    if (this.disconnected || !isTrainingActive(this.trainingState)) {
-      throw new Error('MNIST training run aborted.');
-    }
-  }
-
-  /**
-   * Poids de départ d'une run : les poids pré-entraînés du manifeste à la
-   * première run (si l'architecture correspond), les poids affichés ensuite.
-   */
-  private initialWeightsForRun(): MnistCnnWeights {
-    if (!this.hasStartedRun && this.manifestMatches) {
-      return this.pretrainedAssets?.weights ?? this.weights;
-    }
-    return this.weights;
-  }
-
-  /**
-   * Annule la run courante, attend sa fin (au plus un lot) et libère
-   * l'entraîneur. Les rappels d'une run invalidée sont ignorés.
-   */
-  private async settleTraining(): Promise<void> {
-    this.trainRunId += 1;
-    const trainer = this.trainer;
-    const run = this.trainRunPromise;
-    this.trainer = null;
-    this.trainRunPromise = null;
-    if (trainer === null) {
-      return;
-    }
-    await trainer.cancel();
-    if (run !== null) {
-      await run.catch(() => {
-        // Un lot illisible pendant l'arrêt ne doit pas masquer l'état affiché.
-      });
-    }
-    await trainer.dispose();
-  }
-
-  /** Pause : la boucle s'arrête avant le lot suivant et les poids sont figés. */
-  private readonly handlePauseTraining = async (): Promise<void> => {
-    const trainer = this.trainer;
-    this.trainingState = onPauseRequested(this.trainingState);
-    if (trainer === null) {
-      return;
-    }
-    await trainer.cancel();
-    // Rafraîchissement systématique à la pause, quelle que soit la cadence.
-    await this.refreshWeightsFromTrainer();
+    const initialWeights = this.manifestMatches
+      ? (this.pretrainedAssets?.weights ?? this.weights)
+      : this.weights;
+    void this.controller.startRun({
+      filters: this.filterCounts,
+      learningRate: this.learningRate,
+      batchSize: TRAIN_BATCH_SIZE,
+      seed: SEED,
+      epochs: TRAIN_EPOCHS,
+      trainPercent: this.trainPercent,
+      validationPercent: this.validationPercent,
+      initialWeights,
+    });
   };
 
-  /**
-   * Réinitialise les poids : l'entraînement s'arrête, les poids pré-entraînés
-   * sont restaurés si l'architecture correspond au manifeste, sinon des poids
-   * déterministes, et les métriques sont remises à zéro.
-   */
-  private readonly handleResetWeights = async (): Promise<void> => {
-    await this.settleTraining();
-    this.weights = this.weightsForCurrentFilters();
-    this.resetMetrics();
-    this.trainingState = onWeightsReset(this.trainingState, this.manifestMatches);
-    this.runInference();
+  /** Pause : la boucle s'arrête avant le lot suivant et les poids sont figés. */
+  private readonly handlePauseTraining = (): void => {
+    void this.controller.pause();
+  };
+
+  /** Réinitialise les poids : l'entraînement s'arrête et les poids sont restaurés. */
+  private readonly handleResetWeights = (): void => {
+    void this.controller.resetWeights(this.weightsForCurrentFilters());
   };
 
   /** Poids à afficher pour l'architecture courante : pré-entraînés si possible. */
@@ -1027,51 +899,12 @@ export class MnistCnn extends LitElement {
     this.metricsStarted = false;
   }
 
-  /**
-   * Évènement de progression : met à jour les métriques et rafraîchit les poids
-   * d'inférence au plus toutes les 250 ms. Le rafraîchissement final est fait
-   * par `startTraining` après la fin de la run.
-   */
-  private handleTrainingProgress(runId: number, progress: MnistTrainingProgress): void {
-    if (runId !== this.trainRunId) {
-      return;
-    }
-    this.trainingState = onProgressReceived(this.trainingState);
-    this.applyProgress(progress);
-    if (progress.status !== 'running') {
-      return;
-    }
-    const now = Date.now();
-    if (now - this.lastWeightsRefreshAt >= WEIGHT_REFRESH_INTERVAL_MS) {
-      this.lastWeightsRefreshAt = now;
-      void this.refreshWeightsFromTrainer();
-    }
-  }
-
   private applyProgress(progress: MnistTrainingProgress): void {
     this.batchesProcessed = progress.batchesProcessed;
     this.loss = Number.isFinite(progress.loss) ? progress.loss : null;
     this.validationAccuracy = progress.validationAccuracy;
     this.elapsedMs = progress.elapsedMs;
     this.metricsStarted = true;
-  }
-
-  /**
-   * Remplace les poids d'inférence TypeScript par les poids du modèle
-   * TensorFlow.js, puis recalcule le passage avant. Un échec (entraîneur
-   * disposé entre-temps, export impossible) conserve les poids affichés.
-   */
-  private async refreshWeightsFromTrainer(): Promise<void> {
-    const trainer = this.trainer;
-    if (trainer === null) {
-      return;
-    }
-    try {
-      this.weights = await trainer.exportWeights();
-      this.runInference();
-    } catch {
-      // Les poids courants restent affichés ; la prochaine fenêtre réessayera.
-    }
   }
 
   /**
@@ -1094,7 +927,8 @@ export class MnistCnn extends LitElement {
     this.filterCounts = next;
     this.weights = this.weightsForCurrentFilters();
     this.runInference();
-    this.stopTrainingToIdle();
+    this.resetMetrics();
+    void this.controller.notifySliderChanged(this.manifestMatches, true);
   }
 
   /** Change la part du jeu d'entraînement : n'agit qu'à la prochaine run. */
@@ -1105,7 +939,8 @@ export class MnistCnn extends LitElement {
     }
     this.trainPercent = percent;
     this.updateExampleCounts();
-    this.stopTrainingToIdle();
+    this.resetMetrics();
+    void this.controller.notifySliderChanged(this.manifestMatches, false);
   }
 
   /** Change la part du jeu de validation : n'agit qu'à la prochaine run. */
@@ -1116,7 +951,8 @@ export class MnistCnn extends LitElement {
     }
     this.validationPercent = percent;
     this.updateExampleCounts();
-    this.stopTrainingToIdle();
+    this.resetMetrics();
+    void this.controller.notifySliderChanged(this.manifestMatches, false);
   }
 
   /** Change le taux d'apprentissage : n'agit qu'à la prochaine run. */
@@ -1126,18 +962,8 @@ export class MnistCnn extends LitElement {
       return;
     }
     this.learningRate = rate;
-    this.stopTrainingToIdle();
-  }
-
-  /**
-   * Arrête la run courante et retombe à l'état initial (curseur changé) :
-   * l'entraînement ne peut pas continuer avec une configuration obsolète. Les
-   * métriques de la run interrompue sont remises à zéro.
-   */
-  private stopTrainingToIdle(): void {
-    this.trainingState = onFiltersChanged(this.trainingState, this.manifestMatches);
     this.resetMetrics();
-    void this.settleTraining();
+    void this.controller.notifySliderChanged(this.manifestMatches, false);
   }
 
   /** Charge les pixels d'un exemple de la galerie dans le tampon de dessin. */
@@ -1547,8 +1373,8 @@ export class MnistCnn extends LitElement {
             <button
               type="button"
               class="drl-button drl-primary"
-              ?disabled=${isTrainingActive(this.trainingState) || this.startingTraining}
-              @click=${this.startTraining}
+              ?disabled=${isTrainingActive(this.trainingState)}
+              @click=${this.handleStartTraining}
             >
               Entraîner
             </button>
