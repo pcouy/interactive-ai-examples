@@ -57,7 +57,8 @@ import { isTrainingActive, type TrainingState, trainingStateBadge } from './trai
  * deux sous-ensembles stratifiés (curseurs de pourcentage) et entraîne le modèle
  * par lots bornés, en partant des poids pré-entraînés à la première run et des
  * poids affichés ensuite. « Pause » arrête la boucle au lot suivant ;
- * « Réinitialiser les poids » restaure les poids initiaux. Les poids
+ * « Réinitialiser les poids » restaure les poids initiaux ; « Poids aléatoires »
+ * tire une graine nouvelle et remplace les poids affichés. Les poids
  * d'inférence TypeScript sont rafraîchis depuis le modèle au plus toutes les
  * 250 ms, et toujours à la pause et en fin de course.
  *
@@ -677,6 +678,9 @@ export class MnistCnn extends LitElement {
 
   /** Origine des poids affichée dans les statistiques. */
   private get weightsOrigin(): string {
+    if (this.trainingState === 'random') {
+      return 'Aléatoires';
+    }
     if (
       this.metricsStarted &&
       (this.trainingState === 'training' ||
@@ -878,6 +882,16 @@ export class MnistCnn extends LitElement {
   /** Réinitialise les poids : l'entraînement s'arrête et les poids sont restaurés. */
   private readonly handleResetWeights = (): void => {
     void this.controller.resetWeights(this.weightsForCurrentFilters());
+  };
+
+  /**
+   * Réinitialise les poids avec une graine nouvelle : l'entraînement s'arrête et
+   * les poids tirés au hasard remplacent les poids affichés.
+   */
+  private readonly handleRandomResetWeights = (): void => {
+    const seed = Math.floor(Math.random() * 0xffffffff);
+    const weights = initializeMnistCnnWeights({ filters: this.filterCounts }, seed);
+    void this.controller.resetWeights(weights, 'random');
   };
 
   /** Poids à afficher pour l'architecture courante : pré-entraînés si possible. */
@@ -1388,6 +1402,9 @@ export class MnistCnn extends LitElement {
             </button>
             <button type="button" class="drl-button" @click=${this.handleResetWeights}>
               Réinitialiser les poids
+            </button>
+            <button type="button" class="drl-button" @click=${this.handleRandomResetWeights}>
+              Poids aléatoires
             </button>
           </div>
           <div

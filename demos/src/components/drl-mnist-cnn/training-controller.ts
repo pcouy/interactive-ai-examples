@@ -240,13 +240,17 @@ export class MnistTrainingController {
   /**
    * Réinitialise les poids : la run courante s'arrête et les poids donnés sont
    * rapportés par `onWeightsReset`. Les derniers poids entraînés sont effacés :
-   * la prochaine run repart des poids rapportés ici.
+   * la prochaine run repart des poids rapportés ici. `origin` `random` retient
+   * des poids tirés au hasard (badge « Poids aléatoires »).
    */
-  async resetWeights(weights: MnistCnnWeights): Promise<void> {
+  async resetWeights(
+    weights: MnistCnnWeights,
+    origin: 'initial' | 'random' = 'initial',
+  ): Promise<void> {
     await this.settleRun(false);
     this.lastTrainedWeights = null;
     this.ports.onWeightsReset(weights);
-    this.currentState = onWeightsReset(this.currentState, this.manifestMatches);
+    this.currentState = onWeightsReset(this.currentState, this.manifestMatches, origin);
     this.ports.onStateChanged(this.currentState);
   }
 

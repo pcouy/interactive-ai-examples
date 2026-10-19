@@ -22,6 +22,7 @@ const ALL_STATES: readonly TrainingState[] = [
   'training',
   'paused',
   'trained',
+  'random',
 ];
 
 const INACTIVE_STATES: readonly TrainingState[] = [
@@ -29,6 +30,7 @@ const INACTIVE_STATES: readonly TrainingState[] = [
   'pretrained',
   'paused',
   'trained',
+  'random',
 ];
 
 describe('trainingStateBadge', () => {
@@ -38,6 +40,7 @@ describe('trainingStateBadge', () => {
     expect(trainingStateBadge('training')).toBe('Entraînement');
     expect(trainingStateBadge('paused')).toBe('En pause');
     expect(trainingStateBadge('trained')).toBe('Entraîné');
+    expect(trainingStateBadge('random')).toBe('Poids aléatoires');
   });
 });
 
@@ -105,6 +108,13 @@ describe('onWeightsReset', () => {
     for (const state of ALL_STATES) {
       expect(onWeightsReset(state, true)).toBe('pretrained');
       expect(onWeightsReset(state, false)).toBe('deterministic');
+    }
+  });
+
+  it('returns random for every current state with a random origin', () => {
+    for (const state of ALL_STATES) {
+      expect(onWeightsReset(state, true, 'random')).toBe('random');
+      expect(onWeightsReset(state, false, 'random')).toBe('random');
     }
   });
 });
@@ -177,6 +187,7 @@ describe('inactive-run guarantee', () => {
 
   it('isTrainingActive is true only for training', () => {
     expect(isTrainingActive('training')).toBe(true);
+    expect(isTrainingActive('random')).toBe(false);
     for (const state of INACTIVE_STATES) {
       expect(isTrainingActive(state)).toBe(false);
     }

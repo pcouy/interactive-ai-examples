@@ -510,6 +510,17 @@ describe('MnistTrainingController reset and manifest', () => {
     expect(controller.state).not.toBe('trained');
   });
 
+  it('resetWeights with a random origin reports the weights and keeps the random state', async () => {
+    const ports = new FakePorts();
+    const controller = new MnistTrainingController(ports);
+    await controller.startRun(makeRequest());
+    expect(controller.state).toBe('trained');
+    const randomWeights = makeWeights(8);
+    await controller.resetWeights(randomWeights, 'random');
+    expect(ports.weightsResets).toEqual([randomWeights]);
+    expect(controller.state).toBe('random');
+  });
+
   it('notifyManifestChanged moves to pretrained when the manifest matches', () => {
     const ports = new FakePorts();
     const controller = new MnistTrainingController(ports);

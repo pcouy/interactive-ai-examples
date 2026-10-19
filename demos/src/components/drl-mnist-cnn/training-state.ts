@@ -1,14 +1,15 @@
 /**
  * Machine à états pure de l'entraînement du composant `drl-mnist-cnn`.
  *
- * Cinq états :
+ * Six états :
  * - `deterministic` : poids déterministes (graine fixe), manifeste absent ou
  *   incompatible ;
  * - `pretrained` : poids pré-entraînés du manifeste, architecture
  *   correspondante ;
  * - `training` : une run est active (préparation ou entraînement) ;
  * - `paused` : une run active a été mise en pause ou annulée ;
- * - `trained` : une run s'est terminée normalement.
+ * - `trained` : une run s'est terminée normalement ;
+ * - `random` : poids tirés au hasard, sans graine reproductible.
  *
  * Les transitions sont des fonctions pures : elles ne dépendent que de l'état
  * courant et du contexte (manifeste disponible et compatible ou non). La
@@ -18,7 +19,13 @@
  * retomber l'état sur un état inactif.
  */
 
-export type TrainingState = 'deterministic' | 'pretrained' | 'training' | 'paused' | 'trained';
+export type TrainingState =
+  | 'deterministic'
+  | 'pretrained'
+  | 'training'
+  | 'paused'
+  | 'trained'
+  | 'random';
 
 /** Texte du badge affiché pour chaque état. */
 export function trainingStateBadge(state: TrainingState): string {
@@ -31,6 +38,8 @@ export function trainingStateBadge(state: TrainingState): string {
       return 'Entraîné';
     case 'pretrained':
       return 'Pré-entraîné';
+    case 'random':
+      return 'Poids aléatoires';
     default:
       return 'Poids déterministes';
   }
@@ -74,9 +83,16 @@ export function onRunCancelled(state: TrainingState): TrainingState {
   return state === 'training' ? 'paused' : state;
 }
 
-/** Poids réinitialisés : retour à l'état initial selon le manifeste. */
-export function onWeightsReset(_state: TrainingState, manifestMatches: boolean): TrainingState {
-  return initialTrainingState(manifestMatches);
+/**
+ * Poids réinitialisés : `origin` `initial` retourne à l'état initial selon le
+ * manifeste, `random` retient des poids tirés au hasard.
+ */
+export function onWeightsReset(
+  _state: TrainingState,
+  manifestMatches: boolean,
+  origin: 'initial' | 'random' = 'initial',
+): TrainingState {
+  return origin === 'random' ? 'random' : initialTrainingState(manifestMatches);
 }
 
 /**
