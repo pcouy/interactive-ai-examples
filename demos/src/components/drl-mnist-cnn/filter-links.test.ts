@@ -63,6 +63,15 @@ describe('isUsableRect', () => {
       false,
     );
   });
+
+  it('rejects a rectangle whose far corner overflows to infinity', () => {
+    expect(
+      isUsableRect({ left: Number.MAX_VALUE, top: 0, width: Number.MAX_VALUE, height: 20 }),
+    ).toBe(false);
+    expect(
+      isUsableRect({ left: 0, top: Number.MAX_VALUE, width: 40, height: Number.MAX_VALUE }),
+    ).toBe(false);
+  });
 });
 
 describe('linkGeometry', () => {
@@ -96,6 +105,17 @@ describe('linkGeometry', () => {
     expect(fromNarrow.y2).toBe(-7);
   });
 
+  it('draws between the centres of two one-pixel rectangles', () => {
+    const source: RectLike = { left: 10, top: 20, width: 1, height: 1 };
+    const target: RectLike = { left: 10, top: 30, width: 1, height: 1 };
+    expect(linkGeometry(source, target, CONTAINER)).toEqual({
+      x1: 5.5,
+      y1: 14,
+      x2: 5.5,
+      y2: 23,
+    });
+  });
+
   it('throws a RangeError for an unusable container', () => {
     const rect: RectLike = { left: 0, top: 0, width: 10, height: 10 };
     expect(() => linkGeometry(rect, rect, { left: 0, top: 0, width: 0, height: 10 })).toThrow(
@@ -104,6 +124,19 @@ describe('linkGeometry', () => {
     expect(() =>
       linkGeometry(rect, rect, { left: Number.NaN, top: 0, width: 10, height: 10 }),
     ).toThrow(RangeError);
+  });
+
+  it('throws a RangeError for an unusable source or target', () => {
+    const rect: RectLike = { left: 0, top: 0, width: 10, height: 10 };
+    // Source et cible de taille nulle.
+    expect(() => linkGeometry({ ...rect, width: 0 }, rect, CONTAINER)).toThrow(RangeError);
+    expect(() => linkGeometry(rect, { ...rect, height: 0 }, CONTAINER)).toThrow(RangeError);
+    // Champ non fini dans la source puis dans la cible.
+    expect(() => linkGeometry({ ...rect, left: Number.NaN }, rect, CONTAINER)).toThrow(RangeError);
+    expect(() => linkGeometry(rect, { ...rect, top: Number.NaN }, CONTAINER)).toThrow(RangeError);
+    // Le message nomme le rectangle fautif.
+    expect(() => linkGeometry({ ...rect, width: 0 }, rect, CONTAINER)).toThrow(/source/);
+    expect(() => linkGeometry(rect, { ...rect, width: 0 }, CONTAINER)).toThrow(/target/);
   });
 });
 

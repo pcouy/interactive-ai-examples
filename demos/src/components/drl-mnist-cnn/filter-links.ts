@@ -56,8 +56,9 @@ export interface RectLike {
 
 /**
  * Vrai seulement si la largeur et la hauteur sont strictement positives et si
- * les quatre champs sont finis. Un rectangle non utilisable n'a pas de centre
- * calculable.
+ * les quatre champs sont finis. Le coin inférieur droit `left + width`,
+ * `top + height` doit aussi être fini : un dépassement vers l'infini rend le
+ * centre incalculable. Un rectangle non utilisable n'a pas de centre calculable.
  */
 export function isUsableRect(rect: RectLike): boolean {
   return (
@@ -65,6 +66,8 @@ export function isUsableRect(rect: RectLike): boolean {
     Number.isFinite(rect.top) &&
     Number.isFinite(rect.width) &&
     Number.isFinite(rect.height) &&
+    Number.isFinite(rect.left + rect.width) &&
+    Number.isFinite(rect.top + rect.height) &&
     rect.width > 0 &&
     rect.height > 0
   );
@@ -81,14 +84,25 @@ export interface LineGeometry {
 /**
  * Segment de la liaison : du bas-centre du rectangle amont au haut-centre du
  * rectangle aval, exprimé en coordonnées relatives au conteneur (son coin
- * supérieur gauche est l'origine). Lève une `RangeError` quand le conteneur
- * n'est pas utilisable (voir `isUsableRect`).
+ * supérieur gauche est l'origine). Lève une `RangeError` nommant le rectangle
+ * (`source`, `target` ou `container`) qui n'est pas utilisable (voir
+ * `isUsableRect`).
  */
 export function linkGeometry(
   source: RectLike,
   target: RectLike,
   container: RectLike,
 ): LineGeometry {
+  if (!isUsableRect(source)) {
+    throw new RangeError(
+      `linkGeometry: source must be a finite rectangle with positive size, received ${JSON.stringify(source)}.`,
+    );
+  }
+  if (!isUsableRect(target)) {
+    throw new RangeError(
+      `linkGeometry: target must be a finite rectangle with positive size, received ${JSON.stringify(target)}.`,
+    );
+  }
   if (!isUsableRect(container)) {
     throw new RangeError(
       `linkGeometry: container must be a finite rectangle with positive size, received ${JSON.stringify(container)}.`,
