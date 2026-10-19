@@ -42,14 +42,17 @@ async function gzippedAssets(): Promise<Map<string, Uint8Array<ArrayBuffer>>> {
   ]);
 }
 
-function stubFetch(assets: Map<string, Uint8Array<ArrayBuffer>>): ReturnType<typeof vi.fn> {
+function stubFetch(
+  assets: Map<string, Uint8Array<ArrayBuffer>>,
+  headers?: Record<string, string>,
+): ReturnType<typeof vi.fn> {
   const mock = vi.fn(async (input: RequestInfo | URL): Promise<Response> => {
     const name = String(input).split('/').pop() ?? '';
     const body = assets.get(name);
     if (body === undefined) {
       return new Response('missing', { status: 404, statusText: 'Not Found' });
     }
-    return new Response(body, { status: 200 });
+    return new Response(body, { status: 200, headers });
   });
   vi.stubGlobal('fetch', mock);
   return mock;
@@ -140,6 +143,22 @@ describe('loadMnistSplits', () => {
     for (const call of fetchMock.mock.calls) {
       expect(String(call[0])).toContain('/mnist/');
     }
+  });
+
+  it('parses an already-decoded IDX body served with Content-Encoding: gzip', async () => {
+    const assets = new Map([
+      ['train-images-idx3-ubyte.gz', imageIdx(TRAIN_LABELS.length)],
+      ['train-labels-idx1-ubyte.gz', labelIdx(TRAIN_LABELS)],
+      ['t10k-images-idx3-ubyte.gz', imageIdx(TEST_LABELS.length)],
+      ['t10k-labels-idx1-ubyte.gz', labelIdx(TEST_LABELS)],
+    ]);
+    stubFetch(assets, { 'content-encoding': 'gzip' });
+    const { loadMnistSplits } = await loadLoader();
+
+    const splits = await loadMnistSplits();
+    expect(splits.train.count).toBe(TRAIN_LABELS.length);
+    expect(splits.test.count).toBe(TEST_LABELS.length);
+    expect(Array.from(splits.test.labels)).toEqual(TEST_LABELS);
   });
 
   it('reports a fetch failure clearly and allows a later retry', async () => {

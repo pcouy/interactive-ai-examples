@@ -7,9 +7,11 @@
  * explicitement (mode strict).
  *
  * Le script n'utilise aucune dépendance : `fetch` global, `node:fs/promises` et
- * `node:crypto`. Chaque fichier est vérifié (taille puis MD5) après
- * téléchargement ; un fichier déjà présent avec la bonne taille et le bon MD5
- * est conservé sans être retéléchargé.
+ * `node:crypto`. Chaque fichier est écrit dans un temporaire `<nom>.tmp`,
+ * vérifié (taille puis MD5) puis renommé en place ; un échec supprime le
+ * temporaire et ne laisse jamais de fichier tronqué sous le nom final. Un
+ * fichier déjà présent avec la bonne taille et le bon MD5 est conservé sans
+ * être retéléchargé.
  *
  * Modes :
  * - défaut : toute erreur fait sortir avec un code non nul ;
@@ -18,7 +20,7 @@
  */
 
 import { createHash } from 'node:crypto';
-import { mkdir, readFile, writeFile } from 'node:fs/promises';
+import { mkdir, readFile, rename, unlink, writeFile } from 'node:fs/promises';
 import { dirname, join, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { MNIST_BASE_URL, MNIST_FILES } from './mnist-data-manifest.mjs';
@@ -41,7 +43,14 @@ async function isAlreadyValid(file) {
   }
 }
 
-/** Télécharge, vérifie puis écrit un fichier. Lance une erreur explicite sinon. */
+/**
+ * Télécharge, vérifie puis écrit un fichier. Lance une erreur explicite sinon.
+ *
+ * L'écriture passe par un fichier temporaire `<nom>.tmp` du même répertoire :
+ * le fichier n'est renommé en place qu'après vérification de la taille et du
+ * MD5, et le temporaire est supprimé en cas d'échec. Un téléchargement
+ * interrompu ne laisse donc jamais de fichier tronqué sous le nom final.
+ */
 async function download(file) {
   const url = `${MNIST_BASE_URL}${file.name}`;
   const response = await fetch(url);
@@ -49,16 +58,24 @@ async function download(file) {
     throw new Error(`could not download ${url}: HTTP ${response.status} ${response.statusText}`);
   }
   const bytes = new Uint8Array(await response.arrayBuffer());
-  if (bytes.length !== file.size) {
-    throw new Error(
-      `size mismatch for ${file.name}: expected ${file.size} bytes, received ${bytes.length}`,
-    );
+  const finalPath = join(TARGET_DIRECTORY, file.name);
+  const tempPath = `${finalPath}.tmp`;
+  try {
+    await writeFile(tempPath, bytes);
+    if (bytes.length !== file.size) {
+      throw new Error(
+        `size mismatch for ${file.name}: expected ${file.size} bytes, received ${bytes.length}`,
+      );
+    }
+    const digest = md5(bytes);
+    if (digest !== file.md5) {
+      throw new Error(`MD5 mismatch for ${file.name}: expected ${file.md5}, received ${digest}`);
+    }
+    await rename(tempPath, finalPath);
+  } catch (error) {
+    await unlink(tempPath).catch(() => {});
+    throw error;
   }
-  const digest = md5(bytes);
-  if (digest !== file.md5) {
-    throw new Error(`MD5 mismatch for ${file.name}: expected ${file.md5}, received ${digest}`);
-  }
-  await writeFile(join(TARGET_DIRECTORY, file.name), bytes);
 }
 
 async function main() {
