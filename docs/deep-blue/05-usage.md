@@ -122,8 +122,15 @@ export interface Game<S, M> {
   winner(state: S): GameOutcome;                // PlayerId | 'draw' | null
   stateKey(state: S): string;                   // clé canonique (TT)
   boardView(state: S): BoardView;
+  pieceCount?(state: S): number;                // optionnel : nombre de pièces posées (tour intra-partie)
 }
 ```
+
+`pieceCount?(state)` est optionnel : il donne le nombre de pièces posées,
+c'est-à-dire le tour intra-partie (une pièce par coup dans les deux jeux). Le
+moteur l'enregistre dans le champ `pieces` des entrées de table de
+transposition (section 3.4), pour la colonne « Pièces » du navigateur
+(section 4.2). Un jeu qui ne l'implémente pas laisse le champ absent.
 
 Deux instances livrées :
 
@@ -226,16 +233,19 @@ const tt = createTranspositionTable();
 // tt.beginTurn() | tt.currentTurn() | tt.snapshot()
 ```
 
-`TranspositionEntry` : `{ score, depth, exact, samples? }`. Le score est vu du
+`TranspositionEntry` : `{ score, depth, exact, samples?, pieces? }`. Le score est vu du
 **joueur au trait** dans l'état (perspective intrinsèque), pas du joueur
 racine : la clé est `game.stateKey(state)` seul, sans préfixe de joueur, et
 l'entrée sert d'un tour à l'autre. `store` conserve l'entrée la plus profonde
 (`entry.depth ≥ existante`). `depth` est la **profondeur effective certifiée**
 (nombre de plies pour lesquels `score` est exact) ; une position résolue au
 terminal porte le sentinelle `SOLVED_DEPTH` (`Infinity`). `samples` n'existe
-que pour les feuilles rollout (cache à profondeur 0).
+que pour les feuilles rollout (cache à profondeur 0). `pieces` est le nombre de
+pièces sur le plateau à cette position ; le moteur le renseigne à chaque
+`store` seulement si le `Game` implémente `pieceCount`, sinon le champ reste
+absent.
 
-`isEntryUsable(entry, remainingDepth, alpha, beta, maximizing, currentTurn)` :
+`isEntryUsable(entry, remainingDepth, alpha, beta, maximizing, currentTurn, strict = false)` :
 hit valable ssi `entry.depth > remainingDepth` et (`exact` ou borne compatible
 avec la fenêtre du nœud courant — `score ≥ beta` si maximisant, `score ≤ alpha`
 sinon). À profondeur **égale**, l'entrée n'est réutilisée que si elle porte le
@@ -314,13 +324,16 @@ leur API commune est `GameComponentApi<S, M>` (alias
 
 Propriétés en lecture : `game`, `title`, `pieceStyle`, `playerNames`
 (`readonly [string, string]`), `playerKinds` (kinds effectifs), `currentState`
-(`S | null`), `history` (`readonly S[]`), `gameOutcome`, `searchStats`
+(`S | null`), `history` (`readonly S[]`), `gameOutcome`, `seriesScore`
+(`SeriesScore` : `{ wins: readonly [number, number], draws: number }`),
+`transpositionTable` (`TranspositionTable`), `searchStats`
 (`SearchStats | null`). Propriété mutable : `recorder` (`TreeRecorder<S> |
 null`, sans attribut) — le brancher avant le coup d'agent pour alimenter un
 `<drl-eval-tree>`.
 
 Méthodes : `applyMove(move: M): boolean` (coup légal uniquement, refuse si
-partie finie ou recherche en cours) et `reset()` (héritée). `step()` est géré
+partie finie ou recherche en cours), `clearTranspositionTable()` (vide la table
+et les mini-plateaux mémorisés) et `reset()` (héritée). `step()` est géré
 par la boucle `DemoElement` : chaque tick consomme
 `min(256, max(1, round(speed × 32)))` itérations de l'agent en cours, joue
 `bestMove()` à `'done'`. Changer `players`/`depth`/`evaluator`/`transposition`/
@@ -336,6 +349,30 @@ par la boucle `DemoElement` : chaque tick consomme
 | `drl-move-undone` | `{ plies: number, state: S }` — s'il y a un humain, remonte jusqu'à un état où c'est à lui de jouer (typiquement 2 plies en humain vs agent), sinon 1 ply |
 | `drl-invalid-move` | `{ row: number, col: number }` — clic hors `clickableCells` ou coup illégal |
 | `drl-game-reset` | `{ state: S }` — état initial reconstruit |
+
+Série de parties : quand les deux joueurs sont `agent`, la barre de statut
+ajoute une ligne `Série — <nom0> <w0> · <nom1> <w1> · Nulles <draws>`, dont
+`seriesScore` porte le détail. Le tally s'incrémente à chaque fin de partie.
+`reset()` et un changement de `players` remettent la série à zéro ; la relance
+automatique (`autoRestart`) ne la remet pas à zéro, donc la série s'accumule
+entre les parties relancées. Annuler le coup final d'une partie terminée retire
+son résultat de la série (le compteur ne passe pas sous zéro) ; si les agents
+terminent ensuite la même partie, elle n'est comptée qu'une fois.
+
+Table de transposition : quand `transposition` est actif, le bouton
+« Parcourir la TT » de la barre d'outils ouvre un dialogue « Table de
+transposition ». Il liste les entrées de `snapshot()` : Position (mini-plateau),
+Clé, Score, Profondeur eff., Éch., Exact, Tour et Pièces (le nombre de pièces,
+ou `–` si le jeu n'implémente pas `pieceCount`). Les en-têtes numériques
+(Score, Profondeur eff., Éch., Exact, Tour, Pièces) trient la liste : premier
+clic croissant, second clic sur le même en-tête décroissant, l'en-tête actif
+portant `▲` ou `▼` ; sans tri, l'ordre est celui de `snapshot()` (par clé). Le
+tableau affiche 50 lignes par page, avec « Précédent », « Page X / Y » et
+« Suivant » (désactivés aux bornes). Un filtre par clé restreint les lignes.
+L'ordre appliqué est filtre, puis tri, puis tranche de page ; un changement de
+filtre ou de tri revient à la page 1, et l'ouverture du dialogue remet à zéro le
+filtre, le tri et la page. La note de bas de dialogue affiche la plage affichée
+et le total retenu.
 
 ### 4.3 `<drl-eval-tree>`
 
@@ -380,7 +417,10 @@ mode du moteur.
 Composition jeu + arbre, câblage interne : à chaque `drl-search-started` du
 composant de jeu, la page crée un agent parallèle (mêmes options, recorder =
 `tree.recorder`) et appelle `tree.startSearch(agent, state)` ; à
-`drl-game-reset` et `drl-move-undone` elle vide l'arbre. Exports utiles :
+`drl-game-reset` et `drl-move-undone` elle vide l'arbre. Elle relaie aussi le
+**Step** de la partie vers l'arbre : quand l'arbre est en pause, `drl-step` du
+composant de jeu déclenche un pas de l'arbre (primitive `in` par défaut) ;
+l'arbre garde ses propres contrôles, toujours actifs. Exports utiles :
 `firstMoveOnPath(model, nodeKey): unknown` (premier coup du chemin
 racine→nœud, `null` si racine ou clé inconnue) et
 `DeepBlueGameId = 'tic-tac-toe' | 'connect4'`. Attributs : voir section 2 —
@@ -462,7 +502,9 @@ fallbackDepth, transposition, recorder, heuristic })` (mode `'random'` →
 `createRandomAgent`, `'rollout'` → rollout + minimax, sinon `heuristic` +
 minimax, `prune: true`), `parsePlayersConfig`, `parseEvaluatorMode`,
 `sanitizeDepth`, `sameMove`, et les configs prêtes à l'emploi
-`TIC_TAC_TOE_GAME_CONFIG` / `CONNECT4_GAME_CONFIG`.
+`TIC_TAC_TOE_GAME_CONFIG` / `CONNECT4_GAME_CONFIG`. Un `Game` custom peut
+implémenter `pieceCount?(state)` pour alimenter la colonne « Pièces » du
+navigateur de table de transposition ; sans lui, la colonne affiche `–`.
 
 ## 6. Notes d'implémentation et limites
 
@@ -519,3 +561,12 @@ Limites connues :
 - **`bestMove()` après `'done'`** peut être `null` (racine sans coup légal) ;
   le composant de jeu vérifie la légalité avant de jouer et ignore sinon le
   coup.
+- **Visualiseur — frères élagués masqués** — l'arbre ne dessine que le premier
+  frère `pruned` d'un nœud ; les autres frères élagués ne sont pas dessinés
+  mais restent dans le modèle de l'arbre, donc le compteur « Nœuds » de la barre
+  de statut du visualiseur les compte. La statistique « coupures », elle, est
+  une statistique du moteur affichée dans le panneau de jeu
+  (`SearchStats.nodesPruned`) : elle compte aussi ces frères masqués. Le
+  compteur « Masqués » du visualiseur ne compte que les nœuds repliés par
+  `max-depth` (ou par le plafond de 4000 nœuds affichés). Le curseur du stepper
+  peut se poser sur un nœud masqué, qui n'a alors aucune surbrillance.

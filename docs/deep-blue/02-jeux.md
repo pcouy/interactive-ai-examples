@@ -97,8 +97,9 @@ Chaque composant gère :
 - **Coup d'agent** : boucle de `step()` de l'agent connecté, `stepBudget`
   itérations (via le `speed` du `DemoElement`) jusqu'à `done`, puis
   `apply(bestMove)`.
-- **Undo** : bouton dédié (annule le dernier coup ; en mode agent vs agent,
-  annule jusqu'au dernier coup **humain** joué). `game.undo`.
+- **Undo** : bouton dédié (annule le dernier coup ; en mode humain vs agent,
+  remonte jusqu'au dernier coup humain joué ; en agent vs agent, annule un seul
+  ply). `game.undo`.
 - **Historique** : pile d'états (les états sont immuables — la pile est
   triviale).
 - Fin de partie : bandeau résultat, `drl-reset` du `DemoElement` repart

@@ -53,7 +53,14 @@ core pur) :
   - chaque nœud porte un **tooltip composé** (score, α/β, raison de coupure
     et coup déclencheur).
 - Les nœuds *pruned* et *tt-hit* n'ont pas de descendants : placeholder
-  grisé (point pédagogique : *ce que l'algorithme ne calcule pas*).
+  grisé (point pédagogique : *ce que l'algorithme ne calcule pas*). Un nœud
+  coupé émet un frère `pruned` par coup restant ; l'affichage n'en garde
+  qu'**un seul** (le premier) et ne dessine pas les autres frères `pruned`. Ces
+  frères masqués restent toutefois dans le modèle de l'arbre : le compteur
+  « Nœuds » de la barre de statut du visualiseur les compte, et la statistique
+  « coupures » du panneau de jeu (issue de `SearchStats.nodesPruned`) les compte
+  aussi. Le compteur « Masqués » du visualiseur, lui, ne compte que les nœuds
+  repliés par `max-depth` (ou par le plafond de 4000 nœuds affichés).
 - Étiquette des arêtes : le coup (ex. nom de colonne), discret.
 
 ## Contrôles
@@ -88,7 +95,10 @@ racine d'affichage explicite si elle est posée, sinon le curseur du stepper,
 sinon le dernier nœud visité, sinon la racine de recherche. Il affiche
 l'étiquette du nœud, α, β, le score et son exactitude, puis, pour un nœud
 coupé, une ligne rouge du type `meilleur +0,50 > β +0,20 · déclenché par le
-coup 4`.
+coup 4`. Quand le nœud de détail n'a pas de coupure, la dernière ligne affiche
+l'étiquette neutre « Développement du nœud » à la place de la ligne rouge : le
+panneau rend toujours le même ensemble d'items (`white-space: nowrap`) et
+garde donc une hauteur constante.
 
 Le panneau est `aria-live="polite"` : le stepper le met à jour à chaque pas
 sans interrompre la lecture en cours. Il fonctionne dans les deux modes
@@ -108,7 +118,7 @@ Quatre contrôles, sémantique de débogueur :
 | Contrôle | Sémantique |
 |---|---|
 | **Step-in** | Visite le prochain fils non visité du nœud « courant » ; descend dedans (nœud courant = ce fils). 1 pas = 1 unité de travail de l'agent. |
-| **Step-over** | Termine l'évaluation du nœud courant (tous ses fils restants, récursivement) et passe au nœur frère suivant ; le nœud courant devient le frère. |
+| **Step-over** | Termine l'évaluation du nœud courant (tous ses fils restants, récursivement) et passe au nœud frère suivant ; le nœud courant devient le frère. |
 | **Step-out** | Termine le nœud courant **et tous ses frères**, remonte : le nœud courant devient le parent. |
 | **Run / pause** | Relance la consommation en continu (vitesse via `speed` du `DemoElement`). |
 
@@ -157,7 +167,13 @@ La page de démo place jeu interactif et arbre côte à côte :
   mémoire) ;
 - l'option « rejouer le coup choisi par l'agent » : clic sur un nœud de
   l'arbre → jouer ce coup dans la partie (exploration pédagogique —
-  « et si on jouait ce coup-là ? »).
+  « et si on jouait ce coup-là ? ») ;
+- le bouton **Step** de la partie est le même geste pour l'arbre : quand
+  l'arbre est en pause, appuyer sur Step de la barre de la partie avance la
+  recherche rejouée d'**un nœud** (primitive `in` par défaut), comme le Step
+  propre à l'arbre ; l'arbre garde ses propres contrôles, qui restent actifs ;
+- le **reset** est déjà synchronisé : le reset de la partie (`drl-game-reset`)
+  vide l'arbre.
 
 ## Paramètres exposés (attributs HTML)
 

@@ -60,6 +60,7 @@ bibliothèque, pas comme des détails internes de la démo.
 | `02-jeux.md` | Environnements TicTacToe et Connect4, rendu de plateau, modes de jeu |
 | `03-algorithmes.md` | Minimax, alpha-beta, Monte-Carlo aléatoire, tables de transposition |
 | `04-arbre.md` | Visualiseur d'arbre : contrôles débogueur, layout, zoom, navigation |
+| `05-usage.md` | Utilisation et référence : APIs publiques, valeurs par défaut, événements, limites |
 
 ## Contraintes techniques
 
@@ -102,6 +103,8 @@ Rappel du cadre `demos/README.md` :
   exact), ce qui permet de réutiliser une position au-delà de l'horizon
   courant.
 - **Nœud coupé / *pruned*** — sous-arbre non exploré parce qu'alpha-beta a
-  prouvé son inutilité. Rendu grisé dans la visualisation, jamais omis.
+  prouvé son inutilité. Rendu grisé dans la visualisation. Quand une coupure
+  masque plusieurs frères, seul le premier est dessiné ; les autres restent dans
+  le modèle de l'arbre.
 - **Ply / profondeur** — un *ply* = un demi-coup. La profondeur se compte en
   plies depuis la racine de la recherche.

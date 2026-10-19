@@ -58,8 +58,8 @@ Une itération de `step()` = un nœud visité (`onVisit`) avec, dans l'ordre :
 
 Quand `score ≥ beta` (ou `≤ alpha` au niveau adversaire), les frères
 restants sont enregistrés `kind: 'pruned'` **sans récursion**. Le
-visualiseur affiche ces nœuds grisés (`04-arbre.md`) — c'est le point
-pédagogique central : *montrer ce qu'alpha-beta ne calcule pas*.
+visualiseur affiche le premier de ces nœuds grisés (`04-arbre.md`) — c'est le
+point pédagogique central : *montrer ce qu'alpha-beta ne calcule pas*.
 
 Chaque événement porte la fenêtre effective (`SearchWindow { alpha, beta }`)
 et, pour les nœuds coupés, un `CutInfo` (`bound`, `strict`, `bestScore`,
@@ -179,6 +179,7 @@ alpha-beta (indépendamment de `prune`) :
     depth: number;     // profondeur certifiée (plies) pour laquelle score est exact
     exact: boolean;    // false = borne (coupure alpha-beta), pas valeur exacte
     samples?: number;  // présent uniquement pour les feuilles rollout (depth 0)
+    pieces?: number;   // nombre de pièces posées (tour intra-partie) ; absent si le jeu n'implémente pas pieceCount
   }
   ```
 - `depth` est une **profondeur effective certifiée** : le nombre de plies pour

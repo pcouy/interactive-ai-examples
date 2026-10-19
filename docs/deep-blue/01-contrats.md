@@ -51,6 +51,9 @@ export interface Game<S, M> {
   stateKey(state: S): string;
   /** Rendu paramétrable : données du plateau (grille + pions). */
   boardView(state: S): BoardView;
+  /** Nombre de pièces posées (tour intra-partie) ; optionnel, absent d'un jeu
+   * qui ne l'expose pas (champ `pieces` des entrées de transposition). */
+  pieceCount?(state: S): number;
 }
 
 export type PlayerId = number;

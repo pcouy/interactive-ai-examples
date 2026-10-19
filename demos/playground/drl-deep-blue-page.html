@@ -103,13 +103,25 @@
         <p>
           Page d'intégration Deep Blue : la partie interactive (morpion ou
           puissance 4) à gauche, le visualiseur d'arbre d'évaluation à droite.
-          Chaque recherche d'agent est rejouée pas à pas dans l'arbre, à son
-          propre rythme. Annuler un coup relance l'évaluation de la position
+          Chaque recherche d'agent est rejouée pas à pas dans l'arbre : appuyer
+          sur Step dans la barre de la partie avance aussi l'arbre d'un nœud,
+          de sorte que l'arbre se développe au rythme de la partie. L'arbre
+          garde ses propres contrôles, qui restent actifs. Annuler un coup
+          relance l'évaluation de la position
           dans l'arbre, le sélecteur « élagage » compare alpha-beta et minimax,
           et la table de transposition reste partagée avec la recherche rejouée :
           les entrées du tour courant y sont ignorées et redéployées dans
           l'arbre, seules celles des tours antérieurs, strictement plus
           profondes, sont consommées (tt-hit).
+          En Agent vs Agent, la barre de statut affiche en plus le bilan
+          de la série (<code>Série — &lt;nom0&gt; &lt;w0&gt; · &lt;nom1&gt;
+          &lt;w1&gt; · Nulles &lt;n&gt;</code>), remis à zéro par Reset et
+          par un changement d'adversaires, mais pas par la relance
+          automatique. Avec la transposition active, le bouton
+          « Parcourir la TT » ouvre un dialogue qui liste les entrées de la
+          table (Position, Clé, Score, Profondeur eff., Éch., Exact, Tour,
+          Pièces) ; les en-têtes numériques trient, et les lignes sont
+          paginées par 50.
           Cliquez un nœud de l'arbre puis « Rejouer ce coup » pour tester dans
           la partie le premier coup du chemin menant à ce nœud ; le bouton
           « Plein écran » de l'arbre agrandit le visualiseur. Le paramètre

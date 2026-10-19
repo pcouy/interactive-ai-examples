@@ -113,12 +113,17 @@
         <drl-eval-tree id="tree" max-depth="4" node-size="3rem"></drl-eval-tree>
         <p>
           Les scores sont du point de vue du joueur qui déplace à chaque nœud (négamax) : gras =
-          valeur exacte, italique = valeur de remontée provisoire, nœud gris hachuré = coup élagué,
-          badge violet = coup résolu via la table de transposition, bordure pleine = position
-          terminale. L'arc bleu part vers le meilleur enfant. Le panneau α/β sous le fil d'Ariane
-          décrit le nœud de détail (fenêtre, score, coupure) ; les nœuds élagués portent une
-          étiquette <code>&gt; β</code> à la place du score, et l'arête pointillée rouge relie le
-          nœud coupé au coup qui a déclenché la coupure.
+          valeur exacte, italique = valeur de remontée provisoire, nœud gris hachuré = coup élagué
+          (une coupure n'affiche qu'un seul nœud gris : les frères élagués suivants ne sont pas
+          dessinés mais restent dans le modèle de l'arbre, donc le compteur « Nœuds » les
+          compte, et le curseur du stepper peut se poser sur un de ces nœuds cachés, qui
+          n'a alors aucun surlignage), badge violet = coup résolu via la table de transposition,
+          bordure pleine = position terminale. L'arc bleu part vers le meilleur enfant. Le
+          panneau α/β sous le fil d'Ariane décrit le nœud de détail (fenêtre, score, coupure) ;
+          quand ce nœud n'a pas de coupure, il affiche « Développement du nœud » à la place de
+          la ligne de coupure et garde ainsi une hauteur constante ; les nœuds élagués portent
+          une étiquette <code>&gt; β</code> à la place du score, et l'arête pointillée rouge
+          relie le nœud coupé au coup qui a déclenché la coupure.
         </p>
       </section>
     </main>
