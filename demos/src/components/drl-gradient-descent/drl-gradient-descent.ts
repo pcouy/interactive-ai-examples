@@ -10,7 +10,7 @@ import {
   landscapeLoss,
 } from '../../core/gradient-descent.js';
 import { drlTokens } from '../../styles/tokens.js';
-import { createLandscapeScene, type LandscapeScene } from '../shared/landscape-scene.js';
+import { createLandscapeScene, gridIndex, type LandscapeScene } from '../shared/landscape-scene.js';
 
 type ThreeModule = typeof import('three');
 type ThreeMesh = InstanceType<ThreeModule['Mesh']>;
@@ -62,20 +62,6 @@ function clamp(value: number, min: number, max: number): number {
 
 function formatNumber(value: number): string {
   return value.toFixed(2).replace('.', ',');
-}
-
-function gridIndex(res: number): number[] {
-  const indices: number[] = [];
-  for (let j = 0; j < res; j += 1) {
-    for (let i = 0; i < res; i += 1) {
-      const a = j * (res + 1) + i;
-      const b = a + 1;
-      const c = a + (res + 1);
-      const d = c + 1;
-      indices.push(a, c, b, b, c, d);
-    }
-  }
-  return indices;
 }
 
 @customElement('drl-gradient-descent')
@@ -270,6 +256,7 @@ export class GradientDescent extends DemoElement {
 
   private lastFrameDelta = 0.016;
 
+  // Reconnect recovery is intentionally absent (pre-existing, not a regression).
   protected override async firstUpdated(): Promise<void> {
     const canvas = this.renderRoot.querySelector('canvas');
     if (!(canvas instanceof HTMLCanvasElement)) {
@@ -580,6 +567,7 @@ export class GradientDescent extends DemoElement {
     if (move && this.landscape) {
       this.animating = true;
       this.landscape.tweenBall({ w1: move.toA, w2: move.toB }, () => {
+        // Pushed when the tween lands; drl-neuron pushes at move time. Intentional.
         this.landscape?.pushTrail(move.toA, move.toB);
         this.animating = false;
       });
