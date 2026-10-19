@@ -249,9 +249,9 @@ export class NeuronCore {
   }
 
   /**
-   * Enables or disables the bias term. Does not reset training state (epoch,
-   * weights, bias, phase). Call `reset()` afterwards to restart training; the
-   * drl-neuron component does this.
+   * Enables or disables the bias term. Does not reset the epoch, weights, or
+   * phase. Disabling clears the bias value. Call `reset()` afterwards to
+   * restart training; the drl-neuron component does this.
    */
   setBiasEnabled(enabled: boolean): void {
     this.biasOn = enabled;
