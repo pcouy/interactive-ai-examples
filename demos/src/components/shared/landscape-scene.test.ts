@@ -1,5 +1,10 @@
 import { describe, expect, it } from 'vitest';
-import { easeSmoothstep, gridIndex, sampleHeightRange } from './landscape-scene.js';
+import {
+  clampFiniteHeight,
+  easeSmoothstep,
+  gridIndex,
+  sampleHeightRange,
+} from './landscape-scene.js';
 
 describe('gridIndex', () => {
   it('emits res·res·2·3 indices within the vertex range', () => {
@@ -48,6 +53,46 @@ describe('sampleHeightRange', () => {
     const { min, span } = sampleHeightRange((w1) => w1, 70, 2);
     expect(min).toBeCloseTo(-2, 10);
     expect(span).toBeCloseTo(4, 10);
+  });
+
+  it('reports a flat range for a field that is Infinity everywhere', () => {
+    const { min, span } = sampleHeightRange(() => Number.POSITIVE_INFINITY, 70, 2);
+    expect(min).toBe(0);
+    expect(span).toBe(0);
+  });
+
+  it('reports a flat range for a field that is NaN everywhere', () => {
+    const { min, span } = sampleHeightRange(() => Number.NaN, 70, 2);
+    expect(min).toBe(0);
+    expect(span).toBe(0);
+  });
+
+  it('skips non-finite samples and keeps the finite ones', () => {
+    const { min, span } = sampleHeightRange(
+      (w1) => (w1 > 0 ? Number.POSITIVE_INFINITY : w1),
+      70,
+      2,
+    );
+    expect(min).toBeCloseTo(-2, 10);
+    expect(span).toBeCloseTo(2, 10);
+  });
+});
+
+describe('clampFiniteHeight', () => {
+  it('clamps Infinity to the top of the range', () => {
+    expect(clampFiniteHeight(Number.POSITIVE_INFINITY, 3, 4)).toBe(7);
+  });
+
+  it('clamps -Infinity to the bottom of the range', () => {
+    expect(clampFiniteHeight(Number.NEGATIVE_INFINITY, 3, 4)).toBe(3);
+  });
+
+  it('clamps NaN to the bottom of the range', () => {
+    expect(clampFiniteHeight(Number.NaN, 3, 4)).toBe(3);
+  });
+
+  it('passes finite values through unchanged', () => {
+    expect(clampFiniteHeight(5, 3, 4)).toBe(5);
   });
 });
 

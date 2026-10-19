@@ -67,7 +67,21 @@ export function gridIndex(res: number): number[] {
  * rule keeps `heightAt` (surface height) and `buildLandscape` (vertex colors)
  * consistent for near-constant fields.
  */
-export const FLAT_SPAN_EPSILON = 1e-9;
+const FLAT_SPAN_EPSILON = 1e-9;
+
+/**
+ * Maps a raw height sample into [min, min + span]. A field can evaluate to
+ * Infinity or NaN (an L2 loss that overflows, for instance); those samples are
+ * pushed to the nearest end of the range so scene heights stay finite. Exported
+ * for testing.
+ */
+export function clampFiniteHeight(raw: number, min: number, span: number): number {
+  if (Number.isFinite(raw)) {
+    return raw;
+  }
+  // NaN fails the > 0 comparison, so it also lands on the low end.
+  return raw > 0 ? min + span : min;
+}
 
 export interface HeightRange {
   min: number;
@@ -77,7 +91,8 @@ export interface HeightRange {
 /**
  * Samples `heightFn` over the (res+1)² grid covering [-domain, domain] and
  * returns the minimum and the span (max - min). Exported for testing; a
- * constant field returns span 0.
+ * constant field returns span 0. Non-finite samples are skipped, and a field
+ * with no finite sample reports a flat range so callers stay finite.
  */
 export function sampleHeightRange(
   heightFn: (w1: number, w2: number) => number,
@@ -91,9 +106,15 @@ export function sampleHeightRange(
     for (let i = 0; i <= res; i += 1) {
       const a = -domain + (2 * domain * i) / res;
       const h = heightFn(a, b);
+      if (!Number.isFinite(h)) {
+        continue;
+      }
       min = Math.min(min, h);
       max = Math.max(max, h);
     }
+  }
+  if (!Number.isFinite(min) || !Number.isFinite(max)) {
+    return { min: 0, span: 0 };
   }
   return { min, span: max - min };
 }
@@ -125,7 +146,6 @@ export interface LandscapeScene {
   clearTrail(): void;
   update(dt: number): void;
   render(): void;
-  resize(width: number, height: number): void;
   dispose(): void;
 }
 
@@ -187,7 +207,8 @@ export async function createLandscapeScene(canvas: HTMLCanvasElement): Promise<L
     if (gridSpan <= FLAT_SPAN_EPSILON) {
       return 0;
     }
-    return ((heightFn(w1, w2) - gridMin) / gridSpan) * HEIGHT_SCALE;
+    const h = clampFiniteHeight(heightFn(w1, w2), gridMin, gridSpan);
+    return ((h - gridMin) / gridSpan) * HEIGHT_SCALE;
   }
 
   function buildLandscape(): void {
@@ -204,17 +225,19 @@ export async function createLandscapeScene(canvas: HTMLCanvasElement): Promise<L
 
     const low = accent.clone().lerp(new three.Color(0xffffff), 0.85);
     const high = accent.clone().multiplyScalar(0.35);
-    const span = gridSpan > FLAT_SPAN_EPSILON ? gridSpan : 1;
 
     let index = 0;
     for (let j = 0; j <= res; j += 1) {
       const b = -domain + (2 * domain * j) / res;
       for (let i = 0; i <= res; i += 1) {
         const a = -domain + (2 * domain * i) / res;
+        const height = heightAt(a, b);
         positions[index * 3] = a;
-        positions[index * 3 + 1] = heightAt(a, b);
+        positions[index * 3 + 1] = height;
         positions[index * 3 + 2] = b;
-        const t = (heightFn(a, b) - gridMin) / span;
+        // Colors reuse the scene height, so they can never diverge from the
+        // geometry when the field evaluates to Infinity or NaN.
+        const t = height / HEIGHT_SCALE;
         colors[index * 3] = low.r + (high.r - low.r) * t;
         colors[index * 3 + 1] = low.g + (high.g - low.g) * t;
         colors[index * 3 + 2] = low.b + (high.b - low.b) * t;
@@ -373,24 +396,23 @@ export async function createLandscapeScene(canvas: HTMLCanvasElement): Promise<L
   }
 
   function setHeightField(fn: (w1: number, w2: number) => number, newDomain: number): void {
+    const previousDomain = domain;
     heightFn = fn;
     domain = newDomain;
     const { min, span } = sampleHeightRange(fn, LANDSCAPE_RES, domain);
     gridMin = min;
     gridSpan = span;
     buildLandscape();
-    radius = Math.max(10, domain * 1.6);
+    // Fit the camera to the domain only when it changes. Rebuilding the same
+    // surface must keep the radius the user picked with the wheel.
+    if (newDomain !== previousDomain) {
+      radius = Math.max(10, domain * 1.6);
+    }
     updateCamera();
     // The surface changed: keep the ball and the existing trail on the new one.
     moveBall(ballW1, ballW2);
     writeTrailPositions();
     render();
-  }
-
-  function resize(width: number, height: number): void {
-    renderer.setSize(width, height, false);
-    camera.aspect = width / height;
-    camera.updateProjectionMatrix();
   }
 
   function onPointerDown(event: PointerEvent): void {
@@ -497,7 +519,6 @@ export async function createLandscapeScene(canvas: HTMLCanvasElement): Promise<L
     clearTrail,
     update,
     render,
-    resize,
     dispose,
   };
 }
