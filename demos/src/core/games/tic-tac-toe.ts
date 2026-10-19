@@ -154,6 +154,17 @@ function buildBoardView(state: TicTacToeState): BoardView {
   return makeBoardView(3, 3, rows);
 }
 
+// Une case non nulle correspond à un coup joué : c'est le tour intra-partie.
+function countPieces(state: TicTacToeState): number {
+  let count = 0;
+  for (const cell of state.cells) {
+    if (cell !== null) {
+      count += 1;
+    }
+  }
+  return count;
+}
+
 export const ticTacToe: Game<TicTacToeState, TicTacToeMove> = {
   winScore: WIN_SCORE,
   initialState: buildInitialState,
@@ -164,4 +175,5 @@ export const ticTacToe: Game<TicTacToeState, TicTacToeMove> = {
   winner: findWinner,
   stateKey: canonicalKey,
   boardView: buildBoardView,
+  pieceCount: countPieces,
 };

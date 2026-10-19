@@ -100,6 +100,13 @@ describe('tic-tac-toe rules', () => {
     );
   });
 
+  it('counts the placed pieces, which is the number of moves played', () => {
+    expect(ticTacToe.pieceCount).toBeDefined();
+    expect(ticTacToe.pieceCount?.(ticTacToe.initialState())).toBe(0);
+    const state = applyAll([4, 0, 2, 6, 8]);
+    expect(ticTacToe.pieceCount?.(state)).toBe(5);
+  });
+
   it('detects a win on each of the eight lines', () => {
     for (const [a, b, c] of WIN_LINES) {
       const state = stateWith(

@@ -155,6 +155,19 @@ function buildBoardView(state: Connect4State): BoardView {
   return makeBoardView(CONNECT4_ROWS, CONNECT4_COLS, state.grid, { highlight });
 }
 
+// Une case non nulle correspond à un pion posé : c'est le tour intra-partie.
+function countPieces(state: Connect4State): number {
+  let count = 0;
+  for (const line of state.grid) {
+    for (const cell of line) {
+      if (cell !== null) {
+        count += 1;
+      }
+    }
+  }
+  return count;
+}
+
 export const connect4: Game<Connect4State, Connect4Move> = {
   winScore: WIN_SCORE,
   initialState: buildInitialState,
@@ -165,4 +178,5 @@ export const connect4: Game<Connect4State, Connect4Move> = {
   winner: findWinner,
   stateKey: canonicalKey,
   boardView: buildBoardView,
+  pieceCount: countPieces,
 };

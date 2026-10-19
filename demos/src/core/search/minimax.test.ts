@@ -971,6 +971,28 @@ describe('createMinimaxAgent', () => {
     expect(rootEntry?.depth).toBe(depth);
   });
 
+  it('stamps every stored entry with the piece count of its position', () => {
+    const state = [4, 0, 2, 6].reduce(
+      (current, index) => ticTacToe.apply(current, { index }),
+      ticTacToe.initialState(),
+    );
+    const pieces = ticTacToe.pieceCount?.(state);
+    expect(pieces).toBe(4);
+    const table = createTranspositionTable();
+    recordSearch(
+      (recorder) =>
+        createTicTacToeAgent(recorder, 4, true, ticTacToeHeuristic, { transposition: table }),
+      state,
+    );
+    // La racine stockée porte le tour intra-partie de sa position.
+    const rootEntry = table.snapshot().find((entry) => entry.key === ticTacToe.stateKey(state));
+    expect(rootEntry?.pieces).toBe(4);
+    // Chaque entrée porte le compte de pièces de sa propre position.
+    for (const entry of table.snapshot()) {
+      expect(entry.pieces).toBeDefined();
+    }
+  });
+
   // Cache-feuille rollout : les feuilles d'horizon des évaluateurs
   // stochastic-échantillonnés sont stockées à profondeur 0 avec leur nombre
   // de tirages, et chaque re-encounter élargit la moyenne accumulée.
@@ -1012,6 +1034,30 @@ describe('createMinimaxAgent', () => {
     expect(agent.stats().leavesEvaluated).toBe(
       visits.filter((visit) => visit.kind === 'leaf').length,
     );
+  });
+
+  it('stamps rollout depth-0 entries with the piece count too', () => {
+    const state = [4, 0, 2, 6].reduce(
+      (current, index) => ticTacToe.apply(current, { index }),
+      ticTacToe.initialState(),
+    );
+    const table = createTranspositionTable();
+    recordSearch(
+      (recorder) =>
+        createTicTacToeAgent(recorder, 3, true, rolloutEvaluator(), { transposition: table }),
+      state,
+    );
+    const snapshot = table.snapshot();
+    // La recherche produit des feuilles rollout à profondeur 0, dont certaines
+    // issues du cas de fusion (samples élargis) : les DEUX sites de stockage des
+    // feuilles rollout — fusion et tirage frais — sont donc exercés ici.
+    const depthZero = snapshot.filter((entry) => entry.depth === 0);
+    expect(depthZero.length).toBeGreaterThan(0);
+    expect(depthZero.some((entry) => (entry.samples ?? 0) > ROLLOUT_SAMPLES)).toBe(true);
+    // Chaque entrée stockée, feuille rollout comprise, porte son tour intra-partie.
+    for (const entry of snapshot) {
+      expect(entry.pieces).toBeDefined();
+    }
   });
 
   it('merges a pre-stored depth-0 entry with the fresh draws in closed form', () => {

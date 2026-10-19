@@ -263,6 +263,9 @@ export function createMinimaxAgent<S, M>(
             depth: 0,
             exact: true,
             samples: total,
+            // Le tour intra-partie n'est renseigné que si le jeu l'expose : un
+            // spread garde le champ absent chez les jeux qui l'ignorent.
+            ...(game.pieceCount === undefined ? {} : { pieces: game.pieceCount(frame.state) }),
           });
           // Feuille (pas 'tt-hit') : l'arbre enregistré doit montrer une vraie
           // feuille évaluée, portant ici la moyenne élargie consommée.
@@ -334,6 +337,7 @@ export function createMinimaxAgent<S, M>(
             depth: 0,
             exact: true,
             samples: rolloutSamples,
+            ...(game.pieceCount === undefined ? {} : { pieces: game.pieceCount(frame.state) }),
           });
         }
         return { expanded: false, score, exact: true, depth: solved ? SOLVED_DEPTH : 0 };
@@ -460,6 +464,7 @@ export function createMinimaxAgent<S, M>(
           score: frame.maximizing ? frame.bestScore : -frame.bestScore,
           depth: certifiedDepth,
           exact,
+          ...(game.pieceCount === undefined ? {} : { pieces: game.pieceCount(frame.state) }),
         });
       }
       if (frame.parentKey === null) {

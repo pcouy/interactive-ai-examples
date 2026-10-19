@@ -175,6 +175,25 @@ describe('createTranspositionTable', () => {
     table.store('k', { score: 0.75, depth: 5, exact: false });
     expect(table.probe('k')?.score).toBe(0.75);
   });
+
+  it('keeps an optional pieces count through probe and snapshot', () => {
+    const table = createTranspositionTable();
+    table.store('with', { score: 0.5, depth: 2, exact: true, pieces: 3 });
+    expect(table.probe('with')?.pieces).toBe(3);
+    const withEntry = table.snapshot().find((row) => row.key === 'with');
+    expect(withEntry?.pieces).toBe(3);
+  });
+
+  it('leaves the pieces field absent on entries stored without it', () => {
+    const table = createTranspositionTable();
+    table.store('without', { score: -0.5, depth: 2, exact: true });
+    expect(table.probe('without')?.pieces).toBeUndefined();
+    const withoutEntry = table.snapshot().find((row) => row.key === 'without');
+    if (withoutEntry === undefined) {
+      throw new Error('expected the stored entry in the snapshot');
+    }
+    expect('pieces' in withoutEntry).toBe(false);
+  });
 });
 
 describe('isEntryUsable', () => {

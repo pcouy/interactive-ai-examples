@@ -27,6 +27,10 @@ export interface Game<S, M> {
   winner(state: S): GameOutcome;
   stateKey(state: S): string;
   boardView(state: S): BoardView;
+  /** Nombre de pièces posées sur le plateau, c'est-à-dire le tour intra-partie
+   * (une pièce par coup dans les deux jeux). Optionnel : les jeux qui ne
+   * l'exposent pas laissent le champ absent des entrées de transposition. */
+  pieceCount?(state: S): number;
 }
 
 export const WIN_SCORE = 1;

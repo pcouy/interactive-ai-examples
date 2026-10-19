@@ -14,6 +14,10 @@ export interface TranspositionEntry {
   /** Nombre de tirages sous-jacents, présent uniquement pour les entrées de
    * feuilles rollout à profondeur 0. */
   readonly samples?: number;
+  /** Nombre de pièces sur le plateau pour cette position, afin que le
+   * navigateur de table de transposition affiche le tour intra-partie ; absent
+   * sur les entrées construites à la main. */
+  readonly pieces?: number;
 }
 
 /** Profondeur certifiée d'une position entièrement résolue : sa valeur ne

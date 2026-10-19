@@ -93,6 +93,13 @@ describe('connect4 rules', () => {
     );
   });
 
+  it('counts the placed pawns, which is the number of moves played', () => {
+    expect(connect4.pieceCount).toBeDefined();
+    expect(connect4.pieceCount?.(connect4.initialState())).toBe(0);
+    const state = dropAll([0, 1, 0, 1, 3]);
+    expect(connect4.pieceCount?.(state)).toBe(5);
+  });
+
   it('drops the first pawn at the bottom row of an empty column', () => {
     const state = connect4.apply(connect4.initialState(), { col: 4 });
     expect(state.grid[5][4]).toBe(0);
