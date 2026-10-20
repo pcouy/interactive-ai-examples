@@ -30,9 +30,6 @@ export function featureMapSizes(convLayers: number = DEFAULT_CONV_LAYERS): reado
   return sizes;
 }
 
-/** Tailles de référence (quatre convolutions), pour les appelants existants. */
-export const FEATURE_MAP_SIZES: readonly number[] = featureMapSizes(DEFAULT_CONV_LAYERS);
-
 /**
  * Moyenne des canaux d'entrée d'un noyau de convolution pour un canal de sortie
  * donné. Les noyaux sont stockés à plat en HWIO ; pour les couches à plusieurs

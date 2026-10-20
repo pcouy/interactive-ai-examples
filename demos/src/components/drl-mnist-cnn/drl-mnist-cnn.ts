@@ -357,7 +357,7 @@ function lineInArchitecture(
   inputChannel: number,
   outputChannel: number,
   filters: MnistCnnFilters,
-  convLayers: number = DEFAULT_CONV_LAYERS,
+  convLayers: number,
 ): boolean {
   if (
     !Number.isInteger(boundary) ||
@@ -385,7 +385,7 @@ export function describeLinkLabel(
   inputChannel: number,
   outputChannel: number,
   filters: MnistCnnFilters,
-  convLayers: number = DEFAULT_CONV_LAYERS,
+  convLayers: number,
 ): string {
   const name = `conv${boundary + 1} — entrée ${inputChannel + 1}, sortie ${outputChannel + 1}`;
   if (
@@ -3193,7 +3193,7 @@ export class MnistCnn extends LitElement {
     return html`
       <svg class="drl-filter-links">
         ${repeat(
-          enumerateLinks(this.filterCounts),
+          enumerateLinks(this.filterCounts, this.convLayers),
           (link) => `${link.boundary}:${link.inputChannel}:${link.outputChannel}`,
           (link) => this.renderFilterLink(link),
         )}
@@ -3218,6 +3218,7 @@ export class MnistCnn extends LitElement {
       link.inputChannel,
       link.outputChannel,
       this.filterCounts,
+      this.convLayers,
     );
     return html`
       <g

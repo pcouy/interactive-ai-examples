@@ -772,7 +772,7 @@ describe('describeLinkLabel', () => {
   const filters = [3, 3, 3, 3] as MnistCnnFilters;
 
   it('returns the plain pair name when nothing scopes the line', () => {
-    expect(describeLinkLabel(null, 1, 0, 2, filters)).toBe('conv2 — entrée 1, sortie 3');
+    expect(describeLinkLabel(null, 1, 0, 2, filters, 4)).toBe('conv2 — entrée 1, sortie 3');
     expect(
       describeLinkLabel(
         { kind: 'link', boundary: 0, inputChannel: 0, outputChannel: 1 },
@@ -780,6 +780,7 @@ describe('describeLinkLabel', () => {
         0,
         2,
         filters,
+        4,
       ),
     ).toBe('conv2 — entrée 1, sortie 3');
   });
@@ -793,10 +794,10 @@ describe('describeLinkLabel', () => {
       ky: 1,
       kx: 0,
     } as const;
-    expect(describeLinkLabel(selection, 1, 0, 2, filters)).toBe(
+    expect(describeLinkLabel(selection, 1, 0, 2, filters, 4)).toBe(
       'conv2 — entrée 1, sortie 3 · 1 poids sur 9',
     );
-    expect(describeLinkLabel(selection, 1, 0, 1, filters)).toBe('conv2 — entrée 1, sortie 2');
+    expect(describeLinkLabel(selection, 1, 0, 1, filters, 4)).toBe('conv2 — entrée 1, sortie 2');
   });
 });
 
