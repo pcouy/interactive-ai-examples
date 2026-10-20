@@ -1,10 +1,16 @@
 import { describe, expect, it } from 'vitest';
 import {
+  applyHeightScale,
+  cameraRadius,
   clampFiniteHeight,
+  DEFAULT_HEIGHT_SCALE,
   easeSmoothstep,
   gridIndex,
+  heightRangeFromSamples,
   normalizeHeight,
+  sampleGridHeights,
   sampleHeightRange,
+  sanitizeHeightScale,
 } from './landscape-scene.js';
 
 describe('gridIndex', () => {
@@ -124,6 +130,10 @@ describe('normalizeHeight', () => {
     expect(normalizeHeight(5, 3, 4)).toBeCloseTo(0.75, 12);
   });
 
+  it('uses the explicit scale instead of the default', () => {
+    expect(normalizeHeight(5, 3, 4, 5)).toBeCloseTo(2.5, 12);
+  });
+
   it('sends non-finite values to the nearest end', () => {
     expect(normalizeHeight(Number.POSITIVE_INFINITY, 3, 4)).toBe(1.5);
     expect(normalizeHeight(Number.NEGATIVE_INFINITY, 3, 4)).toBe(0);
@@ -140,5 +150,107 @@ describe('normalizeHeight', () => {
     expect(Number.isFinite(normalizeHeight(1.5e308, -1.771e308, Number.POSITIVE_INFINITY))).toBe(
       false,
     );
+  });
+});
+
+describe('applyHeightScale', () => {
+  // Scene-level gap: setHeightScale's wiring (cache reuse, camera radius,
+  // pan preservation) is not covered here because it needs WebGL, which the
+  // node test environment does not provide. These tests cover the pure scale
+  // math of the helper that setHeightScale relies on.
+  it('re-scales cached samples without calling the height function again', () => {
+    let calls = 0;
+    const heightFn = (w1: number, w2: number) => {
+      calls += 1;
+      return w1 + w2;
+    };
+    const samples = sampleGridHeights(heightFn, 2, 1);
+    const callsAfterSampling = calls;
+    expect(callsAfterSampling).toBe(9); // (res + 1)^2
+
+    const scaled = applyHeightScale(samples, 0, 2, 3);
+    expect(calls).toBe(callsAfterSampling);
+    expect(scaled).toHaveLength(samples.length);
+    expect(scaled[0]).toBeCloseTo(normalizeHeight(samples[0], 0, 2, 3), 12);
+  });
+
+  it('keeps a flat field flat under any scale', () => {
+    expect(applyHeightScale([5, 5, 5], 5, 0, 2)).toEqual([0, 0, 0]);
+    expect(applyHeightScale([5, 5, 5], 5, 0, 5)).toEqual([0, 0, 0]);
+  });
+
+  it('sends non-finite samples to the nearest end', () => {
+    expect(applyHeightScale([Number.NaN, 1, 3], 1, 2, 2)).toEqual([0, 0, 2]);
+  });
+});
+
+describe('sanitizeHeightScale', () => {
+  it('passes a valid scale through unchanged', () => {
+    expect(sanitizeHeightScale(0.5)).toBe(0.5);
+    expect(sanitizeHeightScale(3)).toBe(3);
+  });
+
+  it('falls back to the default for zero, negative, and non-finite scales', () => {
+    expect(sanitizeHeightScale(0)).toBe(DEFAULT_HEIGHT_SCALE);
+    expect(sanitizeHeightScale(-1)).toBe(DEFAULT_HEIGHT_SCALE);
+    expect(sanitizeHeightScale(Number.NaN)).toBe(DEFAULT_HEIGHT_SCALE);
+    expect(sanitizeHeightScale(Number.POSITIVE_INFINITY)).toBe(DEFAULT_HEIGHT_SCALE);
+    expect(sanitizeHeightScale(Number.NEGATIVE_INFINITY)).toBe(DEFAULT_HEIGHT_SCALE);
+  });
+});
+
+describe('cameraRadius', () => {
+  it('uses the minimum radius for the default landscape', () => {
+    expect(cameraRadius(5, 1.5)).toBe(10);
+  });
+
+  it('grows with the height scale', () => {
+    expect(cameraRadius(5, 10)).toBe(20);
+  });
+
+  it('grows with the domain', () => {
+    expect(cameraRadius(20, 1.5)).toBe(32);
+  });
+});
+
+describe('sampleGridHeights', () => {
+  it('samples the (res+1)² grid in row-major order (j outer, i inner)', () => {
+    const samples = sampleGridHeights((w1, w2) => w1 * 10 + w2, 1, 1);
+    expect(samples).toBeInstanceOf(Float64Array);
+    expect(Array.from(samples)).toEqual([-11, 9, -9, 11]);
+  });
+
+  it('returns one sample per grid vertex', () => {
+    const samples = sampleGridHeights(() => 0, 3, 2);
+    expect(samples).toHaveLength(16);
+  });
+});
+
+describe('heightRangeFromSamples', () => {
+  it('skips non-finite samples and keeps the finite ones', () => {
+    expect(
+      heightRangeFromSamples([
+        Number.POSITIVE_INFINITY,
+        2,
+        Number.NEGATIVE_INFINITY,
+        4,
+        Number.NaN,
+      ]),
+    ).toEqual({
+      min: 2,
+      span: 2,
+    });
+  });
+
+  it('reports a flat range when no finite sample exists', () => {
+    expect(heightRangeFromSamples([Number.NaN, Number.POSITIVE_INFINITY])).toEqual({
+      min: 0,
+      span: 0,
+    });
+    expect(heightRangeFromSamples([])).toEqual({ min: 0, span: 0 });
+  });
+
+  it('flattens a finite field whose span overflows', () => {
+    expect(heightRangeFromSamples([1e308, -1e308])).toEqual({ min: 0, span: 0 });
   });
 });

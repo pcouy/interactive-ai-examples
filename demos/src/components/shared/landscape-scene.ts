@@ -9,10 +9,19 @@ type ThreeMaterial = InstanceType<ThreeModule['Material']>;
 type ThreeLineBasicMaterial = InstanceType<ThreeModule['LineBasicMaterial']>;
 
 /**
- * Vertical exaggeration of the landscape: scene Y = normalized height × HEIGHT_SCALE.
+ * Vertical exaggeration of the landscape: scene Y = normalized height × heightScale.
+ * This is the default; setHeightScale can change it at runtime.
  */
-const HEIGHT_SCALE = 1.5;
+export const DEFAULT_HEIGHT_SCALE = 1.5;
 const LANDSCAPE_RES = 70;
+
+/** Camera orbit radius floor so the ball stays in frame even for a flat scene. */
+const MIN_CAMERA_RADIUS = 10;
+/**
+ * Extra camera distance per unit of height scale. Taller terrain needs more
+ * room, otherwise the surface leaves the frustum.
+ */
+const CAMERA_RADIUS_PER_SCALE = 2;
 
 /** Camera orbit defaults: slightly top-down view of the valley. */
 const CAMERA_THETA = Math.PI * 0.28;
@@ -84,16 +93,49 @@ export function clampFiniteHeight(raw: number, min: number, span: number): numbe
 }
 
 /**
+ * Clamps a height scale to a usable value. Zero, negative, and non-finite
+ * scales would break the camera fit and the vertex colors, so they fall back
+ * to DEFAULT_HEIGHT_SCALE.
+ */
+export function sanitizeHeightScale(scale: number): number {
+  return Number.isFinite(scale) && scale > 0 ? scale : DEFAULT_HEIGHT_SCALE;
+}
+
+/**
  * Normalizes a raw height sample to scene units. A flat field (span at most
  * FLAT_SPAN_EPSILON) collapses to 0. A non-flat field maps the clamped sample
- * into [0, HEIGHT_SCALE]. Exported for testing.
+ * into [0, scale]. Exported for testing.
  */
-export function normalizeHeight(raw: number, min: number, span: number): number {
+export function normalizeHeight(
+  raw: number,
+  min: number,
+  span: number,
+  scale: number = DEFAULT_HEIGHT_SCALE,
+): number {
   if (span <= FLAT_SPAN_EPSILON) {
     return 0;
   }
   const h = clampFiniteHeight(raw, min, span);
-  return ((h - min) / span) * HEIGHT_SCALE;
+  return ((h - min) / span) * scale;
+}
+
+/**
+ * Maps `normalizeHeight` over a batch of raw samples and returns a plain
+ * number array. Shared by `buildLandscape` so a scale change reuses the cached
+ * raw samples instead of re-evaluating the field per vertex. Exported for
+ * testing.
+ */
+export function applyHeightScale(
+  rawHeights: ArrayLike<number>,
+  min: number,
+  span: number,
+  scale: number,
+): number[] {
+  const heights: number[] = [];
+  for (let i = 0; i < rawHeights.length; i += 1) {
+    heights.push(normalizeHeight(rawHeights[i], min, span, scale));
+  }
+  return heights;
 }
 
 export interface HeightRange {
@@ -102,30 +144,45 @@ export interface HeightRange {
 }
 
 /**
- * Samples `heightFn` over the (res+1)² grid covering [-domain, domain] and
- * returns the minimum and the span (max - min). Exported for testing; a
- * constant field returns span 0. Non-finite samples are skipped, and a field
- * with no finite sample reports a flat range so callers stay finite. A finite
- * field whose span overflows also reports a flat range.
+ * Samples `heightFn` over the (res+1)² grid covering [-domain, domain] in
+ * row-major order (j outer, i inner), matching the vertex layout of
+ * `buildLandscape`. Returns a Float64Array of length (res+1)². Exported for
+ * testing; the caller can reuse the samples instead of re-evaluating the field.
  */
-export function sampleHeightRange(
+export function sampleGridHeights(
   heightFn: (w1: number, w2: number) => number,
   res: number,
   domain: number,
-): HeightRange {
-  let min = Number.POSITIVE_INFINITY;
-  let max = Number.NEGATIVE_INFINITY;
+): Float64Array {
+  const samples = new Float64Array((res + 1) * (res + 1));
+  let index = 0;
   for (let j = 0; j <= res; j += 1) {
     const b = -domain + (2 * domain * j) / res;
     for (let i = 0; i <= res; i += 1) {
       const a = -domain + (2 * domain * i) / res;
-      const h = heightFn(a, b);
-      if (!Number.isFinite(h)) {
-        continue;
-      }
-      min = Math.min(min, h);
-      max = Math.max(max, h);
+      samples[index] = heightFn(a, b);
+      index += 1;
     }
+  }
+  return samples;
+}
+
+/**
+ * Reduces raw grid samples to a { min, span } range. Non-finite samples are
+ * skipped, a field with no finite sample reports a flat range so callers stay
+ * finite, and a finite field whose span overflows also reports a flat range.
+ * Exported for testing.
+ */
+export function heightRangeFromSamples(heights: ArrayLike<number>): HeightRange {
+  let min = Number.POSITIVE_INFINITY;
+  let max = Number.NEGATIVE_INFINITY;
+  for (let i = 0; i < heights.length; i += 1) {
+    const h = heights[i];
+    if (!Number.isFinite(h)) {
+      continue;
+    }
+    min = Math.min(min, h);
+    max = Math.max(max, h);
   }
   if (!Number.isFinite(min) || !Number.isFinite(max)) {
     return { min: 0, span: 0 };
@@ -135,6 +192,29 @@ export function sampleHeightRange(
     return { min: 0, span: 0 };
   }
   return { min, span };
+}
+
+/**
+ * Samples `heightFn` over the (res+1)² grid covering [-domain, domain] and
+ * returns the minimum and the span (max - min). Exported for testing; a
+ * constant field returns span 0. See heightRangeFromSamples for the edge
+ * cases.
+ */
+export function sampleHeightRange(
+  heightFn: (w1: number, w2: number) => number,
+  res: number,
+  domain: number,
+): HeightRange {
+  return heightRangeFromSamples(sampleGridHeights(heightFn, res, domain));
+}
+
+/**
+ * Camera orbit radius for a landscape of the given extent and height scale.
+ * The domain floor keeps the whole grid in view; the scale floor keeps taller
+ * terrain in view. Exported for testing.
+ */
+export function cameraRadius(domain: number, heightScale: number): number {
+  return Math.max(MIN_CAMERA_RADIUS, domain * 1.6, heightScale * CAMERA_RADIUS_PER_SCALE);
 }
 
 /** Smoothstep ease used for ball tweens; exported for testing. */
@@ -156,6 +236,7 @@ export interface LandscapeScene {
   camera: import('three').Camera;
   renderer: import('three').WebGLRenderer;
   setHeightField(heightFn: (w1: number, w2: number) => number, domain: number): void;
+  setHeightScale(scale: number): void;
   moveBall(w1: number, w2: number): void;
   tweenBall(to: { w1: number; w2: number }, onDone?: () => void): void;
   clearTween(): void;
@@ -191,13 +272,16 @@ export async function createLandscapeScene(canvas: HTMLCanvasElement): Promise<L
   scene.add(fillLight);
 
   const accent = readColor(three, canvas, '--drl-accent', drlTokenValues.accent);
-  const target = new three.Vector3(0, HEIGHT_SCALE / 2, 0);
+  const target = new three.Vector3(0, DEFAULT_HEIGHT_SCALE / 2, 0);
 
   let heightFn: (w1: number, w2: number) => number = () => 0;
   let gridMin = 0;
   let gridSpan = 1;
   let domain = DEFAULT_DOMAIN;
-  let radius = Math.max(10, domain * 1.6);
+  let heightScale = DEFAULT_HEIGHT_SCALE;
+  // Raw samples of the current field, reused when only the scale changes.
+  let gridRawHeights: Float64Array | null = null;
+  let radius = cameraRadius(DEFAULT_DOMAIN, heightScale);
   let theta = CAMERA_THETA;
   let phi = CAMERA_PHI;
 
@@ -222,7 +306,7 @@ export async function createLandscapeScene(canvas: HTMLCanvasElement): Promise<L
   let disposed = false;
 
   function heightAt(w1: number, w2: number): number {
-    return normalizeHeight(heightFn(w1, w2), gridMin, gridSpan);
+    return normalizeHeight(heightFn(w1, w2), gridMin, gridSpan, heightScale);
   }
 
   function buildLandscape(): void {
@@ -237,6 +321,10 @@ export async function createLandscapeScene(canvas: HTMLCanvasElement): Promise<L
     const positions = new Float32Array(count * 3);
     const colors = new Float32Array(count * 3);
 
+    const heights = gridRawHeights
+      ? applyHeightScale(gridRawHeights, gridMin, gridSpan, heightScale)
+      : null;
+
     const low = accent.clone().lerp(new three.Color(0xffffff), 0.85);
     const high = accent.clone().multiplyScalar(0.35);
 
@@ -245,13 +333,18 @@ export async function createLandscapeScene(canvas: HTMLCanvasElement): Promise<L
       const b = -domain + (2 * domain * j) / res;
       for (let i = 0; i <= res; i += 1) {
         const a = -domain + (2 * domain * i) / res;
-        const height = heightAt(a, b);
+        // Reuse the raw sample taken in setHeightField when available, so a
+        // scale change never re-evaluates the loss function.
+        const raw = gridRawHeights ? gridRawHeights[index] : heightFn(a, b);
+        const height =
+          heights === null ? normalizeHeight(raw, gridMin, gridSpan, heightScale) : heights[index];
         positions[index * 3] = a;
         positions[index * 3 + 1] = height;
         positions[index * 3 + 2] = b;
         // Colors reuse the scene height, so they can never diverge from the
-        // geometry when the field evaluates to Infinity or NaN.
-        const t = height / HEIGHT_SCALE;
+        // geometry when the field evaluates to Infinity or NaN. Dividing by
+        // the scale keeps the color factor scale-independent.
+        const t = height / heightScale;
         colors[index * 3] = low.r + (high.r - low.r) * t;
         colors[index * 3 + 1] = low.g + (high.g - low.g) * t;
         colors[index * 3 + 2] = low.b + (high.b - low.b) * t;
@@ -413,17 +506,45 @@ export async function createLandscapeScene(canvas: HTMLCanvasElement): Promise<L
     const previousDomain = domain;
     heightFn = fn;
     domain = newDomain;
-    const { min, span } = sampleHeightRange(fn, LANDSCAPE_RES, domain);
+    // Sample once and cache the raw values: buildLandscape and setHeightScale
+    // both read them, so the loss function is not evaluated per vertex.
+    const samples = sampleGridHeights(fn, LANDSCAPE_RES, domain);
+    gridRawHeights = samples;
+    const { min, span } = heightRangeFromSamples(samples);
     gridMin = min;
     gridSpan = span;
     buildLandscape();
     // Fit the camera to the domain only when it changes. Rebuilding the same
     // surface must keep the radius the user picked with the wheel.
     if (newDomain !== previousDomain) {
-      radius = Math.max(10, domain * 1.6);
+      radius = cameraRadius(domain, heightScale);
     }
     updateCamera();
     // The surface changed: keep the ball and the existing trail on the new one.
+    moveBall(ballW1, ballW2);
+    writeTrailPositions();
+    render();
+  }
+
+  /**
+   * Changes the vertical exaggeration without re-evaluating the loss function.
+   * The cached raw samples are re-normalized, so the geometry, the ball, and
+   * the trail all move to the new surface in one pass.
+   */
+  function setHeightScale(scale: number): void {
+    const previousScale = heightScale;
+    const next = sanitizeHeightScale(scale);
+    if (next === heightScale) {
+      return;
+    }
+    heightScale = next;
+    // Keep the pan offset relative to the surface: the target only moves by
+    // the change in surface height, instead of snapping back to the centre.
+    target.y += (heightScale - previousScale) / 2;
+    buildLandscape();
+    // Never zoom in: a taller surface needs at least as much room.
+    radius = Math.max(radius, cameraRadius(domain, heightScale));
+    updateCamera();
     moveBall(ballW1, ballW2);
     writeTrailPositions();
     render();
@@ -525,6 +646,7 @@ export async function createLandscapeScene(canvas: HTMLCanvasElement): Promise<L
     camera,
     renderer,
     setHeightField,
+    setHeightScale,
     moveBall,
     tweenBall,
     clearTween,
