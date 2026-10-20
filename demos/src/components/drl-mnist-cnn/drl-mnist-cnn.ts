@@ -177,8 +177,12 @@ const HIT_LINE_INSET = 6;
 
 const WHITE_RGB: readonly [number, number, number] = [255, 255, 255];
 
-/** Taille des lots d'entraînement, même valeur que `tf-playground/mnist/train.py`. */
-const TRAIN_BATCH_SIZE = 64;
+/** Taille des lots par défaut, même valeur que `tf-playground/mnist/train.py`. */
+const DEFAULT_BATCH_SIZE = 64;
+
+/** Bornes du curseur de taille des lots (pas de 8). */
+const MIN_BATCH_SIZE = 8;
+const MAX_BATCH_SIZE = 256;
 
 /** Nombre d'époques par entraînement. */
 const TRAIN_EPOCHS = 1;
@@ -512,6 +516,7 @@ function sameFilters(a: MnistCnnFilters, b: MnistCnnFilters): boolean {
 export interface TrainingRunInput {
   readonly filters: MnistCnnFilters;
   readonly learningRate: number;
+  readonly batchSize: number;
   readonly trainPercent: number;
   readonly validationPercent: number;
   readonly epochs: number;
@@ -528,7 +533,7 @@ export function trainingRunRequest(input: TrainingRunInput): MnistRunRequest {
   return {
     filters: input.filters,
     learningRate: input.learningRate,
-    batchSize: TRAIN_BATCH_SIZE,
+    batchSize: input.batchSize,
     seed: SEED,
     epochs: input.epochs,
     trainPercent: input.trainPercent,
@@ -1166,6 +1171,10 @@ export class MnistCnn extends LitElement {
   @state()
   private learningRate = DEFAULT_LEARNING_RATE;
 
+  /** Taille des lots de la prochaine run, de 8 à 256. */
+  @state()
+  private batchSize = DEFAULT_BATCH_SIZE;
+
   @state()
   private trainExampleCount = stratifiedExampleCountEstimate(MNIST_TRAIN_SPLIT_SIZE, 10 / 100);
 
@@ -1584,6 +1593,7 @@ export class MnistCnn extends LitElement {
     const request = trainingRunRequest({
       filters: this.filterCounts,
       learningRate: this.learningRate,
+      batchSize: this.batchSize,
       trainPercent: this.trainPercent,
       validationPercent: this.validationPercent,
       epochs,
@@ -1692,39 +1702,49 @@ export class MnistCnn extends LitElement {
     void this.controller.notifySliderChanged(this.manifestMatches, true);
   }
 
-  /** Change la part du jeu d'entraînement : n'agit qu'à la prochaine run. */
+  /** Change la part du jeu d'entraînement : n'agit qu'à la prochaine run et
+   * n'interrompt pas une run active. */
   private setTrainPercent(value: number): void {
     const percent = clamp(Math.round(value), MIN_PERCENT, MAX_PERCENT);
     if (percent === this.trainPercent) {
       return;
     }
     this.trainPercent = percent;
-    this.updateExampleCounts();
-    this.resetMetrics();
-    void this.controller.notifySliderChanged(this.manifestMatches, false);
+    if (!this.controller.isRunActive()) {
+      this.updateExampleCounts();
+    }
   }
 
-  /** Change la part du jeu de validation : n'agit qu'à la prochaine run. */
+  /** Change la part du jeu de validation : n'agit qu'à la prochaine run et
+   * n'interrompt pas une run active. */
   private setValidationPercent(value: number): void {
     const percent = clamp(Math.round(value), MIN_PERCENT, MAX_PERCENT);
     if (percent === this.validationPercent) {
       return;
     }
     this.validationPercent = percent;
-    this.updateExampleCounts();
-    this.resetMetrics();
-    void this.controller.notifySliderChanged(this.manifestMatches, false);
+    if (!this.controller.isRunActive()) {
+      this.updateExampleCounts();
+    }
   }
 
-  /** Change le taux d'apprentissage : n'agit qu'à la prochaine run. */
+  /** Change le taux d'apprentissage : n'agit qu'à la prochaine run et
+   * n'interrompt pas une run active. */
   private setLearningRate(value: number): void {
     const rate = clamp(value, MIN_LEARNING_RATE, MAX_LEARNING_RATE);
     if (rate === this.learningRate) {
       return;
     }
     this.learningRate = rate;
-    this.resetMetrics();
-    void this.controller.notifySliderChanged(this.manifestMatches, false);
+  }
+
+  /** Change la taille des lots : n'interrompt pas une run active et n'agit qu'à la prochaine run. */
+  private setBatchSize(value: number): void {
+    const size = clamp(Math.round(value), MIN_BATCH_SIZE, MAX_BATCH_SIZE);
+    if (size === this.batchSize) {
+      return;
+    }
+    this.batchSize = size;
   }
 
   /** Applique le chiffre choisi et remet la position au premier exemple. */
@@ -2206,7 +2226,7 @@ export class MnistCnn extends LitElement {
   /**
    * Une courbe d'entraînement : titre, grille de graduations, axe horizontal,
    * puis le tracé ou le message d'attente. Les fragments SVG imbriqués
-   * (`<line>`, `<text>`, `<path>`) utilisent le tag ``svg` `` : un template
+   * (`<line>`, `<text>`, `<path>`) utilisent le tag `svg` : un template
    * dont la racine est un élément SVG doit être parsé dans le namespace SVG,
    * sinon les nœuds existent dans le DOM mais ne sont jamais dessinés.
    */
@@ -2487,7 +2507,7 @@ export class MnistCnn extends LitElement {
             <div
               class="drl-sliders"
               role="group"
-              aria-label="Fraction des jeux d'entraînement et de validation, taux d'apprentissage"
+              aria-label="Fraction des jeux d'entraînement et de validation, taux d'apprentissage et taille des lots"
             >
               <drl-slider
                 label="Données d'entraînement"
@@ -2513,12 +2533,20 @@ export class MnistCnn extends LitElement {
                 .value=${this.learningRate}
                 @drl-input=${(event: CustomEvent<number>) => this.setLearningRate(event.detail)}
               ></drl-slider>
+              <drl-slider
+                label="Taille des lots"
+                min=${MIN_BATCH_SIZE}
+                max=${MAX_BATCH_SIZE}
+                step="8"
+                .value=${this.batchSize}
+                @drl-input=${(event: CustomEvent<number>) => this.setBatchSize(event.detail)}
+              ></drl-slider>
             </div>
             <p class="drl-hint">
               ${
                 this.trainingError !== null
                   ? html`Erreur d'entraînement : ${this.trainingError}`
-                  : "Les curseurs de pourcentage et le taux ne prennent effet qu'au prochain entraînement."
+                  : "Les curseurs de pourcentage, de taux et de taille des lots ne prennent effet qu'au prochain entraînement, sans interrompre une run."
               }
             </p>
           </section>

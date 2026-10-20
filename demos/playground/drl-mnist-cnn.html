@@ -54,8 +54,9 @@
           entraînent sur les sous-ensembles d'entraînement et de validation choisis
           par deux curseurs de pourcentage indépendants : l'entraînement repart
           toujours des poids affichés, qu'ils soient pré-entraînés, aléatoires ou
-          modifiés à la main, et deux courbes affichent la perte d'entraînement et
-          la précision de validation avec un point par époque ;
+          modifiés à la main, et deux figures affichent la perte d'entraînement,
+          puis les précisions d'entraînement et de validation avec un point par
+          époque ;
           Les commandes d'entraînement se trouvent sous le dessin, dans la colonne de
           gauche. <strong>Pause</strong> arrête la boucle au lot suivant,
           <strong>Réinitialiser les poids</strong> restaure les initiaux et
@@ -66,8 +67,10 @@
           est celle du sous-ensemble de validation tenu à l'écart, pas celle du jeu
           complet. Le bouton
           <strong>Effacer</strong> vide le dessin, les quatre curseurs de nombre de
-          filtres reconstruisent le modèle, et le curseur de taux d'apprentissage
-          n'agit qu'à la prochaine run. Le dessin et la sélection d'une case
+          filtres reconstruisent le modèle et interrompent une run active ; les
+          curseurs de pourcentage, de taux d'apprentissage et de taille des lots
+          n'interrompent pas la run et n'agissent qu'à la prochaine. Le dessin et
+          la sélection d'une case
           demandent un pointeur : les lignes de liaison se pilotent au clavier,
           mais pas les toiles.
         </p>

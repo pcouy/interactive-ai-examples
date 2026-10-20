@@ -802,6 +802,7 @@ describe('trainingRunRequest', () => {
     return {
       filters,
       learningRate: 0.01,
+      batchSize: 64,
       trainPercent: 25,
       validationPercent: 15,
       epochs: 4,
@@ -816,19 +817,30 @@ describe('trainingRunRequest', () => {
 
   it('forwards the training parameters from the input', () => {
     const request = trainingRunRequest(
-      input({ epochs: 9, trainPercent: 40, validationPercent: 20, learningRate: 0.02 }),
+      input({
+        epochs: 9,
+        trainPercent: 40,
+        validationPercent: 20,
+        learningRate: 0.02,
+        batchSize: 32,
+      }),
     );
     expect(request.epochs).toBe(9);
     expect(request.trainPercent).toBe(40);
     expect(request.validationPercent).toBe(20);
     expect(request.learningRate).toBe(0.02);
+    expect(request.batchSize).toBe(32);
     expect(request.filters).toBe(filters);
   });
 
-  it('pins the batch size and the seed', () => {
+  it('pins the seed', () => {
     const request = trainingRunRequest(input());
-    expect(request.batchSize).toBe(64);
     expect(request.seed).toBe(42);
+  });
+
+  it('forwards the batch size from the input', () => {
+    const request = trainingRunRequest(input({ batchSize: 32 }));
+    expect(request.batchSize).toBe(32);
   });
 });
 
