@@ -2372,7 +2372,7 @@ export class MnistCnn extends LitElement {
           </section>
         </div>
 
-        <section class="drl-panel" aria-label="Probabilités et courbes d'entraînement">
+        <section class="drl-panel" aria-label="Statistiques, probabilités et courbes d'entraînement">
           <h4 class="drl-panel-title">Résultats</h4>
           <div class="drl-stats">
             <div class="drl-stat">
