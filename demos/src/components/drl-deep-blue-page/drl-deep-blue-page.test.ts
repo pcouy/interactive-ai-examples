@@ -1,6 +1,7 @@
 import { describe, expect, it, vi } from 'vitest';
 import type { VisitEvent } from '../../core/contracts.js';
 import { TreeModel } from '../../core/search/tree-model.js';
+import { TIC_TAC_TOE_GAME_CONFIG } from '../shared/create-game-component.js';
 import { DrlDeepBluePage, firstMoveOnPath } from './drl-deep-blue-page.js';
 
 interface PageState {
@@ -145,6 +146,12 @@ function collectBindings(template: unknown): TemplateBinding[] {
 
 /** Texte statique d'un template, templates imbriqués inclus, dans l'ordre du document. */
 function collectStrings(template: unknown): string {
+  if (typeof template === 'string') {
+    return template;
+  }
+  if (Array.isArray(template)) {
+    return template.map((item) => collectStrings(item)).join('');
+  }
   if (typeof template !== 'object' || template === null) {
     return '';
   }
@@ -311,6 +318,16 @@ describe('DrlDeepBluePage vs-mode controls', () => {
     expect(page.players).toBe('["agent","agent"]');
     expect(pressed()).toEqual([false, false, true]);
   });
+
+  it('highlights the active mode even when the JSON has extra spaces', () => {
+    const page = createPage();
+    page.players = '[ "human" , "agent" ]';
+    const internals = page as unknown as { renderVsModeRow(): unknown };
+    const pressed = collectBindings(internals.renderVsModeRow())
+      .filter((binding) => binding.attribute === 'aria-pressed')
+      .map((binding) => binding.value);
+    expect(pressed).toEqual([true, false, false]);
+  });
 });
 
 describe('DrlDeepBluePage search fields', () => {
@@ -358,5 +375,101 @@ describe('DrlDeepBluePage search fields', () => {
       expect(index).toBeGreaterThan(previous);
       previous = index;
     }
+  });
+});
+
+describe('DrlDeepBluePage input handlers', () => {
+  interface Internals {
+    onDepthChange(event: Event): void;
+    onSamplesChange(event: Event): void;
+    onDiscountChange(event: Event): void;
+    onEvaluatorChange(event: Event): void;
+  }
+
+  function internals(page: DrlDeepBluePage): Internals {
+    return page as unknown as Internals;
+  }
+
+  /** Faux événement de changement portant une valeur texte. */
+  function change(value: string): Event {
+    return { target: { value } } as unknown as Event;
+  }
+
+  it('sets depth to null for an empty value', () => {
+    const page = createPage();
+    internals(page).onDepthChange(change(''));
+    expect(page.depth).toBeNull();
+  });
+
+  it('falls back to the game default for a non-finite depth', () => {
+    const page = createPage();
+    internals(page).onDepthChange(change('not-a-number'));
+    expect(page.depth).toBe(TIC_TAC_TOE_GAME_CONFIG.defaultDepth);
+  });
+
+  it('clamps a below-minimum depth to the minimum', () => {
+    const page = createPage();
+    internals(page).onDepthChange(change('0'));
+    expect(page.depth).toBe(1);
+  });
+
+  it('falls back to the page default for a non-finite rollout sample count', () => {
+    const page = createPage();
+    internals(page).onSamplesChange(change('not-a-number'));
+    expect(page.rolloutSamples).toBe(10);
+  });
+
+  it('clamps a below-minimum rollout sample count to the minimum', () => {
+    const page = createPage();
+    internals(page).onSamplesChange(change('0'));
+    expect(page.rolloutSamples).toBe(1);
+  });
+
+  it('falls back to 1 for an invalid or out-of-range discount', () => {
+    const page = createPage();
+    internals(page).onDiscountChange(change('not-a-number'));
+    expect(page.discount).toBe(1);
+    internals(page).onDiscountChange(change('1.5'));
+    expect(page.discount).toBe(1);
+    internals(page).onDiscountChange(change('0'));
+    expect(page.discount).toBe(1);
+  });
+
+  it('parses the evaluator value from the select', () => {
+    const page = createPage();
+    internals(page).onEvaluatorChange(change('rollout'));
+    expect(page.evaluator).toBe('rollout');
+    internals(page).onEvaluatorChange(change('nope'));
+    expect(page.evaluator).toBe('windows');
+  });
+});
+
+describe('DrlDeepBluePage render order', () => {
+  function renderText(page: DrlDeepBluePage): string {
+    const internals = page as unknown as { render(): unknown };
+    return collectStrings(internals.render());
+  }
+
+  it('renders the header, the modes row, the search row, then the layout row', () => {
+    const text = renderText(createPage());
+    const order = ['drl-page-header', 'drl-page-modes', 'drl-page-search', 'drl-page-layout'];
+    let previous = -1;
+    for (const marker of order) {
+      const index = text.indexOf(marker);
+      expect(index).toBeGreaterThan(previous);
+      previous = index;
+    }
+  });
+
+  it('keeps the search row outside the layout row and the modes row in its own block', () => {
+    const text = renderText(createPage());
+    const modesStart = text.indexOf('drl-page-modes');
+    const searchStart = text.indexOf('drl-page-search');
+    const layoutStart = text.indexOf('drl-page-layout');
+    // La rangée des modes est un bloc propre, entre l'en-tête et la recherche.
+    expect(text.indexOf('Humain vs Agent')).toBeGreaterThan(modesStart);
+    expect(searchStart).toBeGreaterThan(text.indexOf('Agent vs Agent'));
+    // La rangée de recherche précède la mise en page et n'est pas imbriquée dedans.
+    expect(layoutStart).toBeGreaterThan(text.indexOf('Profondeur'));
   });
 });
