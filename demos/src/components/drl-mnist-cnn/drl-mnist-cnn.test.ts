@@ -30,6 +30,8 @@ import {
   filterLinkGeometry,
   filterViewMode,
   galleryClassLabel,
+  galleryInputHint,
+  galleryInputSource,
   hexToRgb,
   isReferenceDenseSizes,
   linkCanvasSelectors,
@@ -310,6 +312,39 @@ describe('galleryClassLabel', () => {
 
   it('falls back to the index when the class has no name', () => {
     expect(galleryClassLabel(getDataset('mnist'), 10)).toBe('10');
+  });
+});
+
+describe('galleryInputSource', () => {
+  it('names the dataset and the plain digit for MNIST', () => {
+    expect(galleryInputSource(getDataset('mnist'), 3)).toBe('Exemple MNIST (3)');
+  });
+
+  it('names the dataset and the class for named datasets', () => {
+    expect(galleryInputSource(getDataset('fashion-mnist'), 0)).toBe(
+      'Exemple Fashion-MNIST (0 — T-shirt)',
+    );
+    expect(galleryInputSource(getDataset('quickdraw'), 2)).toBe('Exemple QuickDraw (2 — chat)');
+  });
+});
+
+describe('galleryInputHint', () => {
+  it('names the dataset and the expected class', () => {
+    expect(galleryInputHint(getDataset('mnist'), 3)).toBe(
+      'Exemple de la galerie MNIST : la classe attendue est « 3 ».',
+    );
+    expect(galleryInputHint(getDataset('fashion-mnist'), 0)).toBe(
+      'Exemple de la galerie Fashion-MNIST : la classe attendue est « T-shirt ».',
+    );
+    expect(galleryInputHint(getDataset('quickdraw'), 2)).toBe(
+      'Exemple de la galerie QuickDraw : la classe attendue est « chat ».',
+    );
+  });
+
+  it('names the dataset in the drawing prompt when no class is chosen', () => {
+    const hint = galleryInputHint(getDataset('quickdraw'), null);
+    expect(hint).toContain('QuickDraw');
+    expect(hint).toContain('Dessinez');
   });
 });
 

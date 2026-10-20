@@ -494,6 +494,20 @@ export function galleryClassLabel(dataset: DatasetDefinition, index: number): st
   return name === String(index) ? name : `${index} — ${name}`;
 }
 
+/** Libellé de la source d'entrée quand l'entrée est un exemple de la galerie. */
+export function galleryInputSource(dataset: DatasetDefinition, index: number): string {
+  return `Exemple ${dataset.name} (${galleryClassLabel(dataset, index)})`;
+}
+
+/** Texte d'aide sous la surface de dessin pour le jeu courant. */
+export function galleryInputHint(dataset: DatasetDefinition, classIndex: number | null): string {
+  if (classIndex === null) {
+    return `Dessinez une entrée à la souris ou au doigt, ou choisissez un exemple de ${dataset.name} ; l'inférence se met à jour pendant le tracé.`;
+  }
+  const name = dataset.classNames[classIndex] ?? String(classIndex);
+  return `Exemple de la galerie ${dataset.name} : la classe attendue est « ${name} ».`;
+}
+
 /**
  * Sélecteurs des deux toiles de filtres reliées par une liaison : la toile amont
  * est le canal de sortie `inputChannel` de la couche précédente, la toile aval le
@@ -1399,6 +1413,12 @@ export class MnistCnn extends LitElement {
   @state()
   private datasetError: string | null = null;
 
+  /**
+   * Jeton du dernier changement de jeu. Un changement plus récent périme le
+   * chargement précédent, qui ne doit alors plus éteindre l'indicateur.
+   */
+  private datasetSwitchToken = 0;
+
   /** Index des shards QuickDraw, une fois chargé (null pour les jeux IDX). */
   @state()
   private shardedIndex: ShardedIndex | null = null;
@@ -1443,6 +1463,13 @@ export class MnistCnn extends LitElement {
 
   @state()
   private galleryLoading = false;
+
+  /**
+   * Jeton du chargement de galerie en cours. Chaque chargement prend un jeton
+   * neuf ; un chargement dont le jeton a changé s'arrête sans écrire, ce qui
+   * empêche une réponse tardive d'un ancien jeu d'écraser le nouveau.
+   */
+  private galleryLoadToken = 0;
 
   /** Raison de l'échec du chargement de la galerie, affichée sous le sélecteur. */
   @state()
@@ -1681,11 +1708,7 @@ export class MnistCnn extends LitElement {
   }
 
   private get inputHint(): string {
-    if (this.galleryLabel === null) {
-      return `Dessinez une entrée à la souris ou au doigt, ou choisissez un exemple de ${this.currentDataset.name} ; l'inférence se met à jour pendant le tracé.`;
-    }
-    const name = this.currentDataset.classNames[this.galleryLabel] ?? String(this.galleryLabel);
-    return `Exemple de la galerie ${this.currentDataset.name} : la classe attendue est « ${name} ».`;
+    return galleryInputHint(this.currentDataset, this.galleryLabel);
   }
 
   /** Nombre d'exemples proposés par classe dans la galerie chargée. */
@@ -1765,7 +1788,7 @@ export class MnistCnn extends LitElement {
     }
     this.inputPixels.set(pixels);
     this.galleryLabel = classIndex;
-    this.inputSource = `Exemple MNIST (chiffre ${classIndex})`;
+    this.inputSource = galleryInputSource(this.currentDataset, classIndex);
     this.runInference();
   }
 
@@ -1910,20 +1933,35 @@ export class MnistCnn extends LitElement {
     if (this.galleryLoading) {
       return;
     }
+    const token = ++this.galleryLoadToken;
     this.galleryLoading = true;
     try {
       const dataset = this.currentDataset;
-      this.splits =
+      const splits =
         dataset.kind === 'sharded'
           ? await loadShardedSplits(dataset, this.trainPercent, this.validationPercent)
           : await loadDatasetSplits(dataset);
-      if (dataset.kind === 'sharded') {
-        this.shardedIndex = await loadShardedIndex(dataset);
+      // Un changement de jeu a pris un jeton plus récent : cet ancien
+      // chargement s'arrête avant d'écrire quoi que ce soit.
+      if (token !== this.galleryLoadToken) {
+        return;
       }
-      this.gallerySample =
+      this.splits = splits;
+      if (dataset.kind === 'sharded') {
+        const shardedIndex = await loadShardedIndex(dataset);
+        if (token !== this.galleryLoadToken) {
+          return;
+        }
+        this.shardedIndex = shardedIndex;
+      }
+      const gallerySample =
         dataset.kind === 'sharded'
           ? await loadShardedGallery(dataset)
           : await loadDatasetGallery(dataset);
+      if (token !== this.galleryLoadToken) {
+        return;
+      }
+      this.gallerySample = gallerySample;
       this.galleryClass = 0;
       this.galleryIndex = 0;
       this.galleryError = null;
@@ -1933,12 +1971,19 @@ export class MnistCnn extends LitElement {
       this.updateExampleCounts();
       this.applyGalleryExample();
     } catch (error) {
+      if (token !== this.galleryLoadToken) {
+        return;
+      }
       this.gallerySample = null;
       this.galleryClass = null;
       this.galleryError = (error as Error).message;
       this.datasetError = this.galleryError;
     } finally {
-      this.galleryLoading = false;
+      // Seul le chargement courant rend la main : un chargement invalidé ne
+      // doit pas effacer l'indicateur du chargement qui l'a remplacé.
+      if (token === this.galleryLoadToken) {
+        this.galleryLoading = false;
+      }
     }
   }
 
@@ -2222,6 +2267,7 @@ export class MnistCnn extends LitElement {
     }
     this.selectedDatasetId = dataset.id;
     this.datasetError = null;
+    const token = ++this.datasetSwitchToken;
     this.datasetLoading = true;
     this.resetMetrics();
     this.clearSelection();
@@ -2239,8 +2285,16 @@ export class MnistCnn extends LitElement {
     this.runInference();
     this.updateExampleCounts();
     void this.controller.notifySliderChanged(this.manifestMatches, true);
+    // Un chargement du jeu précédent peut être en vol : un jeton neuf le
+    // périme et la libération du drapeau laisse démarrer le nouveau.
+    this.galleryLoadToken += 1;
+    this.galleryLoading = false;
     void this.loadGallery().finally(() => {
-      this.datasetLoading = false;
+      // Un changement plus récent a pris un jeton neuf : il porte le drapeau,
+      // cet ancien chargement ne doit pas l'éteindre.
+      if (token === this.datasetSwitchToken) {
+        this.datasetLoading = false;
+      }
     });
   }
 

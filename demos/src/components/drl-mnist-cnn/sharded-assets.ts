@@ -138,7 +138,11 @@ function requireNonNegativeInteger(value: unknown, field: string): number {
 }
 
 /** Valide et convertit une fraction décrite par l'index JSON. */
-function parseSplit(value: unknown, name: string): ShardedSplitIndex {
+function parseSplit(
+  value: unknown,
+  name: string,
+  classNames: readonly string[],
+): ShardedSplitIndex {
   if (value === null || typeof value !== 'object') {
     throw new Error(`sharded-assets: index splits.${name} must be an object.`);
   }
@@ -161,6 +165,11 @@ function parseSplit(value: unknown, name: string): ShardedSplitIndex {
       shard.classIndex,
       `splits.${name}.shards[${index}].classIndex`,
     );
+    if (classIndex >= classNames.length) {
+      throw new RangeError(
+        `sharded-assets: index splits.${name}.shards[${index}] "${file}" has classIndex ${classIndex}, which is not below the ${classNames.length} classes.`,
+      );
+    }
     const start = requireNonNegativeInteger(shard.start, `splits.${name}.shards[${index}].start`);
     const shardCount = requirePositiveInteger(shard.count, `splits.${name}.shards[${index}].count`);
     if (start + shardCount > count) {
@@ -177,9 +186,11 @@ function parseSplit(value: unknown, name: string): ShardedSplitIndex {
  * Valide la structure d'un index JSON et retourne un `ShardedIndex` figé par
  * le typage. Rejette une version inconnue, un nombre de classes hors de
  * `[2, 20]`, une taille de fragment non positive, une fraction sans effectif
- * positif, et un fragment dont l'intervalle dépasse l'effectif de la fraction.
+ * positif, un fragment dont l'intervalle dépasse l'effectif de la fraction, et
+ * un fragment dont `classIndex` dépasse le nombre de classes. Quand
+ * `expectedDataset` est fourni, l'index doit déclarer ce même jeu de données.
  */
-export function parseIndexJson(text: string): ShardedIndex {
+export function parseIndexJson(text: string, expectedDataset?: string): ShardedIndex {
   let raw: unknown;
   try {
     raw = JSON.parse(text);
@@ -197,6 +208,11 @@ export function parseIndexJson(text: string): ShardedIndex {
     );
   }
   const dataset = requireString(record.dataset, 'dataset');
+  if (expectedDataset !== undefined && dataset !== expectedDataset) {
+    throw new RangeError(
+      `sharded-assets: index dataset "${dataset}" does not match the expected dataset "${expectedDataset}".`,
+    );
+  }
   if (!Array.isArray(record.classNames)) {
     throw new Error('sharded-assets: index field "classNames" must be an array.');
   }
@@ -215,8 +231,8 @@ export function parseIndexJson(text: string): ShardedIndex {
     throw new Error('sharded-assets: index field "splits" must be an object.');
   }
   const splitsRecord = record.splits as Record<string, unknown>;
-  const train = parseSplit(splitsRecord.train, 'train');
-  const test = parseSplit(splitsRecord.test, 'test');
+  const train = parseSplit(splitsRecord.train, 'train', classNames);
+  const test = parseSplit(splitsRecord.test, 'test', classNames);
 
   if (record.gallery === null || typeof record.gallery !== 'object') {
     throw new Error('sharded-assets: index field "gallery" must be an object.');
@@ -450,7 +466,7 @@ export function loadShardedIndex(dataset: ShardedDatasetDefinition): Promise<Sha
     dataset.downloadCommand,
   ).then(
     (text) => {
-      const index = parseIndexJson(text);
+      const index = parseIndexJson(text, dataset.id);
       indexCache.set(key, index);
       inFlightIndex.delete(key);
       return index;

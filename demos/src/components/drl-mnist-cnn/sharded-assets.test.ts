@@ -143,6 +143,26 @@ describe('parseIndexJson', () => {
     expect(index.splits.test.shards).toHaveLength(6);
   });
 
+  it('accepts the expected dataset and rejects a different one', async () => {
+    const { parseIndexJson } = await loadLoader();
+    const text = JSON.stringify(baseIndex());
+    expect(parseIndexJson(text, 'quickdraw').dataset).toBe('quickdraw');
+    expect(() => parseIndexJson(text, 'other')).toThrow(/dataset/);
+    expect(() => parseIndexJson(text, 'other')).toThrow(RangeError);
+  });
+
+  it('rejects a shard whose classIndex is not below the class count', async () => {
+    const { parseIndexJson } = await loadLoader();
+    const index = baseIndex();
+    const splits = index.splits as {
+      train: { shards: { classIndex: number }[] };
+    };
+    splits.train.shards[0].classIndex = 2;
+    expect(() => parseIndexJson(JSON.stringify(index))).toThrow(RangeError);
+    expect(() => parseIndexJson(JSON.stringify(index))).toThrow(/train-c0-s00\.idx\.gz/);
+    expect(() => parseIndexJson(JSON.stringify(index))).toThrow(/classIndex 2/);
+  });
+
   it('rejects a missing splits field', async () => {
     const { parseIndexJson } = await loadLoader();
     const index = baseIndex();
@@ -419,7 +439,24 @@ describe('loadShardedSplits', () => {
   });
 
   it('does not share the cache across dataset ids', async () => {
-    const mock = stubFetch(assetsForIndex(baseIndex()));
+    const assets = assetsForIndex(baseIndex());
+    const mock = vi.fn(async (input: RequestInfo | URL): Promise<Response> => {
+      const url = String(input);
+      const name = url.split('/').pop() ?? '';
+      if (name === 'index.json') {
+        const datasetId = url.includes('/datasets/quickdraw-a/') ? 'quickdraw-a' : 'quickdraw-b';
+        return new Response(
+          new TextEncoder().encode(JSON.stringify({ ...baseIndex(), dataset: datasetId })),
+          { status: 200 },
+        );
+      }
+      const body = assets.get(name);
+      if (body === undefined) {
+        return new Response('missing', { status: 404, statusText: 'Not Found' });
+      }
+      return new Response(body, { status: 200 });
+    });
+    vi.stubGlobal('fetch', mock);
     const { loadShardedSplits } = await loadLoader();
     const first = { ...SHARDED_DATASET, id: 'quickdraw-a' };
     const second = { ...SHARDED_DATASET, id: 'quickdraw-b' };
