@@ -1,5 +1,5 @@
 import { afterEach, describe, expect, it, vi } from 'vitest';
-import { getDataset } from '../../core/dataset-registry.js';
+import { getDataset, type IdxDatasetDefinition } from '../../core/dataset-registry.js';
 import type { MnistIdxDataset } from '../../core/mnist-data.js';
 
 const IMAGE_MAGIC = 2051;
@@ -263,6 +263,15 @@ describe('loadMnistSplits', () => {
   });
 });
 
+/** Réduit un jeu du registre à sa branche `idx` pour l'appel du chargeur. */
+function idxDataset(id: string): IdxDatasetDefinition {
+  const dataset = getDataset(id);
+  if (dataset.kind !== 'idx') {
+    throw new Error(`expected ${id} to be an idx dataset`);
+  }
+  return dataset;
+}
+
 describe('loadDatasetSplits', () => {
   it('fetches the four Fashion-MNIST files from datasets/fashion-mnist/', async () => {
     const assets = await gzippedAssets();
@@ -270,8 +279,8 @@ describe('loadDatasetSplits', () => {
     const { loadDatasetSplits } = await loadLoader();
 
     const [first, second] = await Promise.all([
-      loadDatasetSplits(getDataset('fashion-mnist')),
-      loadDatasetSplits(getDataset('fashion-mnist')),
+      loadDatasetSplits(idxDataset('fashion-mnist')),
+      loadDatasetSplits(idxDataset('fashion-mnist')),
     ]);
     expect(first).toBe(second);
     expect(fetchMock).toHaveBeenCalledTimes(4);
@@ -288,14 +297,22 @@ describe('loadDatasetSplits', () => {
     const fetchMock = stubFetch(assets);
     const { loadDatasetSplits } = await loadLoader();
 
-    const mnist = loadDatasetSplits(getDataset('mnist'));
-    const fashion = loadDatasetSplits(getDataset('fashion-mnist'));
+    const mnist = loadDatasetSplits(idxDataset('mnist'));
+    const fashion = loadDatasetSplits(idxDataset('fashion-mnist'));
     expect(mnist).not.toBe(fashion);
     const [mnistSplits, fashionSplits] = await Promise.all([mnist, fashion]);
     expect(mnistSplits.train.count).toBe(TRAIN_LABELS.length);
     expect(fashionSplits.test.count).toBe(TEST_LABELS.length);
     // Quatre appels par jeu, jamais de partage de promesse entre jeux.
     expect(fetchMock).toHaveBeenCalledTimes(8);
+  });
+
+  it('rejects a sharded dataset at the type level', async () => {
+    const { loadDatasetSplits } = await loadLoader();
+    const sharded = getDataset('quickdraw');
+    // @ts-expect-error QuickDraw is a sharded dataset, not an idx dataset.
+    const call = (): Promise<unknown> => loadDatasetSplits(sharded);
+    expect(typeof call).toBe('function');
   });
 });
 

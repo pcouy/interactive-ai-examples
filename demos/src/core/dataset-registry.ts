@@ -3,13 +3,27 @@
  *
  * Le module est purement déclaratif : aucune dépendance, aucun accès DOM, aucun
  * chargement. Chaque entrée décrit un jeu (identifiant, classes, effectifs,
- * fichiers IDX servis, réglages par défaut, licence) sans contenir les données.
+ * fichiers servis, réglages par défaut, licence) sans contenir les données.
  *
- * Les jeux QuickDraw et MedMNIST seront ajoutés dans les commits suivants.
+ * Le jeu MedMNIST sera ajouté dans les commits suivants.
  */
 
-/** Format de la source téléchargée, avant conversion en IDX. */
-export type DatasetSourceKind = 'idx' | 'quickdraw' | 'medmnist';
+/** Format des fichiers servis sous `public/datasets/<id>/`. */
+export type DatasetKind = 'idx' | 'sharded';
+
+interface DatasetBase {
+  readonly id: string;
+  readonly name: string;
+  readonly description: string;
+  readonly classNames: readonly string[];
+  readonly trainCount: number;
+  readonly testCount: number;
+  readonly defaultTrainPercent: number;
+  readonly defaultValidationPercent: number;
+  readonly license: string;
+  readonly attribution: string;
+  readonly kind: DatasetKind;
+}
 
 /** Noms des quatre fichiers IDX servis sous `public/datasets/<id>/`. */
 export interface DatasetFiles {
@@ -19,21 +33,26 @@ export interface DatasetFiles {
   readonly testLabels: string;
 }
 
-/** Description complète d'un jeu sélectionnable. */
-export interface DatasetDefinition {
-  readonly id: string;
-  readonly name: string;
-  readonly description: string;
-  readonly classNames: readonly string[];
-  readonly trainCount: number;
-  readonly testCount: number;
+/** Jeu IDX : quatre fichiers IDX servis sous `public/datasets/<id>/`. */
+export interface IdxDatasetDefinition extends DatasetBase {
+  readonly kind: 'idx';
   readonly files: DatasetFiles;
-  readonly defaultTrainPercent: number;
-  readonly defaultValidationPercent: number;
-  readonly license: string;
-  readonly attribution: string;
-  readonly sourceKind: DatasetSourceKind;
 }
+
+/**
+ * Jeu segmenté : un index de fragments, une galerie d'images compressée et ses
+ * étiquettes compressées servis sous `public/datasets/<id>/`.
+ */
+export interface ShardedDatasetDefinition extends DatasetBase {
+  readonly kind: 'sharded';
+  readonly indexFile: string;
+  readonly galleryFile: string;
+  readonly galleryLabelsFile: string;
+  readonly shardSize: number;
+}
+
+/** Description complète d'un jeu sélectionnable. */
+export type DatasetDefinition = IdxDatasetDefinition | ShardedDatasetDefinition;
 
 /** Jeu MNIST : les images IDX de Yann LeCun et Corinna Cortes. */
 const MNIST: DatasetDefinition = {
@@ -54,7 +73,7 @@ const MNIST: DatasetDefinition = {
   defaultValidationPercent: 10,
   license: 'Voir la notice MNIST',
   attribution: 'Yann LeCun et Corinna Cortes',
-  sourceKind: 'idx',
+  kind: 'idx',
 };
 
 /** Jeu Fashion-MNIST : les articles de mode de Zalando Research. */
@@ -87,11 +106,31 @@ const FASHION_MNIST: DatasetDefinition = {
   defaultValidationPercent: 10,
   license: 'MIT',
   attribution: 'Zalando Research',
-  sourceKind: 'idx',
+  kind: 'idx',
+};
+
+/** Jeu QuickDraw : les croquis dessinés à la main de Google. */
+const QUICKDRAW: ShardedDatasetDefinition = {
+  id: 'quickdraw',
+  name: 'QuickDraw',
+  description:
+    'Croquis dessinés à la main en niveaux de gris, 28 × 28 pixels : 490 571 dessins d’apprentissage et 122 645 dessins de test, répartis en cinq catégories.',
+  classNames: ['livre', 'lune', 'chat', 'parapluie', 'gâteau'],
+  trainCount: 490571,
+  testCount: 122645,
+  indexFile: 'index.json',
+  galleryFile: 'gallery.idx.gz',
+  galleryLabelsFile: 'gallery-labels.idx.gz',
+  shardSize: 1000,
+  defaultTrainPercent: 2,
+  defaultValidationPercent: 2,
+  license: 'CC BY 4.0',
+  attribution: 'Google, Quick, Draw!',
+  kind: 'sharded',
 };
 
 /** Jeux sélectionnables, dans l’ordre d’affichage. Le premier est MNIST. */
-export const DATASETS: readonly DatasetDefinition[] = [MNIST, FASHION_MNIST];
+export const DATASETS: readonly DatasetDefinition[] = [MNIST, FASHION_MNIST, QUICKDRAW];
 
 /** Identifiants des jeux, dans le même ordre que `DATASETS`. */
 export const DATASET_IDS: readonly string[] = DATASETS.map((dataset) => dataset.id);

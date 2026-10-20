@@ -14,6 +14,7 @@
     "format": "biome format --write .",
     "mnist:data": "node scripts/fetch-mnist-data.mjs",
     "datasets:data": "node scripts/fetch-datasets.mjs",
+    "quickdraw:data": "node scripts/convert-quickdraw.mjs",
     "postinstall": "node scripts/fetch-mnist-data.mjs --optional"
   },
   "dependencies": {

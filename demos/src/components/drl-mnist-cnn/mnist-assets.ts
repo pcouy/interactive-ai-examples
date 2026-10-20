@@ -32,6 +32,7 @@ import {
   type DatasetDefinition,
   datasetClassCount,
   getDataset,
+  type IdxDatasetDefinition,
 } from '../../core/dataset-registry.js';
 import {
   loadIdxDataset,
@@ -64,7 +65,7 @@ interface ViteImportMeta extends ImportMeta {
 }
 
 /** Base Vite, avec un « / » final, pour construire les URL des ressources. */
-function assetBaseUrl(): string {
+export function assetBaseUrl(): string {
   const base = (import.meta as ViteImportMeta).env?.BASE_URL ?? '/';
   return base.endsWith('/') ? base : `${base}/`;
 }
@@ -152,7 +153,7 @@ function assertIdxPayload(bytes: Uint8Array, url: string, expectedMagic: number)
  * décodage est tolérant (voir `decodeIdxPayload`) et le payload est validé
  * avant l'analyse (voir `assertIdxPayload`).
  */
-async function fetchGzip(url: string, expectedMagic: number): Promise<Uint8Array> {
+export async function fetchGzip(url: string, expectedMagic: number): Promise<Uint8Array> {
   let response: Response;
   try {
     response = await fetch(url);
@@ -195,11 +196,25 @@ export async function fetchMnistCnnManifest(): Promise<string> {
 }
 
 /**
+ * Réduit un jeu du registre à sa branche `idx`, avec une erreur explicite qui
+ * nomme le jeu et son format réel. Les jeux segmentés utilisent le chargeur
+ * dédié `sharded-assets.ts`.
+ */
+function requireIdxDataset(dataset: DatasetDefinition): IdxDatasetDefinition {
+  if (dataset.kind !== 'idx') {
+    throw new RangeError(
+      `mnist-assets: dataset "${dataset.id}" is ${dataset.kind}, expected an idx dataset.`,
+    );
+  }
+  return dataset;
+}
+
+/**
  * Télécharge et décode les quatre fichiers IDX d'un jeu. Le répertoire et les
  * noms de fichiers viennent de `dataset` ; le nombre de classes accepté vient de
  * `datasetClassCount(dataset)`.
  */
-async function downloadDatasetSplits(dataset: DatasetDefinition): Promise<MnistSplits> {
+async function downloadDatasetSplits(dataset: IdxDatasetDefinition): Promise<MnistSplits> {
   const base = `${assetBaseUrl()}${DATASET_ASSET_DIRECTORY}/${dataset.id}/`;
   const classCount = datasetClassCount(dataset);
   const [trainImages, trainLabels, testImages, testLabels] = await Promise.all([
@@ -223,7 +238,7 @@ const inFlightSplits = new Map<string, Promise<MnistSplits>>();
  * promesse tant qu'elle est en vol. En cas d'échec, l'entrée du cache est
  * supprimée pour permettre une nouvelle tentative.
  */
-export function loadDatasetSplits(dataset: DatasetDefinition): Promise<MnistSplits> {
+export function loadDatasetSplits(dataset: IdxDatasetDefinition): Promise<MnistSplits> {
   const cached = inFlightSplits.get(dataset.id);
   if (cached !== undefined) {
     return cached;
@@ -243,7 +258,7 @@ export function loadDatasetSplits(dataset: DatasetDefinition): Promise<MnistSpli
  * permettre une nouvelle tentative.
  */
 export function loadMnistSplits(): Promise<MnistSplits> {
-  return loadDatasetSplits(getDataset('mnist'));
+  return loadDatasetSplits(requireIdxDataset(getDataset('mnist')));
 }
 
 /**
@@ -299,8 +314,9 @@ export async function loadDatasetGallery(
   dataset: DatasetDefinition,
   perClass: number = GALLERY_PER_CLASS,
 ): Promise<MnistSample> {
-  const splits = await loadDatasetSplits(dataset);
-  const indices = selectGalleryIndices(splits.test, perClass, datasetClassCount(dataset));
+  const idxDataset = requireIdxDataset(dataset);
+  const splits = await loadDatasetSplits(idxDataset);
+  const indices = selectGalleryIndices(splits.test, perClass, datasetClassCount(idxDataset));
   return materializeSample(splits.test, indices);
 }
 

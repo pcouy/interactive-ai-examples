@@ -3,3 +3,6 @@ dist/
 
 # Archives de données téléchargées à l'installation (npm run mnist:data)
 public/datasets/**/*.gz
+
+# Fichiers .npy bruts de QuickDraw téléchargés par le convertisseur
+.cache/

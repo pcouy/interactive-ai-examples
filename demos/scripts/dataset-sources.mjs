@@ -11,6 +11,9 @@
  * `mnist-data-manifest.mjs` : ce module ne fait que les restructurer. Pour
  * Fashion-MNIST, les tailles et les MD5 ont été vérifiés octet par octet contre
  * les fichiers téléchargés depuis le dépôt `zalandoresearch/fashion-mnist`.
+ *
+ * QuickDraw n'est pas dans `DATASET_SOURCES` : son convertisseur
+ * `convert-quickdraw.mjs` télécharge les cinq fichiers `.npy` directement.
  */
 
 import { MNIST_BASE_URL, MNIST_FILES } from './mnist-data-manifest.mjs';
@@ -41,6 +44,19 @@ const FASHION_MNIST_FILES = [
     size: 5148,
     md5: 'bb300cfdad3c16e7a12a480ee83cd310',
   },
+];
+
+/** URL de base des fichiers QuickDraw dans le dépôt `quickdraw_dataset`. */
+export const QUICKDRAW_BASE_URL =
+  'https://storage.googleapis.com/quickdraw_dataset/full/numpy_bitmap/';
+
+/** Les cinq fichiers QuickDraw `.npy`, avec leur taille en octets et leur MD5. */
+export const QUICKDRAW_FILES = [
+  { name: 'book.npy', size: 93581456, md5: '2ed1a413e8e9dc677c77804144a0a81a' },
+  { name: 'moon.npy', size: 95382304, md5: 'b0461b58eca7651c581914093ab11b9e' },
+  { name: 'cat.npy', size: 96590448, md5: 'e4bb2f2c14813c33b9bcc21e06eacb43' },
+  { name: 'umbrella.npy', size: 97281936, md5: '04dd435714b9c2068f7f799111ef4e35' },
+  { name: 'cake.npy', size: 97925600, md5: 'e816ab482b45ef6302a92f4a7f20cf2c' },
 ];
 
 /**

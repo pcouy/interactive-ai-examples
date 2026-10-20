@@ -1,0 +1,3733 @@
+{
+  "version": 1,
+  "dataset": "quickdraw",
+  "classNames": [
+    "livre",
+    "lune",
+    "chat",
+    "parapluie",
+    "gâteau"
+  ],
+  "shardSize": 1000,
+  "splits": {
+    "train": {
+      "count": 490571,
+      "labelsFile": "train-labels-idx1-ubyte.gz",
+      "shards": [
+        {
+          "file": "train-c0-s00.idx.gz",
+          "classIndex": 0,
+          "start": 0,
+          "count": 1000
+        },
+        {
+          "file": "train-c0-s01.idx.gz",
+          "classIndex": 0,
+          "start": 1000,
+          "count": 1000
+        },
+        {
+          "file": "train-c0-s02.idx.gz",
+          "classIndex": 0,
+          "start": 2000,
+          "count": 1000
+        },
+        {
+          "file": "train-c0-s03.idx.gz",
+          "classIndex": 0,
+          "start": 3000,
+          "count": 1000
+        },
+        {
+          "file": "train-c0-s04.idx.gz",
+          "classIndex": 0,
+          "start": 4000,
+          "count": 1000
+        },
+        {
+          "file": "train-c0-s05.idx.gz",
+          "classIndex": 0,
+          "start": 5000,
+          "count": 1000
+        },
+        {
+          "file": "train-c0-s06.idx.gz",
+          "classIndex": 0,
+          "start": 6000,
+          "count": 1000
+        },
+        {
+          "file": "train-c0-s07.idx.gz",
+          "classIndex": 0,
+          "start": 7000,
+          "count": 1000
+        },
+        {
+          "file": "train-c0-s08.idx.gz",
+          "classIndex": 0,
+          "start": 8000,
+          "count": 1000
+        },
+        {
+          "file": "train-c0-s09.idx.gz",
+          "classIndex": 0,
+          "start": 9000,
+          "count": 1000
+        },
+        {
+          "file": "train-c0-s10.idx.gz",
+          "classIndex": 0,
+          "start": 10000,
+          "count": 1000
+        },
+        {
+          "file": "train-c0-s11.idx.gz",
+          "classIndex": 0,
+          "start": 11000,
+          "count": 1000
+        },
+        {
+          "file": "train-c0-s12.idx.gz",
+          "classIndex": 0,
+          "start": 12000,
+          "count": 1000
+        },
+        {
+          "file": "train-c0-s13.idx.gz",
+          "classIndex": 0,
+          "start": 13000,
+          "count": 1000
+        },
+        {
+          "file": "train-c0-s14.idx.gz",
+          "classIndex": 0,
+          "start": 14000,
+          "count": 1000
+        },
+        {
+          "file": "train-c0-s15.idx.gz",
+          "classIndex": 0,
+          "start": 15000,
+          "count": 1000
+        },
+        {
+          "file": "train-c0-s16.idx.gz",
+          "classIndex": 0,
+          "start": 16000,
+          "count": 1000
+        },
+        {
+          "file": "train-c0-s17.idx.gz",
+          "classIndex": 0,
+          "start": 17000,
+          "count": 1000
+        },
+        {
+          "file": "train-c0-s18.idx.gz",
+          "classIndex": 0,
+          "start": 18000,
+          "count": 1000
+        },
+        {
+          "file": "train-c0-s19.idx.gz",
+          "classIndex": 0,
+          "start": 19000,
+          "count": 1000
+        },
+        {
+          "file": "train-c0-s20.idx.gz",
+          "classIndex": 0,
+          "start": 20000,
+          "count": 1000
+        },
+        {
+          "file": "train-c0-s21.idx.gz",
+          "classIndex": 0,
+          "start": 21000,
+          "count": 1000
+        },
+        {
+          "file": "train-c0-s22.idx.gz",
+          "classIndex": 0,
+          "start": 22000,
+          "count": 1000
+        },
+        {
+          "file": "train-c0-s23.idx.gz",
+          "classIndex": 0,
+          "start": 23000,
+          "count": 1000
+        },
+        {
+          "file": "train-c0-s24.idx.gz",
+          "classIndex": 0,
+          "start": 24000,
+          "count": 1000
+        },
+        {
+          "file": "train-c0-s25.idx.gz",
+          "classIndex": 0,
+          "start": 25000,
+          "count": 1000
+        },
+        {
+          "file": "train-c0-s26.idx.gz",
+          "classIndex": 0,
+          "start": 26000,
+          "count": 1000
+        },
+        {
+          "file": "train-c0-s27.idx.gz",
+          "classIndex": 0,
+          "start": 27000,
+          "count": 1000
+        },
+        {
+          "file": "train-c0-s28.idx.gz",
+          "classIndex": 0,
+          "start": 28000,
+          "count": 1000
+        },
+        {
+          "file": "train-c0-s29.idx.gz",
+          "classIndex": 0,
+          "start": 29000,
+          "count": 1000
+        },
+        {
+          "file": "train-c0-s30.idx.gz",
+          "classIndex": 0,
+          "start": 30000,
+          "count": 1000
+        },
+        {
+          "file": "train-c0-s31.idx.gz",
+          "classIndex": 0,
+          "start": 31000,
+          "count": 1000
+        },
+        {
+          "file": "train-c0-s32.idx.gz",
+          "classIndex": 0,
+          "start": 32000,
+          "count": 1000
+        },
+        {
+          "file": "train-c0-s33.idx.gz",
+          "classIndex": 0,
+          "start": 33000,
+          "count": 1000
+        },
+        {
+          "file": "train-c0-s34.idx.gz",
+          "classIndex": 0,
+          "start": 34000,
+          "count": 1000
+        },
+        {
+          "file": "train-c0-s35.idx.gz",
+          "classIndex": 0,
+          "start": 35000,
+          "count": 1000
+        },
+        {
+          "file": "train-c0-s36.idx.gz",
+          "classIndex": 0,
+          "start": 36000,
+          "count": 1000
+        },
+        {
+          "file": "train-c0-s37.idx.gz",
+          "classIndex": 0,
+          "start": 37000,
+          "count": 1000
+        },
+        {
+          "file": "train-c0-s38.idx.gz",
+          "classIndex": 0,
+          "start": 38000,
+          "count": 1000
+        },
+        {
+          "file": "train-c0-s39.idx.gz",
+          "classIndex": 0,
+          "start": 39000,
+          "count": 1000
+        },
+        {
+          "file": "train-c0-s40.idx.gz",
+          "classIndex": 0,
+          "start": 40000,
+          "count": 1000
+        },
+        {
+          "file": "train-c0-s41.idx.gz",
+          "classIndex": 0,
+          "start": 41000,
+          "count": 1000
+        },
+        {
+          "file": "train-c0-s42.idx.gz",
+          "classIndex": 0,
+          "start": 42000,
+          "count": 1000
+        },
+        {
+          "file": "train-c0-s43.idx.gz",
+          "classIndex": 0,
+          "start": 43000,
+          "count": 1000
+        },
+        {
+          "file": "train-c0-s44.idx.gz",
+          "classIndex": 0,
+          "start": 44000,
+          "count": 1000
+        },
+        {
+          "file": "train-c0-s45.idx.gz",
+          "classIndex": 0,
+          "start": 45000,
+          "count": 1000
+        },
+        {
+          "file": "train-c0-s46.idx.gz",
+          "classIndex": 0,
+          "start": 46000,
+          "count": 1000
+        },
+        {
+          "file": "train-c0-s47.idx.gz",
+          "classIndex": 0,
+          "start": 47000,
+          "count": 1000
+        },
+        {
+          "file": "train-c0-s48.idx.gz",
+          "classIndex": 0,
+          "start": 48000,
+          "count": 1000
+        },
+        {
+          "file": "train-c0-s49.idx.gz",
+          "classIndex": 0,
+          "start": 49000,
+          "count": 1000
+        },
+        {
+          "file": "train-c0-s50.idx.gz",
+          "classIndex": 0,
+          "start": 50000,
+          "count": 1000
+        },
+        {
+          "file": "train-c0-s51.idx.gz",
+          "classIndex": 0,
+          "start": 51000,
+          "count": 1000
+        },
+        {
+          "file": "train-c0-s52.idx.gz",
+          "classIndex": 0,
+          "start": 52000,
+          "count": 1000
+        },
+        {
+          "file": "train-c0-s53.idx.gz",
+          "classIndex": 0,
+          "start": 53000,
+          "count": 1000
+        },
+        {
+          "file": "train-c0-s54.idx.gz",
+          "classIndex": 0,
+          "start": 54000,
+          "count": 1000
+        },
+        {
+          "file": "train-c0-s55.idx.gz",
+          "classIndex": 0,
+          "start": 55000,
+          "count": 1000
+        },
+        {
+          "file": "train-c0-s56.idx.gz",
+          "classIndex": 0,
+          "start": 56000,
+          "count": 1000
+        },
+        {
+          "file": "train-c0-s57.idx.gz",
+          "classIndex": 0,
+          "start": 57000,
+          "count": 1000
+        },
+        {
+          "file": "train-c0-s58.idx.gz",
+          "classIndex": 0,
+          "start": 58000,
+          "count": 1000
+        },
+        {
+          "file": "train-c0-s59.idx.gz",
+          "classIndex": 0,
+          "start": 59000,
+          "count": 1000
+        },
+        {
+          "file": "train-c0-s60.idx.gz",
+          "classIndex": 0,
+          "start": 60000,
+          "count": 1000
+        },
+        {
+          "file": "train-c0-s61.idx.gz",
+          "classIndex": 0,
+          "start": 61000,
+          "count": 1000
+        },
+        {
+          "file": "train-c0-s62.idx.gz",
+          "classIndex": 0,
+          "start": 62000,
+          "count": 1000
+        },
+        {
+          "file": "train-c0-s63.idx.gz",
+          "classIndex": 0,
+          "start": 63000,
+          "count": 1000
+        },
+        {
+          "file": "train-c0-s64.idx.gz",
+          "classIndex": 0,
+          "start": 64000,
+          "count": 1000
+        },
+        {
+          "file": "train-c0-s65.idx.gz",
+          "classIndex": 0,
+          "start": 65000,
+          "count": 1000
+        },
+        {
+          "file": "train-c0-s66.idx.gz",
+          "classIndex": 0,
+          "start": 66000,
+          "count": 1000
+        },
+        {
+          "file": "train-c0-s67.idx.gz",
+          "classIndex": 0,
+          "start": 67000,
+          "count": 1000
+        },
+        {
+          "file": "train-c0-s68.idx.gz",
+          "classIndex": 0,
+          "start": 68000,
+          "count": 1000
+        },
+        {
+          "file": "train-c0-s69.idx.gz",
+          "classIndex": 0,
+          "start": 69000,
+          "count": 1000
+        },
+        {
+          "file": "train-c0-s70.idx.gz",
+          "classIndex": 0,
+          "start": 70000,
+          "count": 1000
+        },
+        {
+          "file": "train-c0-s71.idx.gz",
+          "classIndex": 0,
+          "start": 71000,
+          "count": 1000
+        },
+        {
+          "file": "train-c0-s72.idx.gz",
+          "classIndex": 0,
+          "start": 72000,
+          "count": 1000
+        },
+        {
+          "file": "train-c0-s73.idx.gz",
+          "classIndex": 0,
+          "start": 73000,
+          "count": 1000
+        },
+        {
+          "file": "train-c0-s74.idx.gz",
+          "classIndex": 0,
+          "start": 74000,
+          "count": 1000
+        },
+        {
+          "file": "train-c0-s75.idx.gz",
+          "classIndex": 0,
+          "start": 75000,
+          "count": 1000
+        },
+        {
+          "file": "train-c0-s76.idx.gz",
+          "classIndex": 0,
+          "start": 76000,
+          "count": 1000
+        },
+        {
+          "file": "train-c0-s77.idx.gz",
+          "classIndex": 0,
+          "start": 77000,
+          "count": 1000
+        },
+        {
+          "file": "train-c0-s78.idx.gz",
+          "classIndex": 0,
+          "start": 78000,
+          "count": 1000
+        },
+        {
+          "file": "train-c0-s79.idx.gz",
+          "classIndex": 0,
+          "start": 79000,
+          "count": 1000
+        },
+        {
+          "file": "train-c0-s80.idx.gz",
+          "classIndex": 0,
+          "start": 80000,
+          "count": 1000
+        },
+        {
+          "file": "train-c0-s81.idx.gz",
+          "classIndex": 0,
+          "start": 81000,
+          "count": 1000
+        },
+        {
+          "file": "train-c0-s82.idx.gz",
+          "classIndex": 0,
+          "start": 82000,
+          "count": 1000
+        },
+        {
+          "file": "train-c0-s83.idx.gz",
+          "classIndex": 0,
+          "start": 83000,
+          "count": 1000
+        },
+        {
+          "file": "train-c0-s84.idx.gz",
+          "classIndex": 0,
+          "start": 84000,
+          "count": 1000
+        },
+        {
+          "file": "train-c0-s85.idx.gz",
+          "classIndex": 0,
+          "start": 85000,
+          "count": 1000
+        },
+        {
+          "file": "train-c0-s86.idx.gz",
+          "classIndex": 0,
+          "start": 86000,
+          "count": 1000
+        },
+        {
+          "file": "train-c0-s87.idx.gz",
+          "classIndex": 0,
+          "start": 87000,
+          "count": 1000
+        },
+        {
+          "file": "train-c0-s88.idx.gz",
+          "classIndex": 0,
+          "start": 88000,
+          "count": 1000
+        },
+        {
+          "file": "train-c0-s89.idx.gz",
+          "classIndex": 0,
+          "start": 89000,
+          "count": 1000
+        },
+        {
+          "file": "train-c0-s90.idx.gz",
+          "classIndex": 0,
+          "start": 90000,
+          "count": 1000
+        },
+        {
+          "file": "train-c0-s91.idx.gz",
+          "classIndex": 0,
+          "start": 91000,
+          "count": 1000
+        },
+        {
+          "file": "train-c0-s92.idx.gz",
+          "classIndex": 0,
+          "start": 92000,
+          "count": 1000
+        },
+        {
+          "file": "train-c0-s93.idx.gz",
+          "classIndex": 0,
+          "start": 93000,
+          "count": 1000
+        },
+        {
+          "file": "train-c0-s94.idx.gz",
+          "classIndex": 0,
+          "start": 94000,
+          "count": 1000
+        },
+        {
+          "file": "train-c0-s95.idx.gz",
+          "classIndex": 0,
+          "start": 95000,
+          "count": 491
+        },
+        {
+          "file": "train-c1-s00.idx.gz",
+          "classIndex": 1,
+          "start": 95491,
+          "count": 1000
+        },
+        {
+          "file": "train-c1-s01.idx.gz",
+          "classIndex": 1,
+          "start": 96491,
+          "count": 1000
+        },
+        {
+          "file": "train-c1-s02.idx.gz",
+          "classIndex": 1,
+          "start": 97491,
+          "count": 1000
+        },
+        {
+          "file": "train-c1-s03.idx.gz",
+          "classIndex": 1,
+          "start": 98491,
+          "count": 1000
+        },
+        {
+          "file": "train-c1-s04.idx.gz",
+          "classIndex": 1,
+          "start": 99491,
+          "count": 1000
+        },
+        {
+          "file": "train-c1-s05.idx.gz",
+          "classIndex": 1,
+          "start": 100491,
+          "count": 1000
+        },
+        {
+          "file": "train-c1-s06.idx.gz",
+          "classIndex": 1,
+          "start": 101491,
+          "count": 1000
+        },
+        {
+          "file": "train-c1-s07.idx.gz",
+          "classIndex": 1,
+          "start": 102491,
+          "count": 1000
+        },
+        {
+          "file": "train-c1-s08.idx.gz",
+          "classIndex": 1,
+          "start": 103491,
+          "count": 1000
+        },
+        {
+          "file": "train-c1-s09.idx.gz",
+          "classIndex": 1,
+          "start": 104491,
+          "count": 1000
+        },
+        {
+          "file": "train-c1-s10.idx.gz",
+          "classIndex": 1,
+          "start": 105491,
+          "count": 1000
+        },
+        {
+          "file": "train-c1-s11.idx.gz",
+          "classIndex": 1,
+          "start": 106491,
+          "count": 1000
+        },
+        {
+          "file": "train-c1-s12.idx.gz",
+          "classIndex": 1,
+          "start": 107491,
+          "count": 1000
+        },
+        {
+          "file": "train-c1-s13.idx.gz",
+          "classIndex": 1,
+          "start": 108491,
+          "count": 1000
+        },
+        {
+          "file": "train-c1-s14.idx.gz",
+          "classIndex": 1,
+          "start": 109491,
+          "count": 1000
+        },
+        {
+          "file": "train-c1-s15.idx.gz",
+          "classIndex": 1,
+          "start": 110491,
+          "count": 1000
+        },
+        {
+          "file": "train-c1-s16.idx.gz",
+          "classIndex": 1,
+          "start": 111491,
+          "count": 1000
+        },
+        {
+          "file": "train-c1-s17.idx.gz",
+          "classIndex": 1,
+          "start": 112491,
+          "count": 1000
+        },
+        {
+          "file": "train-c1-s18.idx.gz",
+          "classIndex": 1,
+          "start": 113491,
+          "count": 1000
+        },
+        {
+          "file": "train-c1-s19.idx.gz",
+          "classIndex": 1,
+          "start": 114491,
+          "count": 1000
+        },
+        {
+          "file": "train-c1-s20.idx.gz",
+          "classIndex": 1,
+          "start": 115491,
+          "count": 1000
+        },
+        {
+          "file": "train-c1-s21.idx.gz",
+          "classIndex": 1,
+          "start": 116491,
+          "count": 1000
+        },
+        {
+          "file": "train-c1-s22.idx.gz",
+          "classIndex": 1,
+          "start": 117491,
+          "count": 1000
+        },
+        {
+          "file": "train-c1-s23.idx.gz",
+          "classIndex": 1,
+          "start": 118491,
+          "count": 1000
+        },
+        {
+          "file": "train-c1-s24.idx.gz",
+          "classIndex": 1,
+          "start": 119491,
+          "count": 1000
+        },
+        {
+          "file": "train-c1-s25.idx.gz",
+          "classIndex": 1,
+          "start": 120491,
+          "count": 1000
+        },
+        {
+          "file": "train-c1-s26.idx.gz",
+          "classIndex": 1,
+          "start": 121491,
+          "count": 1000
+        },
+        {
+          "file": "train-c1-s27.idx.gz",
+          "classIndex": 1,
+          "start": 122491,
+          "count": 1000
+        },
+        {
+          "file": "train-c1-s28.idx.gz",
+          "classIndex": 1,
+          "start": 123491,
+          "count": 1000
+        },
+        {
+          "file": "train-c1-s29.idx.gz",
+          "classIndex": 1,
+          "start": 124491,
+          "count": 1000
+        },
+        {
+          "file": "train-c1-s30.idx.gz",
+          "classIndex": 1,
+          "start": 125491,
+          "count": 1000
+        },
+        {
+          "file": "train-c1-s31.idx.gz",
+          "classIndex": 1,
+          "start": 126491,
+          "count": 1000
+        },
+        {
+          "file": "train-c1-s32.idx.gz",
+          "classIndex": 1,
+          "start": 127491,
+          "count": 1000
+        },
+        {
+          "file": "train-c1-s33.idx.gz",
+          "classIndex": 1,
+          "start": 128491,
+          "count": 1000
+        },
+        {
+          "file": "train-c1-s34.idx.gz",
+          "classIndex": 1,
+          "start": 129491,
+          "count": 1000
+        },
+        {
+          "file": "train-c1-s35.idx.gz",
+          "classIndex": 1,
+          "start": 130491,
+          "count": 1000
+        },
+        {
+          "file": "train-c1-s36.idx.gz",
+          "classIndex": 1,
+          "start": 131491,
+          "count": 1000
+        },
+        {
+          "file": "train-c1-s37.idx.gz",
+          "classIndex": 1,
+          "start": 132491,
+          "count": 1000
+        },
+        {
+          "file": "train-c1-s38.idx.gz",
+          "classIndex": 1,
+          "start": 133491,
+          "count": 1000
+        },
+        {
+          "file": "train-c1-s39.idx.gz",
+          "classIndex": 1,
+          "start": 134491,
+          "count": 1000
+        },
+        {
+          "file": "train-c1-s40.idx.gz",
+          "classIndex": 1,
+          "start": 135491,
+          "count": 1000
+        },
+        {
+          "file": "train-c1-s41.idx.gz",
+          "classIndex": 1,
+          "start": 136491,
+          "count": 1000
+        },
+        {
+          "file": "train-c1-s42.idx.gz",
+          "classIndex": 1,
+          "start": 137491,
+          "count": 1000
+        },
+        {
+          "file": "train-c1-s43.idx.gz",
+          "classIndex": 1,
+          "start": 138491,
+          "count": 1000
+        },
+        {
+          "file": "train-c1-s44.idx.gz",
+          "classIndex": 1,
+          "start": 139491,
+          "count": 1000
+        },
+        {
+          "file": "train-c1-s45.idx.gz",
+          "classIndex": 1,
+          "start": 140491,
+          "count": 1000
+        },
+        {
+          "file": "train-c1-s46.idx.gz",
+          "classIndex": 1,
+          "start": 141491,
+          "count": 1000
+        },
+        {
+          "file": "train-c1-s47.idx.gz",
+          "classIndex": 1,
+          "start": 142491,
+          "count": 1000
+        },
+        {
+          "file": "train-c1-s48.idx.gz",
+          "classIndex": 1,
+          "start": 143491,
+          "count": 1000
+        },
+        {
+          "file": "train-c1-s49.idx.gz",
+          "classIndex": 1,
+          "start": 144491,
+          "count": 1000
+        },
+        {
+          "file": "train-c1-s50.idx.gz",
+          "classIndex": 1,
+          "start": 145491,
+          "count": 1000
+        },
+        {
+          "file": "train-c1-s51.idx.gz",
+          "classIndex": 1,
+          "start": 146491,
+          "count": 1000
+        },
+        {
+          "file": "train-c1-s52.idx.gz",
+          "classIndex": 1,
+          "start": 147491,
+          "count": 1000
+        },
+        {
+          "file": "train-c1-s53.idx.gz",
+          "classIndex": 1,
+          "start": 148491,
+          "count": 1000
+        },
+        {
+          "file": "train-c1-s54.idx.gz",
+          "classIndex": 1,
+          "start": 149491,
+          "count": 1000
+        },
+        {
+          "file": "train-c1-s55.idx.gz",
+          "classIndex": 1,
+          "start": 150491,
+          "count": 1000
+        },
+        {
+          "file": "train-c1-s56.idx.gz",
+          "classIndex": 1,
+          "start": 151491,
+          "count": 1000
+        },
+        {
+          "file": "train-c1-s57.idx.gz",
+          "classIndex": 1,
+          "start": 152491,
+          "count": 1000
+        },
+        {
+          "file": "train-c1-s58.idx.gz",
+          "classIndex": 1,
+          "start": 153491,
+          "count": 1000
+        },
+        {
+          "file": "train-c1-s59.idx.gz",
+          "classIndex": 1,
+          "start": 154491,
+          "count": 1000
+        },
+        {
+          "file": "train-c1-s60.idx.gz",
+          "classIndex": 1,
+          "start": 155491,
+          "count": 1000
+        },
+        {
+          "file": "train-c1-s61.idx.gz",
+          "classIndex": 1,
+          "start": 156491,
+          "count": 1000
+        },
+        {
+          "file": "train-c1-s62.idx.gz",
+          "classIndex": 1,
+          "start": 157491,
+          "count": 1000
+        },
+        {
+          "file": "train-c1-s63.idx.gz",
+          "classIndex": 1,
+          "start": 158491,
+          "count": 1000
+        },
+        {
+          "file": "train-c1-s64.idx.gz",
+          "classIndex": 1,
+          "start": 159491,
+          "count": 1000
+        },
+        {
+          "file": "train-c1-s65.idx.gz",
+          "classIndex": 1,
+          "start": 160491,
+          "count": 1000
+        },
+        {
+          "file": "train-c1-s66.idx.gz",
+          "classIndex": 1,
+          "start": 161491,
+          "count": 1000
+        },
+        {
+          "file": "train-c1-s67.idx.gz",
+          "classIndex": 1,
+          "start": 162491,
+          "count": 1000
+        },
+        {
+          "file": "train-c1-s68.idx.gz",
+          "classIndex": 1,
+          "start": 163491,
+          "count": 1000
+        },
+        {
+          "file": "train-c1-s69.idx.gz",
+          "classIndex": 1,
+          "start": 164491,
+          "count": 1000
+        },
+        {
+          "file": "train-c1-s70.idx.gz",
+          "classIndex": 1,
+          "start": 165491,
+          "count": 1000
+        },
+        {
+          "file": "train-c1-s71.idx.gz",
+          "classIndex": 1,
+          "start": 166491,
+          "count": 1000
+        },
+        {
+          "file": "train-c1-s72.idx.gz",
+          "classIndex": 1,
+          "start": 167491,
+          "count": 1000
+        },
+        {
+          "file": "train-c1-s73.idx.gz",
+          "classIndex": 1,
+          "start": 168491,
+          "count": 1000
+        },
+        {
+          "file": "train-c1-s74.idx.gz",
+          "classIndex": 1,
+          "start": 169491,
+          "count": 1000
+        },
+        {
+          "file": "train-c1-s75.idx.gz",
+          "classIndex": 1,
+          "start": 170491,
+          "count": 1000
+        },
+        {
+          "file": "train-c1-s76.idx.gz",
+          "classIndex": 1,
+          "start": 171491,
+          "count": 1000
+        },
+        {
+          "file": "train-c1-s77.idx.gz",
+          "classIndex": 1,
+          "start": 172491,
+          "count": 1000
+        },
+        {
+          "file": "train-c1-s78.idx.gz",
+          "classIndex": 1,
+          "start": 173491,
+          "count": 1000
+        },
+        {
+          "file": "train-c1-s79.idx.gz",
+          "classIndex": 1,
+          "start": 174491,
+          "count": 1000
+        },
+        {
+          "file": "train-c1-s80.idx.gz",
+          "classIndex": 1,
+          "start": 175491,
+          "count": 1000
+        },
+        {
+          "file": "train-c1-s81.idx.gz",
+          "classIndex": 1,
+          "start": 176491,
+          "count": 1000
+        },
+        {
+          "file": "train-c1-s82.idx.gz",
+          "classIndex": 1,
+          "start": 177491,
+          "count": 1000
+        },
+        {
+          "file": "train-c1-s83.idx.gz",
+          "classIndex": 1,
+          "start": 178491,
+          "count": 1000
+        },
+        {
+          "file": "train-c1-s84.idx.gz",
+          "classIndex": 1,
+          "start": 179491,
+          "count": 1000
+        },
+        {
+          "file": "train-c1-s85.idx.gz",
+          "classIndex": 1,
+          "start": 180491,
+          "count": 1000
+        },
+        {
+          "file": "train-c1-s86.idx.gz",
+          "classIndex": 1,
+          "start": 181491,
+          "count": 1000
+        },
+        {
+          "file": "train-c1-s87.idx.gz",
+          "classIndex": 1,
+          "start": 182491,
+          "count": 1000
+        },
+        {
+          "file": "train-c1-s88.idx.gz",
+          "classIndex": 1,
+          "start": 183491,
+          "count": 1000
+        },
+        {
+          "file": "train-c1-s89.idx.gz",
+          "classIndex": 1,
+          "start": 184491,
+          "count": 1000
+        },
+        {
+          "file": "train-c1-s90.idx.gz",
+          "classIndex": 1,
+          "start": 185491,
+          "count": 1000
+        },
+        {
+          "file": "train-c1-s91.idx.gz",
+          "classIndex": 1,
+          "start": 186491,
+          "count": 1000
+        },
+        {
+          "file": "train-c1-s92.idx.gz",
+          "classIndex": 1,
+          "start": 187491,
+          "count": 1000
+        },
+        {
+          "file": "train-c1-s93.idx.gz",
+          "classIndex": 1,
+          "start": 188491,
+          "count": 1000
+        },
+        {
+          "file": "train-c1-s94.idx.gz",
+          "classIndex": 1,
+          "start": 189491,
+          "count": 1000
+        },
+        {
+          "file": "train-c1-s95.idx.gz",
+          "classIndex": 1,
+          "start": 190491,
+          "count": 1000
+        },
+        {
+          "file": "train-c1-s96.idx.gz",
+          "classIndex": 1,
+          "start": 191491,
+          "count": 1000
+        },
+        {
+          "file": "train-c1-s97.idx.gz",
+          "classIndex": 1,
+          "start": 192491,
+          "count": 328
+        },
+        {
+          "file": "train-c2-s00.idx.gz",
+          "classIndex": 2,
+          "start": 192819,
+          "count": 1000
+        },
+        {
+          "file": "train-c2-s01.idx.gz",
+          "classIndex": 2,
+          "start": 193819,
+          "count": 1000
+        },
+        {
+          "file": "train-c2-s02.idx.gz",
+          "classIndex": 2,
+          "start": 194819,
+          "count": 1000
+        },
+        {
+          "file": "train-c2-s03.idx.gz",
+          "classIndex": 2,
+          "start": 195819,
+          "count": 1000
+        },
+        {
+          "file": "train-c2-s04.idx.gz",
+          "classIndex": 2,
+          "start": 196819,
+          "count": 1000
+        },
+        {
+          "file": "train-c2-s05.idx.gz",
+          "classIndex": 2,
+          "start": 197819,
+          "count": 1000
+        },
+        {
+          "file": "train-c2-s06.idx.gz",
+          "classIndex": 2,
+          "start": 198819,
+          "count": 1000
+        },
+        {
+          "file": "train-c2-s07.idx.gz",
+          "classIndex": 2,
+          "start": 199819,
+          "count": 1000
+        },
+        {
+          "file": "train-c2-s08.idx.gz",
+          "classIndex": 2,
+          "start": 200819,
+          "count": 1000
+        },
+        {
+          "file": "train-c2-s09.idx.gz",
+          "classIndex": 2,
+          "start": 201819,
+          "count": 1000
+        },
+        {
+          "file": "train-c2-s10.idx.gz",
+          "classIndex": 2,
+          "start": 202819,
+          "count": 1000
+        },
+        {
+          "file": "train-c2-s11.idx.gz",
+          "classIndex": 2,
+          "start": 203819,
+          "count": 1000
+        },
+        {
+          "file": "train-c2-s12.idx.gz",
+          "classIndex": 2,
+          "start": 204819,
+          "count": 1000
+        },
+        {
+          "file": "train-c2-s13.idx.gz",
+          "classIndex": 2,
+          "start": 205819,
+          "count": 1000
+        },
+        {
+          "file": "train-c2-s14.idx.gz",
+          "classIndex": 2,
+          "start": 206819,
+          "count": 1000
+        },
+        {
+          "file": "train-c2-s15.idx.gz",
+          "classIndex": 2,
+          "start": 207819,
+          "count": 1000
+        },
+        {
+          "file": "train-c2-s16.idx.gz",
+          "classIndex": 2,
+          "start": 208819,
+          "count": 1000
+        },
+        {
+          "file": "train-c2-s17.idx.gz",
+          "classIndex": 2,
+          "start": 209819,
+          "count": 1000
+        },
+        {
+          "file": "train-c2-s18.idx.gz",
+          "classIndex": 2,
+          "start": 210819,
+          "count": 1000
+        },
+        {
+          "file": "train-c2-s19.idx.gz",
+          "classIndex": 2,
+          "start": 211819,
+          "count": 1000
+        },
+        {
+          "file": "train-c2-s20.idx.gz",
+          "classIndex": 2,
+          "start": 212819,
+          "count": 1000
+        },
+        {
+          "file": "train-c2-s21.idx.gz",
+          "classIndex": 2,
+          "start": 213819,
+          "count": 1000
+        },
+        {
+          "file": "train-c2-s22.idx.gz",
+          "classIndex": 2,
+          "start": 214819,
+          "count": 1000
+        },
+        {
+          "file": "train-c2-s23.idx.gz",
+          "classIndex": 2,
+          "start": 215819,
+          "count": 1000
+        },
+        {
+          "file": "train-c2-s24.idx.gz",
+          "classIndex": 2,
+          "start": 216819,
+          "count": 1000
+        },
+        {
+          "file": "train-c2-s25.idx.gz",
+          "classIndex": 2,
+          "start": 217819,
+          "count": 1000
+        },
+        {
+          "file": "train-c2-s26.idx.gz",
+          "classIndex": 2,
+          "start": 218819,
+          "count": 1000
+        },
+        {
+          "file": "train-c2-s27.idx.gz",
+          "classIndex": 2,
+          "start": 219819,
+          "count": 1000
+        },
+        {
+          "file": "train-c2-s28.idx.gz",
+          "classIndex": 2,
+          "start": 220819,
+          "count": 1000
+        },
+        {
+          "file": "train-c2-s29.idx.gz",
+          "classIndex": 2,
+          "start": 221819,
+          "count": 1000
+        },
+        {
+          "file": "train-c2-s30.idx.gz",
+          "classIndex": 2,
+          "start": 222819,
+          "count": 1000
+        },
+        {
+          "file": "train-c2-s31.idx.gz",
+          "classIndex": 2,
+          "start": 223819,
+          "count": 1000
+        },
+        {
+          "file": "train-c2-s32.idx.gz",
+          "classIndex": 2,
+          "start": 224819,
+          "count": 1000
+        },
+        {
+          "file": "train-c2-s33.idx.gz",
+          "classIndex": 2,
+          "start": 225819,
+          "count": 1000
+        },
+        {
+          "file": "train-c2-s34.idx.gz",
+          "classIndex": 2,
+          "start": 226819,
+          "count": 1000
+        },
+        {
+          "file": "train-c2-s35.idx.gz",
+          "classIndex": 2,
+          "start": 227819,
+          "count": 1000
+        },
+        {
+          "file": "train-c2-s36.idx.gz",
+          "classIndex": 2,
+          "start": 228819,
+          "count": 1000
+        },
+        {
+          "file": "train-c2-s37.idx.gz",
+          "classIndex": 2,
+          "start": 229819,
+          "count": 1000
+        },
+        {
+          "file": "train-c2-s38.idx.gz",
+          "classIndex": 2,
+          "start": 230819,
+          "count": 1000
+        },
+        {
+          "file": "train-c2-s39.idx.gz",
+          "classIndex": 2,
+          "start": 231819,
+          "count": 1000
+        },
+        {
+          "file": "train-c2-s40.idx.gz",
+          "classIndex": 2,
+          "start": 232819,
+          "count": 1000
+        },
+        {
+          "file": "train-c2-s41.idx.gz",
+          "classIndex": 2,
+          "start": 233819,
+          "count": 1000
+        },
+        {
+          "file": "train-c2-s42.idx.gz",
+          "classIndex": 2,
+          "start": 234819,
+          "count": 1000
+        },
+        {
+          "file": "train-c2-s43.idx.gz",
+          "classIndex": 2,
+          "start": 235819,
+          "count": 1000
+        },
+        {
+          "file": "train-c2-s44.idx.gz",
+          "classIndex": 2,
+          "start": 236819,
+          "count": 1000
+        },
+        {
+          "file": "train-c2-s45.idx.gz",
+          "classIndex": 2,
+          "start": 237819,
+          "count": 1000
+        },
+        {
+          "file": "train-c2-s46.idx.gz",
+          "classIndex": 2,
+          "start": 238819,
+          "count": 1000
+        },
+        {
+          "file": "train-c2-s47.idx.gz",
+          "classIndex": 2,
+          "start": 239819,
+          "count": 1000
+        },
+        {
+          "file": "train-c2-s48.idx.gz",
+          "classIndex": 2,
+          "start": 240819,
+          "count": 1000
+        },
+        {
+          "file": "train-c2-s49.idx.gz",
+          "classIndex": 2,
+          "start": 241819,
+          "count": 1000
+        },
+        {
+          "file": "train-c2-s50.idx.gz",
+          "classIndex": 2,
+          "start": 242819,
+          "count": 1000
+        },
+        {
+          "file": "train-c2-s51.idx.gz",
+          "classIndex": 2,
+          "start": 243819,
+          "count": 1000
+        },
+        {
+          "file": "train-c2-s52.idx.gz",
+          "classIndex": 2,
+          "start": 244819,
+          "count": 1000
+        },
+        {
+          "file": "train-c2-s53.idx.gz",
+          "classIndex": 2,
+          "start": 245819,
+          "count": 1000
+        },
+        {
+          "file": "train-c2-s54.idx.gz",
+          "classIndex": 2,
+          "start": 246819,
+          "count": 1000
+        },
+        {
+          "file": "train-c2-s55.idx.gz",
+          "classIndex": 2,
+          "start": 247819,
+          "count": 1000
+        },
+        {
+          "file": "train-c2-s56.idx.gz",
+          "classIndex": 2,
+          "start": 248819,
+          "count": 1000
+        },
+        {
+          "file": "train-c2-s57.idx.gz",
+          "classIndex": 2,
+          "start": 249819,
+          "count": 1000
+        },
+        {
+          "file": "train-c2-s58.idx.gz",
+          "classIndex": 2,
+          "start": 250819,
+          "count": 1000
+        },
+        {
+          "file": "train-c2-s59.idx.gz",
+          "classIndex": 2,
+          "start": 251819,
+          "count": 1000
+        },
+        {
+          "file": "train-c2-s60.idx.gz",
+          "classIndex": 2,
+          "start": 252819,
+          "count": 1000
+        },
+        {
+          "file": "train-c2-s61.idx.gz",
+          "classIndex": 2,
+          "start": 253819,
+          "count": 1000
+        },
+        {
+          "file": "train-c2-s62.idx.gz",
+          "classIndex": 2,
+          "start": 254819,
+          "count": 1000
+        },
+        {
+          "file": "train-c2-s63.idx.gz",
+          "classIndex": 2,
+          "start": 255819,
+          "count": 1000
+        },
+        {
+          "file": "train-c2-s64.idx.gz",
+          "classIndex": 2,
+          "start": 256819,
+          "count": 1000
+        },
+        {
+          "file": "train-c2-s65.idx.gz",
+          "classIndex": 2,
+          "start": 257819,
+          "count": 1000
+        },
+        {
+          "file": "train-c2-s66.idx.gz",
+          "classIndex": 2,
+          "start": 258819,
+          "count": 1000
+        },
+        {
+          "file": "train-c2-s67.idx.gz",
+          "classIndex": 2,
+          "start": 259819,
+          "count": 1000
+        },
+        {
+          "file": "train-c2-s68.idx.gz",
+          "classIndex": 2,
+          "start": 260819,
+          "count": 1000
+        },
+        {
+          "file": "train-c2-s69.idx.gz",
+          "classIndex": 2,
+          "start": 261819,
+          "count": 1000
+        },
+        {
+          "file": "train-c2-s70.idx.gz",
+          "classIndex": 2,
+          "start": 262819,
+          "count": 1000
+        },
+        {
+          "file": "train-c2-s71.idx.gz",
+          "classIndex": 2,
+          "start": 263819,
+          "count": 1000
+        },
+        {
+          "file": "train-c2-s72.idx.gz",
+          "classIndex": 2,
+          "start": 264819,
+          "count": 1000
+        },
+        {
+          "file": "train-c2-s73.idx.gz",
+          "classIndex": 2,
+          "start": 265819,
+          "count": 1000
+        },
+        {
+          "file": "train-c2-s74.idx.gz",
+          "classIndex": 2,
+          "start": 266819,
+          "count": 1000
+        },
+        {
+          "file": "train-c2-s75.idx.gz",
+          "classIndex": 2,
+          "start": 267819,
+          "count": 1000
+        },
+        {
+          "file": "train-c2-s76.idx.gz",
+          "classIndex": 2,
+          "start": 268819,
+          "count": 1000
+        },
+        {
+          "file": "train-c2-s77.idx.gz",
+          "classIndex": 2,
+          "start": 269819,
+          "count": 1000
+        },
+        {
+          "file": "train-c2-s78.idx.gz",
+          "classIndex": 2,
+          "start": 270819,
+          "count": 1000
+        },
+        {
+          "file": "train-c2-s79.idx.gz",
+          "classIndex": 2,
+          "start": 271819,
+          "count": 1000
+        },
+        {
+          "file": "train-c2-s80.idx.gz",
+          "classIndex": 2,
+          "start": 272819,
+          "count": 1000
+        },
+        {
+          "file": "train-c2-s81.idx.gz",
+          "classIndex": 2,
+          "start": 273819,
+          "count": 1000
+        },
+        {
+          "file": "train-c2-s82.idx.gz",
+          "classIndex": 2,
+          "start": 274819,
+          "count": 1000
+        },
+        {
+          "file": "train-c2-s83.idx.gz",
+          "classIndex": 2,
+          "start": 275819,
+          "count": 1000
+        },
+        {
+          "file": "train-c2-s84.idx.gz",
+          "classIndex": 2,
+          "start": 276819,
+          "count": 1000
+        },
+        {
+          "file": "train-c2-s85.idx.gz",
+          "classIndex": 2,
+          "start": 277819,
+          "count": 1000
+        },
+        {
+          "file": "train-c2-s86.idx.gz",
+          "classIndex": 2,
+          "start": 278819,
+          "count": 1000
+        },
+        {
+          "file": "train-c2-s87.idx.gz",
+          "classIndex": 2,
+          "start": 279819,
+          "count": 1000
+        },
+        {
+          "file": "train-c2-s88.idx.gz",
+          "classIndex": 2,
+          "start": 280819,
+          "count": 1000
+        },
+        {
+          "file": "train-c2-s89.idx.gz",
+          "classIndex": 2,
+          "start": 281819,
+          "count": 1000
+        },
+        {
+          "file": "train-c2-s90.idx.gz",
+          "classIndex": 2,
+          "start": 282819,
+          "count": 1000
+        },
+        {
+          "file": "train-c2-s91.idx.gz",
+          "classIndex": 2,
+          "start": 283819,
+          "count": 1000
+        },
+        {
+          "file": "train-c2-s92.idx.gz",
+          "classIndex": 2,
+          "start": 284819,
+          "count": 1000
+        },
+        {
+          "file": "train-c2-s93.idx.gz",
+          "classIndex": 2,
+          "start": 285819,
+          "count": 1000
+        },
+        {
+          "file": "train-c2-s94.idx.gz",
+          "classIndex": 2,
+          "start": 286819,
+          "count": 1000
+        },
+        {
+          "file": "train-c2-s95.idx.gz",
+          "classIndex": 2,
+          "start": 287819,
+          "count": 1000
+        },
+        {
+          "file": "train-c2-s96.idx.gz",
+          "classIndex": 2,
+          "start": 288819,
+          "count": 1000
+        },
+        {
+          "file": "train-c2-s97.idx.gz",
+          "classIndex": 2,
+          "start": 289819,
+          "count": 1000
+        },
+        {
+          "file": "train-c2-s98.idx.gz",
+          "classIndex": 2,
+          "start": 290819,
+          "count": 561
+        },
+        {
+          "file": "train-c3-s00.idx.gz",
+          "classIndex": 3,
+          "start": 291380,
+          "count": 1000
+        },
+        {
+          "file": "train-c3-s01.idx.gz",
+          "classIndex": 3,
+          "start": 292380,
+          "count": 1000
+        },
+        {
+          "file": "train-c3-s02.idx.gz",
+          "classIndex": 3,
+          "start": 293380,
+          "count": 1000
+        },
+        {
+          "file": "train-c3-s03.idx.gz",
+          "classIndex": 3,
+          "start": 294380,
+          "count": 1000
+        },
+        {
+          "file": "train-c3-s04.idx.gz",
+          "classIndex": 3,
+          "start": 295380,
+          "count": 1000
+        },
+        {
+          "file": "train-c3-s05.idx.gz",
+          "classIndex": 3,
+          "start": 296380,
+          "count": 1000
+        },
+        {
+          "file": "train-c3-s06.idx.gz",
+          "classIndex": 3,
+          "start": 297380,
+          "count": 1000
+        },
+        {
+          "file": "train-c3-s07.idx.gz",
+          "classIndex": 3,
+          "start": 298380,
+          "count": 1000
+        },
+        {
+          "file": "train-c3-s08.idx.gz",
+          "classIndex": 3,
+          "start": 299380,
+          "count": 1000
+        },
+        {
+          "file": "train-c3-s09.idx.gz",
+          "classIndex": 3,
+          "start": 300380,
+          "count": 1000
+        },
+        {
+          "file": "train-c3-s10.idx.gz",
+          "classIndex": 3,
+          "start": 301380,
+          "count": 1000
+        },
+        {
+          "file": "train-c3-s11.idx.gz",
+          "classIndex": 3,
+          "start": 302380,
+          "count": 1000
+        },
+        {
+          "file": "train-c3-s12.idx.gz",
+          "classIndex": 3,
+          "start": 303380,
+          "count": 1000
+        },
+        {
+          "file": "train-c3-s13.idx.gz",
+          "classIndex": 3,
+          "start": 304380,
+          "count": 1000
+        },
+        {
+          "file": "train-c3-s14.idx.gz",
+          "classIndex": 3,
+          "start": 305380,
+          "count": 1000
+        },
+        {
+          "file": "train-c3-s15.idx.gz",
+          "classIndex": 3,
+          "start": 306380,
+          "count": 1000
+        },
+        {
+          "file": "train-c3-s16.idx.gz",
+          "classIndex": 3,
+          "start": 307380,
+          "count": 1000
+        },
+        {
+          "file": "train-c3-s17.idx.gz",
+          "classIndex": 3,
+          "start": 308380,
+          "count": 1000
+        },
+        {
+          "file": "train-c3-s18.idx.gz",
+          "classIndex": 3,
+          "start": 309380,
+          "count": 1000
+        },
+        {
+          "file": "train-c3-s19.idx.gz",
+          "classIndex": 3,
+          "start": 310380,
+          "count": 1000
+        },
+        {
+          "file": "train-c3-s20.idx.gz",
+          "classIndex": 3,
+          "start": 311380,
+          "count": 1000
+        },
+        {
+          "file": "train-c3-s21.idx.gz",
+          "classIndex": 3,
+          "start": 312380,
+          "count": 1000
+        },
+        {
+          "file": "train-c3-s22.idx.gz",
+          "classIndex": 3,
+          "start": 313380,
+          "count": 1000
+        },
+        {
+          "file": "train-c3-s23.idx.gz",
+          "classIndex": 3,
+          "start": 314380,
+          "count": 1000
+        },
+        {
+          "file": "train-c3-s24.idx.gz",
+          "classIndex": 3,
+          "start": 315380,
+          "count": 1000
+        },
+        {
+          "file": "train-c3-s25.idx.gz",
+          "classIndex": 3,
+          "start": 316380,
+          "count": 1000
+        },
+        {
+          "file": "train-c3-s26.idx.gz",
+          "classIndex": 3,
+          "start": 317380,
+          "count": 1000
+        },
+        {
+          "file": "train-c3-s27.idx.gz",
+          "classIndex": 3,
+          "start": 318380,
+          "count": 1000
+        },
+        {
+          "file": "train-c3-s28.idx.gz",
+          "classIndex": 3,
+          "start": 319380,
+          "count": 1000
+        },
+        {
+          "file": "train-c3-s29.idx.gz",
+          "classIndex": 3,
+          "start": 320380,
+          "count": 1000
+        },
+        {
+          "file": "train-c3-s30.idx.gz",
+          "classIndex": 3,
+          "start": 321380,
+          "count": 1000
+        },
+        {
+          "file": "train-c3-s31.idx.gz",
+          "classIndex": 3,
+          "start": 322380,
+          "count": 1000
+        },
+        {
+          "file": "train-c3-s32.idx.gz",
+          "classIndex": 3,
+          "start": 323380,
+          "count": 1000
+        },
+        {
+          "file": "train-c3-s33.idx.gz",
+          "classIndex": 3,
+          "start": 324380,
+          "count": 1000
+        },
+        {
+          "file": "train-c3-s34.idx.gz",
+          "classIndex": 3,
+          "start": 325380,
+          "count": 1000
+        },
+        {
+          "file": "train-c3-s35.idx.gz",
+          "classIndex": 3,
+          "start": 326380,
+          "count": 1000
+        },
+        {
+          "file": "train-c3-s36.idx.gz",
+          "classIndex": 3,
+          "start": 327380,
+          "count": 1000
+        },
+        {
+          "file": "train-c3-s37.idx.gz",
+          "classIndex": 3,
+          "start": 328380,
+          "count": 1000
+        },
+        {
+          "file": "train-c3-s38.idx.gz",
+          "classIndex": 3,
+          "start": 329380,
+          "count": 1000
+        },
+        {
+          "file": "train-c3-s39.idx.gz",
+          "classIndex": 3,
+          "start": 330380,
+          "count": 1000
+        },
+        {
+          "file": "train-c3-s40.idx.gz",
+          "classIndex": 3,
+          "start": 331380,
+          "count": 1000
+        },
+        {
+          "file": "train-c3-s41.idx.gz",
+          "classIndex": 3,
+          "start": 332380,
+          "count": 1000
+        },
+        {
+          "file": "train-c3-s42.idx.gz",
+          "classIndex": 3,
+          "start": 333380,
+          "count": 1000
+        },
+        {
+          "file": "train-c3-s43.idx.gz",
+          "classIndex": 3,
+          "start": 334380,
+          "count": 1000
+        },
+        {
+          "file": "train-c3-s44.idx.gz",
+          "classIndex": 3,
+          "start": 335380,
+          "count": 1000
+        },
+        {
+          "file": "train-c3-s45.idx.gz",
+          "classIndex": 3,
+          "start": 336380,
+          "count": 1000
+        },
+        {
+          "file": "train-c3-s46.idx.gz",
+          "classIndex": 3,
+          "start": 337380,
+          "count": 1000
+        },
+        {
+          "file": "train-c3-s47.idx.gz",
+          "classIndex": 3,
+          "start": 338380,
+          "count": 1000
+        },
+        {
+          "file": "train-c3-s48.idx.gz",
+          "classIndex": 3,
+          "start": 339380,
+          "count": 1000
+        },
+        {
+          "file": "train-c3-s49.idx.gz",
+          "classIndex": 3,
+          "start": 340380,
+          "count": 1000
+        },
+        {
+          "file": "train-c3-s50.idx.gz",
+          "classIndex": 3,
+          "start": 341380,
+          "count": 1000
+        },
+        {
+          "file": "train-c3-s51.idx.gz",
+          "classIndex": 3,
+          "start": 342380,
+          "count": 1000
+        },
+        {
+          "file": "train-c3-s52.idx.gz",
+          "classIndex": 3,
+          "start": 343380,
+          "count": 1000
+        },
+        {
+          "file": "train-c3-s53.idx.gz",
+          "classIndex": 3,
+          "start": 344380,
+          "count": 1000
+        },
+        {
+          "file": "train-c3-s54.idx.gz",
+          "classIndex": 3,
+          "start": 345380,
+          "count": 1000
+        },
+        {
+          "file": "train-c3-s55.idx.gz",
+          "classIndex": 3,
+          "start": 346380,
+          "count": 1000
+        },
+        {
+          "file": "train-c3-s56.idx.gz",
+          "classIndex": 3,
+          "start": 347380,
+          "count": 1000
+        },
+        {
+          "file": "train-c3-s57.idx.gz",
+          "classIndex": 3,
+          "start": 348380,
+          "count": 1000
+        },
+        {
+          "file": "train-c3-s58.idx.gz",
+          "classIndex": 3,
+          "start": 349380,
+          "count": 1000
+        },
+        {
+          "file": "train-c3-s59.idx.gz",
+          "classIndex": 3,
+          "start": 350380,
+          "count": 1000
+        },
+        {
+          "file": "train-c3-s60.idx.gz",
+          "classIndex": 3,
+          "start": 351380,
+          "count": 1000
+        },
+        {
+          "file": "train-c3-s61.idx.gz",
+          "classIndex": 3,
+          "start": 352380,
+          "count": 1000
+        },
+        {
+          "file": "train-c3-s62.idx.gz",
+          "classIndex": 3,
+          "start": 353380,
+          "count": 1000
+        },
+        {
+          "file": "train-c3-s63.idx.gz",
+          "classIndex": 3,
+          "start": 354380,
+          "count": 1000
+        },
+        {
+          "file": "train-c3-s64.idx.gz",
+          "classIndex": 3,
+          "start": 355380,
+          "count": 1000
+        },
+        {
+          "file": "train-c3-s65.idx.gz",
+          "classIndex": 3,
+          "start": 356380,
+          "count": 1000
+        },
+        {
+          "file": "train-c3-s66.idx.gz",
+          "classIndex": 3,
+          "start": 357380,
+          "count": 1000
+        },
+        {
+          "file": "train-c3-s67.idx.gz",
+          "classIndex": 3,
+          "start": 358380,
+          "count": 1000
+        },
+        {
+          "file": "train-c3-s68.idx.gz",
+          "classIndex": 3,
+          "start": 359380,
+          "count": 1000
+        },
+        {
+          "file": "train-c3-s69.idx.gz",
+          "classIndex": 3,
+          "start": 360380,
+          "count": 1000
+        },
+        {
+          "file": "train-c3-s70.idx.gz",
+          "classIndex": 3,
+          "start": 361380,
+          "count": 1000
+        },
+        {
+          "file": "train-c3-s71.idx.gz",
+          "classIndex": 3,
+          "start": 362380,
+          "count": 1000
+        },
+        {
+          "file": "train-c3-s72.idx.gz",
+          "classIndex": 3,
+          "start": 363380,
+          "count": 1000
+        },
+        {
+          "file": "train-c3-s73.idx.gz",
+          "classIndex": 3,
+          "start": 364380,
+          "count": 1000
+        },
+        {
+          "file": "train-c3-s74.idx.gz",
+          "classIndex": 3,
+          "start": 365380,
+          "count": 1000
+        },
+        {
+          "file": "train-c3-s75.idx.gz",
+          "classIndex": 3,
+          "start": 366380,
+          "count": 1000
+        },
+        {
+          "file": "train-c3-s76.idx.gz",
+          "classIndex": 3,
+          "start": 367380,
+          "count": 1000
+        },
+        {
+          "file": "train-c3-s77.idx.gz",
+          "classIndex": 3,
+          "start": 368380,
+          "count": 1000
+        },
+        {
+          "file": "train-c3-s78.idx.gz",
+          "classIndex": 3,
+          "start": 369380,
+          "count": 1000
+        },
+        {
+          "file": "train-c3-s79.idx.gz",
+          "classIndex": 3,
+          "start": 370380,
+          "count": 1000
+        },
+        {
+          "file": "train-c3-s80.idx.gz",
+          "classIndex": 3,
+          "start": 371380,
+          "count": 1000
+        },
+        {
+          "file": "train-c3-s81.idx.gz",
+          "classIndex": 3,
+          "start": 372380,
+          "count": 1000
+        },
+        {
+          "file": "train-c3-s82.idx.gz",
+          "classIndex": 3,
+          "start": 373380,
+          "count": 1000
+        },
+        {
+          "file": "train-c3-s83.idx.gz",
+          "classIndex": 3,
+          "start": 374380,
+          "count": 1000
+        },
+        {
+          "file": "train-c3-s84.idx.gz",
+          "classIndex": 3,
+          "start": 375380,
+          "count": 1000
+        },
+        {
+          "file": "train-c3-s85.idx.gz",
+          "classIndex": 3,
+          "start": 376380,
+          "count": 1000
+        },
+        {
+          "file": "train-c3-s86.idx.gz",
+          "classIndex": 3,
+          "start": 377380,
+          "count": 1000
+        },
+        {
+          "file": "train-c3-s87.idx.gz",
+          "classIndex": 3,
+          "start": 378380,
+          "count": 1000
+        },
+        {
+          "file": "train-c3-s88.idx.gz",
+          "classIndex": 3,
+          "start": 379380,
+          "count": 1000
+        },
+        {
+          "file": "train-c3-s89.idx.gz",
+          "classIndex": 3,
+          "start": 380380,
+          "count": 1000
+        },
+        {
+          "file": "train-c3-s90.idx.gz",
+          "classIndex": 3,
+          "start": 381380,
+          "count": 1000
+        },
+        {
+          "file": "train-c3-s91.idx.gz",
+          "classIndex": 3,
+          "start": 382380,
+          "count": 1000
+        },
+        {
+          "file": "train-c3-s92.idx.gz",
+          "classIndex": 3,
+          "start": 383380,
+          "count": 1000
+        },
+        {
+          "file": "train-c3-s93.idx.gz",
+          "classIndex": 3,
+          "start": 384380,
+          "count": 1000
+        },
+        {
+          "file": "train-c3-s94.idx.gz",
+          "classIndex": 3,
+          "start": 385380,
+          "count": 1000
+        },
+        {
+          "file": "train-c3-s95.idx.gz",
+          "classIndex": 3,
+          "start": 386380,
+          "count": 1000
+        },
+        {
+          "file": "train-c3-s96.idx.gz",
+          "classIndex": 3,
+          "start": 387380,
+          "count": 1000
+        },
+        {
+          "file": "train-c3-s97.idx.gz",
+          "classIndex": 3,
+          "start": 388380,
+          "count": 1000
+        },
+        {
+          "file": "train-c3-s98.idx.gz",
+          "classIndex": 3,
+          "start": 389380,
+          "count": 1000
+        },
+        {
+          "file": "train-c3-s99.idx.gz",
+          "classIndex": 3,
+          "start": 390380,
+          "count": 267
+        },
+        {
+          "file": "train-c4-s00.idx.gz",
+          "classIndex": 4,
+          "start": 390647,
+          "count": 1000
+        },
+        {
+          "file": "train-c4-s01.idx.gz",
+          "classIndex": 4,
+          "start": 391647,
+          "count": 1000
+        },
+        {
+          "file": "train-c4-s02.idx.gz",
+          "classIndex": 4,
+          "start": 392647,
+          "count": 1000
+        },
+        {
+          "file": "train-c4-s03.idx.gz",
+          "classIndex": 4,
+          "start": 393647,
+          "count": 1000
+        },
+        {
+          "file": "train-c4-s04.idx.gz",
+          "classIndex": 4,
+          "start": 394647,
+          "count": 1000
+        },
+        {
+          "file": "train-c4-s05.idx.gz",
+          "classIndex": 4,
+          "start": 395647,
+          "count": 1000
+        },
+        {
+          "file": "train-c4-s06.idx.gz",
+          "classIndex": 4,
+          "start": 396647,
+          "count": 1000
+        },
+        {
+          "file": "train-c4-s07.idx.gz",
+          "classIndex": 4,
+          "start": 397647,
+          "count": 1000
+        },
+        {
+          "file": "train-c4-s08.idx.gz",
+          "classIndex": 4,
+          "start": 398647,
+          "count": 1000
+        },
+        {
+          "file": "train-c4-s09.idx.gz",
+          "classIndex": 4,
+          "start": 399647,
+          "count": 1000
+        },
+        {
+          "file": "train-c4-s10.idx.gz",
+          "classIndex": 4,
+          "start": 400647,
+          "count": 1000
+        },
+        {
+          "file": "train-c4-s11.idx.gz",
+          "classIndex": 4,
+          "start": 401647,
+          "count": 1000
+        },
+        {
+          "file": "train-c4-s12.idx.gz",
+          "classIndex": 4,
+          "start": 402647,
+          "count": 1000
+        },
+        {
+          "file": "train-c4-s13.idx.gz",
+          "classIndex": 4,
+          "start": 403647,
+          "count": 1000
+        },
+        {
+          "file": "train-c4-s14.idx.gz",
+          "classIndex": 4,
+          "start": 404647,
+          "count": 1000
+        },
+        {
+          "file": "train-c4-s15.idx.gz",
+          "classIndex": 4,
+          "start": 405647,
+          "count": 1000
+        },
+        {
+          "file": "train-c4-s16.idx.gz",
+          "classIndex": 4,
+          "start": 406647,
+          "count": 1000
+        },
+        {
+          "file": "train-c4-s17.idx.gz",
+          "classIndex": 4,
+          "start": 407647,
+          "count": 1000
+        },
+        {
+          "file": "train-c4-s18.idx.gz",
+          "classIndex": 4,
+          "start": 408647,
+          "count": 1000
+        },
+        {
+          "file": "train-c4-s19.idx.gz",
+          "classIndex": 4,
+          "start": 409647,
+          "count": 1000
+        },
+        {
+          "file": "train-c4-s20.idx.gz",
+          "classIndex": 4,
+          "start": 410647,
+          "count": 1000
+        },
+        {
+          "file": "train-c4-s21.idx.gz",
+          "classIndex": 4,
+          "start": 411647,
+          "count": 1000
+        },
+        {
+          "file": "train-c4-s22.idx.gz",
+          "classIndex": 4,
+          "start": 412647,
+          "count": 1000
+        },
+        {
+          "file": "train-c4-s23.idx.gz",
+          "classIndex": 4,
+          "start": 413647,
+          "count": 1000
+        },
+        {
+          "file": "train-c4-s24.idx.gz",
+          "classIndex": 4,
+          "start": 414647,
+          "count": 1000
+        },
+        {
+          "file": "train-c4-s25.idx.gz",
+          "classIndex": 4,
+          "start": 415647,
+          "count": 1000
+        },
+        {
+          "file": "train-c4-s26.idx.gz",
+          "classIndex": 4,
+          "start": 416647,
+          "count": 1000
+        },
+        {
+          "file": "train-c4-s27.idx.gz",
+          "classIndex": 4,
+          "start": 417647,
+          "count": 1000
+        },
+        {
+          "file": "train-c4-s28.idx.gz",
+          "classIndex": 4,
+          "start": 418647,
+          "count": 1000
+        },
+        {
+          "file": "train-c4-s29.idx.gz",
+          "classIndex": 4,
+          "start": 419647,
+          "count": 1000
+        },
+        {
+          "file": "train-c4-s30.idx.gz",
+          "classIndex": 4,
+          "start": 420647,
+          "count": 1000
+        },
+        {
+          "file": "train-c4-s31.idx.gz",
+          "classIndex": 4,
+          "start": 421647,
+          "count": 1000
+        },
+        {
+          "file": "train-c4-s32.idx.gz",
+          "classIndex": 4,
+          "start": 422647,
+          "count": 1000
+        },
+        {
+          "file": "train-c4-s33.idx.gz",
+          "classIndex": 4,
+          "start": 423647,
+          "count": 1000
+        },
+        {
+          "file": "train-c4-s34.idx.gz",
+          "classIndex": 4,
+          "start": 424647,
+          "count": 1000
+        },
+        {
+          "file": "train-c4-s35.idx.gz",
+          "classIndex": 4,
+          "start": 425647,
+          "count": 1000
+        },
+        {
+          "file": "train-c4-s36.idx.gz",
+          "classIndex": 4,
+          "start": 426647,
+          "count": 1000
+        },
+        {
+          "file": "train-c4-s37.idx.gz",
+          "classIndex": 4,
+          "start": 427647,
+          "count": 1000
+        },
+        {
+          "file": "train-c4-s38.idx.gz",
+          "classIndex": 4,
+          "start": 428647,
+          "count": 1000
+        },
+        {
+          "file": "train-c4-s39.idx.gz",
+          "classIndex": 4,
+          "start": 429647,
+          "count": 1000
+        },
+        {
+          "file": "train-c4-s40.idx.gz",
+          "classIndex": 4,
+          "start": 430647,
+          "count": 1000
+        },
+        {
+          "file": "train-c4-s41.idx.gz",
+          "classIndex": 4,
+          "start": 431647,
+          "count": 1000
+        },
+        {
+          "file": "train-c4-s42.idx.gz",
+          "classIndex": 4,
+          "start": 432647,
+          "count": 1000
+        },
+        {
+          "file": "train-c4-s43.idx.gz",
+          "classIndex": 4,
+          "start": 433647,
+          "count": 1000
+        },
+        {
+          "file": "train-c4-s44.idx.gz",
+          "classIndex": 4,
+          "start": 434647,
+          "count": 1000
+        },
+        {
+          "file": "train-c4-s45.idx.gz",
+          "classIndex": 4,
+          "start": 435647,
+          "count": 1000
+        },
+        {
+          "file": "train-c4-s46.idx.gz",
+          "classIndex": 4,
+          "start": 436647,
+          "count": 1000
+        },
+        {
+          "file": "train-c4-s47.idx.gz",
+          "classIndex": 4,
+          "start": 437647,
+          "count": 1000
+        },
+        {
+          "file": "train-c4-s48.idx.gz",
+          "classIndex": 4,
+          "start": 438647,
+          "count": 1000
+        },
+        {
+          "file": "train-c4-s49.idx.gz",
+          "classIndex": 4,
+          "start": 439647,
+          "count": 1000
+        },
+        {
+          "file": "train-c4-s50.idx.gz",
+          "classIndex": 4,
+          "start": 440647,
+          "count": 1000
+        },
+        {
+          "file": "train-c4-s51.idx.gz",
+          "classIndex": 4,
+          "start": 441647,
+          "count": 1000
+        },
+        {
+          "file": "train-c4-s52.idx.gz",
+          "classIndex": 4,
+          "start": 442647,
+          "count": 1000
+        },
+        {
+          "file": "train-c4-s53.idx.gz",
+          "classIndex": 4,
+          "start": 443647,
+          "count": 1000
+        },
+        {
+          "file": "train-c4-s54.idx.gz",
+          "classIndex": 4,
+          "start": 444647,
+          "count": 1000
+        },
+        {
+          "file": "train-c4-s55.idx.gz",
+          "classIndex": 4,
+          "start": 445647,
+          "count": 1000
+        },
+        {
+          "file": "train-c4-s56.idx.gz",
+          "classIndex": 4,
+          "start": 446647,
+          "count": 1000
+        },
+        {
+          "file": "train-c4-s57.idx.gz",
+          "classIndex": 4,
+          "start": 447647,
+          "count": 1000
+        },
+        {
+          "file": "train-c4-s58.idx.gz",
+          "classIndex": 4,
+          "start": 448647,
+          "count": 1000
+        },
+        {
+          "file": "train-c4-s59.idx.gz",
+          "classIndex": 4,
+          "start": 449647,
+          "count": 1000
+        },
+        {
+          "file": "train-c4-s60.idx.gz",
+          "classIndex": 4,
+          "start": 450647,
+          "count": 1000
+        },
+        {
+          "file": "train-c4-s61.idx.gz",
+          "classIndex": 4,
+          "start": 451647,
+          "count": 1000
+        },
+        {
+          "file": "train-c4-s62.idx.gz",
+          "classIndex": 4,
+          "start": 452647,
+          "count": 1000
+        },
+        {
+          "file": "train-c4-s63.idx.gz",
+          "classIndex": 4,
+          "start": 453647,
+          "count": 1000
+        },
+        {
+          "file": "train-c4-s64.idx.gz",
+          "classIndex": 4,
+          "start": 454647,
+          "count": 1000
+        },
+        {
+          "file": "train-c4-s65.idx.gz",
+          "classIndex": 4,
+          "start": 455647,
+          "count": 1000
+        },
+        {
+          "file": "train-c4-s66.idx.gz",
+          "classIndex": 4,
+          "start": 456647,
+          "count": 1000
+        },
+        {
+          "file": "train-c4-s67.idx.gz",
+          "classIndex": 4,
+          "start": 457647,
+          "count": 1000
+        },
+        {
+          "file": "train-c4-s68.idx.gz",
+          "classIndex": 4,
+          "start": 458647,
+          "count": 1000
+        },
+        {
+          "file": "train-c4-s69.idx.gz",
+          "classIndex": 4,
+          "start": 459647,
+          "count": 1000
+        },
+        {
+          "file": "train-c4-s70.idx.gz",
+          "classIndex": 4,
+          "start": 460647,
+          "count": 1000
+        },
+        {
+          "file": "train-c4-s71.idx.gz",
+          "classIndex": 4,
+          "start": 461647,
+          "count": 1000
+        },
+        {
+          "file": "train-c4-s72.idx.gz",
+          "classIndex": 4,
+          "start": 462647,
+          "count": 1000
+        },
+        {
+          "file": "train-c4-s73.idx.gz",
+          "classIndex": 4,
+          "start": 463647,
+          "count": 1000
+        },
+        {
+          "file": "train-c4-s74.idx.gz",
+          "classIndex": 4,
+          "start": 464647,
+          "count": 1000
+        },
+        {
+          "file": "train-c4-s75.idx.gz",
+          "classIndex": 4,
+          "start": 465647,
+          "count": 1000
+        },
+        {
+          "file": "train-c4-s76.idx.gz",
+          "classIndex": 4,
+          "start": 466647,
+          "count": 1000
+        },
+        {
+          "file": "train-c4-s77.idx.gz",
+          "classIndex": 4,
+          "start": 467647,
+          "count": 1000
+        },
+        {
+          "file": "train-c4-s78.idx.gz",
+          "classIndex": 4,
+          "start": 468647,
+          "count": 1000
+        },
+        {
+          "file": "train-c4-s79.idx.gz",
+          "classIndex": 4,
+          "start": 469647,
+          "count": 1000
+        },
+        {
+          "file": "train-c4-s80.idx.gz",
+          "classIndex": 4,
+          "start": 470647,
+          "count": 1000
+        },
+        {
+          "file": "train-c4-s81.idx.gz",
+          "classIndex": 4,
+          "start": 471647,
+          "count": 1000
+        },
+        {
+          "file": "train-c4-s82.idx.gz",
+          "classIndex": 4,
+          "start": 472647,
+          "count": 1000
+        },
+        {
+          "file": "train-c4-s83.idx.gz",
+          "classIndex": 4,
+          "start": 473647,
+          "count": 1000
+        },
+        {
+          "file": "train-c4-s84.idx.gz",
+          "classIndex": 4,
+          "start": 474647,
+          "count": 1000
+        },
+        {
+          "file": "train-c4-s85.idx.gz",
+          "classIndex": 4,
+          "start": 475647,
+          "count": 1000
+        },
+        {
+          "file": "train-c4-s86.idx.gz",
+          "classIndex": 4,
+          "start": 476647,
+          "count": 1000
+        },
+        {
+          "file": "train-c4-s87.idx.gz",
+          "classIndex": 4,
+          "start": 477647,
+          "count": 1000
+        },
+        {
+          "file": "train-c4-s88.idx.gz",
+          "classIndex": 4,
+          "start": 478647,
+          "count": 1000
+        },
+        {
+          "file": "train-c4-s89.idx.gz",
+          "classIndex": 4,
+          "start": 479647,
+          "count": 1000
+        },
+        {
+          "file": "train-c4-s90.idx.gz",
+          "classIndex": 4,
+          "start": 480647,
+          "count": 1000
+        },
+        {
+          "file": "train-c4-s91.idx.gz",
+          "classIndex": 4,
+          "start": 481647,
+          "count": 1000
+        },
+        {
+          "file": "train-c4-s92.idx.gz",
+          "classIndex": 4,
+          "start": 482647,
+          "count": 1000
+        },
+        {
+          "file": "train-c4-s93.idx.gz",
+          "classIndex": 4,
+          "start": 483647,
+          "count": 1000
+        },
+        {
+          "file": "train-c4-s94.idx.gz",
+          "classIndex": 4,
+          "start": 484647,
+          "count": 1000
+        },
+        {
+          "file": "train-c4-s95.idx.gz",
+          "classIndex": 4,
+          "start": 485647,
+          "count": 1000
+        },
+        {
+          "file": "train-c4-s96.idx.gz",
+          "classIndex": 4,
+          "start": 486647,
+          "count": 1000
+        },
+        {
+          "file": "train-c4-s97.idx.gz",
+          "classIndex": 4,
+          "start": 487647,
+          "count": 1000
+        },
+        {
+          "file": "train-c4-s98.idx.gz",
+          "classIndex": 4,
+          "start": 488647,
+          "count": 1000
+        },
+        {
+          "file": "train-c4-s99.idx.gz",
+          "classIndex": 4,
+          "start": 489647,
+          "count": 924
+        }
+      ]
+    },
+    "test": {
+      "count": 122645,
+      "labelsFile": "test-labels-idx1-ubyte.gz",
+      "shards": [
+        {
+          "file": "test-c0-s00.idx.gz",
+          "classIndex": 0,
+          "start": 0,
+          "count": 1000
+        },
+        {
+          "file": "test-c0-s01.idx.gz",
+          "classIndex": 0,
+          "start": 1000,
+          "count": 1000
+        },
+        {
+          "file": "test-c0-s02.idx.gz",
+          "classIndex": 0,
+          "start": 2000,
+          "count": 1000
+        },
+        {
+          "file": "test-c0-s03.idx.gz",
+          "classIndex": 0,
+          "start": 3000,
+          "count": 1000
+        },
+        {
+          "file": "test-c0-s04.idx.gz",
+          "classIndex": 0,
+          "start": 4000,
+          "count": 1000
+        },
+        {
+          "file": "test-c0-s05.idx.gz",
+          "classIndex": 0,
+          "start": 5000,
+          "count": 1000
+        },
+        {
+          "file": "test-c0-s06.idx.gz",
+          "classIndex": 0,
+          "start": 6000,
+          "count": 1000
+        },
+        {
+          "file": "test-c0-s07.idx.gz",
+          "classIndex": 0,
+          "start": 7000,
+          "count": 1000
+        },
+        {
+          "file": "test-c0-s08.idx.gz",
+          "classIndex": 0,
+          "start": 8000,
+          "count": 1000
+        },
+        {
+          "file": "test-c0-s09.idx.gz",
+          "classIndex": 0,
+          "start": 9000,
+          "count": 1000
+        },
+        {
+          "file": "test-c0-s10.idx.gz",
+          "classIndex": 0,
+          "start": 10000,
+          "count": 1000
+        },
+        {
+          "file": "test-c0-s11.idx.gz",
+          "classIndex": 0,
+          "start": 11000,
+          "count": 1000
+        },
+        {
+          "file": "test-c0-s12.idx.gz",
+          "classIndex": 0,
+          "start": 12000,
+          "count": 1000
+        },
+        {
+          "file": "test-c0-s13.idx.gz",
+          "classIndex": 0,
+          "start": 13000,
+          "count": 1000
+        },
+        {
+          "file": "test-c0-s14.idx.gz",
+          "classIndex": 0,
+          "start": 14000,
+          "count": 1000
+        },
+        {
+          "file": "test-c0-s15.idx.gz",
+          "classIndex": 0,
+          "start": 15000,
+          "count": 1000
+        },
+        {
+          "file": "test-c0-s16.idx.gz",
+          "classIndex": 0,
+          "start": 16000,
+          "count": 1000
+        },
+        {
+          "file": "test-c0-s17.idx.gz",
+          "classIndex": 0,
+          "start": 17000,
+          "count": 1000
+        },
+        {
+          "file": "test-c0-s18.idx.gz",
+          "classIndex": 0,
+          "start": 18000,
+          "count": 1000
+        },
+        {
+          "file": "test-c0-s19.idx.gz",
+          "classIndex": 0,
+          "start": 19000,
+          "count": 1000
+        },
+        {
+          "file": "test-c0-s20.idx.gz",
+          "classIndex": 0,
+          "start": 20000,
+          "count": 1000
+        },
+        {
+          "file": "test-c0-s21.idx.gz",
+          "classIndex": 0,
+          "start": 21000,
+          "count": 1000
+        },
+        {
+          "file": "test-c0-s22.idx.gz",
+          "classIndex": 0,
+          "start": 22000,
+          "count": 1000
+        },
+        {
+          "file": "test-c0-s23.idx.gz",
+          "classIndex": 0,
+          "start": 23000,
+          "count": 873
+        },
+        {
+          "file": "test-c1-s00.idx.gz",
+          "classIndex": 1,
+          "start": 23873,
+          "count": 1000
+        },
+        {
+          "file": "test-c1-s01.idx.gz",
+          "classIndex": 1,
+          "start": 24873,
+          "count": 1000
+        },
+        {
+          "file": "test-c1-s02.idx.gz",
+          "classIndex": 1,
+          "start": 25873,
+          "count": 1000
+        },
+        {
+          "file": "test-c1-s03.idx.gz",
+          "classIndex": 1,
+          "start": 26873,
+          "count": 1000
+        },
+        {
+          "file": "test-c1-s04.idx.gz",
+          "classIndex": 1,
+          "start": 27873,
+          "count": 1000
+        },
+        {
+          "file": "test-c1-s05.idx.gz",
+          "classIndex": 1,
+          "start": 28873,
+          "count": 1000
+        },
+        {
+          "file": "test-c1-s06.idx.gz",
+          "classIndex": 1,
+          "start": 29873,
+          "count": 1000
+        },
+        {
+          "file": "test-c1-s07.idx.gz",
+          "classIndex": 1,
+          "start": 30873,
+          "count": 1000
+        },
+        {
+          "file": "test-c1-s08.idx.gz",
+          "classIndex": 1,
+          "start": 31873,
+          "count": 1000
+        },
+        {
+          "file": "test-c1-s09.idx.gz",
+          "classIndex": 1,
+          "start": 32873,
+          "count": 1000
+        },
+        {
+          "file": "test-c1-s10.idx.gz",
+          "classIndex": 1,
+          "start": 33873,
+          "count": 1000
+        },
+        {
+          "file": "test-c1-s11.idx.gz",
+          "classIndex": 1,
+          "start": 34873,
+          "count": 1000
+        },
+        {
+          "file": "test-c1-s12.idx.gz",
+          "classIndex": 1,
+          "start": 35873,
+          "count": 1000
+        },
+        {
+          "file": "test-c1-s13.idx.gz",
+          "classIndex": 1,
+          "start": 36873,
+          "count": 1000
+        },
+        {
+          "file": "test-c1-s14.idx.gz",
+          "classIndex": 1,
+          "start": 37873,
+          "count": 1000
+        },
+        {
+          "file": "test-c1-s15.idx.gz",
+          "classIndex": 1,
+          "start": 38873,
+          "count": 1000
+        },
+        {
+          "file": "test-c1-s16.idx.gz",
+          "classIndex": 1,
+          "start": 39873,
+          "count": 1000
+        },
+        {
+          "file": "test-c1-s17.idx.gz",
+          "classIndex": 1,
+          "start": 40873,
+          "count": 1000
+        },
+        {
+          "file": "test-c1-s18.idx.gz",
+          "classIndex": 1,
+          "start": 41873,
+          "count": 1000
+        },
+        {
+          "file": "test-c1-s19.idx.gz",
+          "classIndex": 1,
+          "start": 42873,
+          "count": 1000
+        },
+        {
+          "file": "test-c1-s20.idx.gz",
+          "classIndex": 1,
+          "start": 43873,
+          "count": 1000
+        },
+        {
+          "file": "test-c1-s21.idx.gz",
+          "classIndex": 1,
+          "start": 44873,
+          "count": 1000
+        },
+        {
+          "file": "test-c1-s22.idx.gz",
+          "classIndex": 1,
+          "start": 45873,
+          "count": 1000
+        },
+        {
+          "file": "test-c1-s23.idx.gz",
+          "classIndex": 1,
+          "start": 46873,
+          "count": 1000
+        },
+        {
+          "file": "test-c1-s24.idx.gz",
+          "classIndex": 1,
+          "start": 47873,
+          "count": 333
+        },
+        {
+          "file": "test-c2-s00.idx.gz",
+          "classIndex": 2,
+          "start": 48206,
+          "count": 1000
+        },
+        {
+          "file": "test-c2-s01.idx.gz",
+          "classIndex": 2,
+          "start": 49206,
+          "count": 1000
+        },
+        {
+          "file": "test-c2-s02.idx.gz",
+          "classIndex": 2,
+          "start": 50206,
+          "count": 1000
+        },
+        {
+          "file": "test-c2-s03.idx.gz",
+          "classIndex": 2,
+          "start": 51206,
+          "count": 1000
+        },
+        {
+          "file": "test-c2-s04.idx.gz",
+          "classIndex": 2,
+          "start": 52206,
+          "count": 1000
+        },
+        {
+          "file": "test-c2-s05.idx.gz",
+          "classIndex": 2,
+          "start": 53206,
+          "count": 1000
+        },
+        {
+          "file": "test-c2-s06.idx.gz",
+          "classIndex": 2,
+          "start": 54206,
+          "count": 1000
+        },
+        {
+          "file": "test-c2-s07.idx.gz",
+          "classIndex": 2,
+          "start": 55206,
+          "count": 1000
+        },
+        {
+          "file": "test-c2-s08.idx.gz",
+          "classIndex": 2,
+          "start": 56206,
+          "count": 1000
+        },
+        {
+          "file": "test-c2-s09.idx.gz",
+          "classIndex": 2,
+          "start": 57206,
+          "count": 1000
+        },
+        {
+          "file": "test-c2-s10.idx.gz",
+          "classIndex": 2,
+          "start": 58206,
+          "count": 1000
+        },
+        {
+          "file": "test-c2-s11.idx.gz",
+          "classIndex": 2,
+          "start": 59206,
+          "count": 1000
+        },
+        {
+          "file": "test-c2-s12.idx.gz",
+          "classIndex": 2,
+          "start": 60206,
+          "count": 1000
+        },
+        {
+          "file": "test-c2-s13.idx.gz",
+          "classIndex": 2,
+          "start": 61206,
+          "count": 1000
+        },
+        {
+          "file": "test-c2-s14.idx.gz",
+          "classIndex": 2,
+          "start": 62206,
+          "count": 1000
+        },
+        {
+          "file": "test-c2-s15.idx.gz",
+          "classIndex": 2,
+          "start": 63206,
+          "count": 1000
+        },
+        {
+          "file": "test-c2-s16.idx.gz",
+          "classIndex": 2,
+          "start": 64206,
+          "count": 1000
+        },
+        {
+          "file": "test-c2-s17.idx.gz",
+          "classIndex": 2,
+          "start": 65206,
+          "count": 1000
+        },
+        {
+          "file": "test-c2-s18.idx.gz",
+          "classIndex": 2,
+          "start": 66206,
+          "count": 1000
+        },
+        {
+          "file": "test-c2-s19.idx.gz",
+          "classIndex": 2,
+          "start": 67206,
+          "count": 1000
+        },
+        {
+          "file": "test-c2-s20.idx.gz",
+          "classIndex": 2,
+          "start": 68206,
+          "count": 1000
+        },
+        {
+          "file": "test-c2-s21.idx.gz",
+          "classIndex": 2,
+          "start": 69206,
+          "count": 1000
+        },
+        {
+          "file": "test-c2-s22.idx.gz",
+          "classIndex": 2,
+          "start": 70206,
+          "count": 1000
+        },
+        {
+          "file": "test-c2-s23.idx.gz",
+          "classIndex": 2,
+          "start": 71206,
+          "count": 1000
+        },
+        {
+          "file": "test-c2-s24.idx.gz",
+          "classIndex": 2,
+          "start": 72206,
+          "count": 641
+        },
+        {
+          "file": "test-c3-s00.idx.gz",
+          "classIndex": 3,
+          "start": 72847,
+          "count": 1000
+        },
+        {
+          "file": "test-c3-s01.idx.gz",
+          "classIndex": 3,
+          "start": 73847,
+          "count": 1000
+        },
+        {
+          "file": "test-c3-s02.idx.gz",
+          "classIndex": 3,
+          "start": 74847,
+          "count": 1000
+        },
+        {
+          "file": "test-c3-s03.idx.gz",
+          "classIndex": 3,
+          "start": 75847,
+          "count": 1000
+        },
+        {
+          "file": "test-c3-s04.idx.gz",
+          "classIndex": 3,
+          "start": 76847,
+          "count": 1000
+        },
+        {
+          "file": "test-c3-s05.idx.gz",
+          "classIndex": 3,
+          "start": 77847,
+          "count": 1000
+        },
+        {
+          "file": "test-c3-s06.idx.gz",
+          "classIndex": 3,
+          "start": 78847,
+          "count": 1000
+        },
+        {
+          "file": "test-c3-s07.idx.gz",
+          "classIndex": 3,
+          "start": 79847,
+          "count": 1000
+        },
+        {
+          "file": "test-c3-s08.idx.gz",
+          "classIndex": 3,
+          "start": 80847,
+          "count": 1000
+        },
+        {
+          "file": "test-c3-s09.idx.gz",
+          "classIndex": 3,
+          "start": 81847,
+          "count": 1000
+        },
+        {
+          "file": "test-c3-s10.idx.gz",
+          "classIndex": 3,
+          "start": 82847,
+          "count": 1000
+        },
+        {
+          "file": "test-c3-s11.idx.gz",
+          "classIndex": 3,
+          "start": 83847,
+          "count": 1000
+        },
+        {
+          "file": "test-c3-s12.idx.gz",
+          "classIndex": 3,
+          "start": 84847,
+          "count": 1000
+        },
+        {
+          "file": "test-c3-s13.idx.gz",
+          "classIndex": 3,
+          "start": 85847,
+          "count": 1000
+        },
+        {
+          "file": "test-c3-s14.idx.gz",
+          "classIndex": 3,
+          "start": 86847,
+          "count": 1000
+        },
+        {
+          "file": "test-c3-s15.idx.gz",
+          "classIndex": 3,
+          "start": 87847,
+          "count": 1000
+        },
+        {
+          "file": "test-c3-s16.idx.gz",
+          "classIndex": 3,
+          "start": 88847,
+          "count": 1000
+        },
+        {
+          "file": "test-c3-s17.idx.gz",
+          "classIndex": 3,
+          "start": 89847,
+          "count": 1000
+        },
+        {
+          "file": "test-c3-s18.idx.gz",
+          "classIndex": 3,
+          "start": 90847,
+          "count": 1000
+        },
+        {
+          "file": "test-c3-s19.idx.gz",
+          "classIndex": 3,
+          "start": 91847,
+          "count": 1000
+        },
+        {
+          "file": "test-c3-s20.idx.gz",
+          "classIndex": 3,
+          "start": 92847,
+          "count": 1000
+        },
+        {
+          "file": "test-c3-s21.idx.gz",
+          "classIndex": 3,
+          "start": 93847,
+          "count": 1000
+        },
+        {
+          "file": "test-c3-s22.idx.gz",
+          "classIndex": 3,
+          "start": 94847,
+          "count": 1000
+        },
+        {
+          "file": "test-c3-s23.idx.gz",
+          "classIndex": 3,
+          "start": 95847,
+          "count": 1000
+        },
+        {
+          "file": "test-c3-s24.idx.gz",
+          "classIndex": 3,
+          "start": 96847,
+          "count": 817
+        },
+        {
+          "file": "test-c4-s00.idx.gz",
+          "classIndex": 4,
+          "start": 97664,
+          "count": 1000
+        },
+        {
+          "file": "test-c4-s01.idx.gz",
+          "classIndex": 4,
+          "start": 98664,
+          "count": 1000
+        },
+        {
+          "file": "test-c4-s02.idx.gz",
+          "classIndex": 4,
+          "start": 99664,
+          "count": 1000
+        },
+        {
+          "file": "test-c4-s03.idx.gz",
+          "classIndex": 4,
+          "start": 100664,
+          "count": 1000
+        },
+        {
+          "file": "test-c4-s04.idx.gz",
+          "classIndex": 4,
+          "start": 101664,
+          "count": 1000
+        },
+        {
+          "file": "test-c4-s05.idx.gz",
+          "classIndex": 4,
+          "start": 102664,
+          "count": 1000
+        },
+        {
+          "file": "test-c4-s06.idx.gz",
+          "classIndex": 4,
+          "start": 103664,
+          "count": 1000
+        },
+        {
+          "file": "test-c4-s07.idx.gz",
+          "classIndex": 4,
+          "start": 104664,
+          "count": 1000
+        },
+        {
+          "file": "test-c4-s08.idx.gz",
+          "classIndex": 4,
+          "start": 105664,
+          "count": 1000
+        },
+        {
+          "file": "test-c4-s09.idx.gz",
+          "classIndex": 4,
+          "start": 106664,
+          "count": 1000
+        },
+        {
+          "file": "test-c4-s10.idx.gz",
+          "classIndex": 4,
+          "start": 107664,
+          "count": 1000
+        },
+        {
+          "file": "test-c4-s11.idx.gz",
+          "classIndex": 4,
+          "start": 108664,
+          "count": 1000
+        },
+        {
+          "file": "test-c4-s12.idx.gz",
+          "classIndex": 4,
+          "start": 109664,
+          "count": 1000
+        },
+        {
+          "file": "test-c4-s13.idx.gz",
+          "classIndex": 4,
+          "start": 110664,
+          "count": 1000
+        },
+        {
+          "file": "test-c4-s14.idx.gz",
+          "classIndex": 4,
+          "start": 111664,
+          "count": 1000
+        },
+        {
+          "file": "test-c4-s15.idx.gz",
+          "classIndex": 4,
+          "start": 112664,
+          "count": 1000
+        },
+        {
+          "file": "test-c4-s16.idx.gz",
+          "classIndex": 4,
+          "start": 113664,
+          "count": 1000
+        },
+        {
+          "file": "test-c4-s17.idx.gz",
+          "classIndex": 4,
+          "start": 114664,
+          "count": 1000
+        },
+        {
+          "file": "test-c4-s18.idx.gz",
+          "classIndex": 4,
+          "start": 115664,
+          "count": 1000
+        },
+        {
+          "file": "test-c4-s19.idx.gz",
+          "classIndex": 4,
+          "start": 116664,
+          "count": 1000
+        },
+        {
+          "file": "test-c4-s20.idx.gz",
+          "classIndex": 4,
+          "start": 117664,
+          "count": 1000
+        },
+        {
+          "file": "test-c4-s21.idx.gz",
+          "classIndex": 4,
+          "start": 118664,
+          "count": 1000
+        },
+        {
+          "file": "test-c4-s22.idx.gz",
+          "classIndex": 4,
+          "start": 119664,
+          "count": 1000
+        },
+        {
+          "file": "test-c4-s23.idx.gz",
+          "classIndex": 4,
+          "start": 120664,
+          "count": 1000
+        },
+        {
+          "file": "test-c4-s24.idx.gz",
+          "classIndex": 4,
+          "start": 121664,
+          "count": 981
+        }
+      ]
+    }
+  },
+  "gallery": {
+    "imagesFile": "gallery.idx.gz",
+    "labelsFile": "gallery-labels-idx1-ubyte.gz",
+    "perClass": 10
+  }
+}

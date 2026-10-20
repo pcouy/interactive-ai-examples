@@ -3,7 +3,7 @@ import { mkdtemp, readdir, readFile, rm } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { afterEach, describe, expect, it } from 'vitest';
-import { DATASET_SOURCE_IDS, DATASET_SOURCES } from './dataset-sources.mjs';
+import { DATASET_SOURCE_IDS, DATASET_SOURCES, QUICKDRAW_FILES } from './dataset-sources.mjs';
 import { buildTargetPath, describePlan, main, parseArgs } from './fetch-datasets.mjs';
 
 const MD5_PATTERN = /^[0-9a-f]{32}$/;
@@ -64,6 +64,24 @@ describe('describePlan', () => {
     expect(plan).toMatch(/fashion-mnist/);
     expect(plan).toMatch(/train-images-idx3-ubyte\.gz/);
     expect(plan).not.toMatch(/# mnist/);
+  });
+});
+
+describe('QUICKDRAW_FILES', () => {
+  it('lists the five QuickDraw files with unique names, positive sizes and 32-hex MD5s', () => {
+    expect(QUICKDRAW_FILES).toHaveLength(5);
+    const names = QUICKDRAW_FILES.map((file) => file.name);
+    expect(new Set(names).size).toBe(names.length);
+    expect(names).toEqual(['book.npy', 'moon.npy', 'cat.npy', 'umbrella.npy', 'cake.npy']);
+    for (const file of QUICKDRAW_FILES) {
+      expect(file.size).toBeGreaterThan(0);
+      expect(file.md5).toMatch(MD5_PATTERN);
+    }
+  });
+
+  it('is not part of DATASET_SOURCES', () => {
+    expect(Object.hasOwn(DATASET_SOURCES, 'quickdraw')).toBe(false);
+    expect(DATASET_SOURCE_IDS).toEqual(['mnist', 'fashion-mnist']);
   });
 });
 
