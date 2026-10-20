@@ -29,6 +29,7 @@ import {
   filterKernelValues,
   filterLinkGeometry,
   filterViewMode,
+  galleryClassLabel,
   hexToRgb,
   isReferenceDenseSizes,
   linkCanvasSelectors,
@@ -289,8 +290,26 @@ describe('dense activation labels', () => {
   });
 
   it('labels an output class with a percentage and the maximum', () => {
-    expect(outputCellLabel(7, 0.9823, true)).toBe('chiffre 7 : 98,2 %, maximum');
-    expect(outputCellLabel(0, 0.0012, false)).toBe('chiffre 0 : 0,1 %');
+    expect(outputCellLabel(7, 0.9823, true)).toBe('classe 7 : 98,2 %, maximum');
+    expect(outputCellLabel(0, 0.0012, false)).toBe('classe 0 : 0,1 %');
+    expect(outputCellLabel(2, 0.5, false)).toBe('classe 2 : 50,0 %');
+    expect(outputCellLabel(2, 0.5, false, 'chat')).toBe('classe 2 (chat) : 50,0 %');
+    expect(outputCellLabel(2, 0.5, true, 'chat')).toBe('classe 2 (chat) : 50,0 %, maximum');
+  });
+});
+
+describe('galleryClassLabel', () => {
+  it('keeps plain digits for MNIST', () => {
+    expect(galleryClassLabel(getDataset('mnist'), 3)).toBe('3');
+  });
+
+  it('pairs the index with the class name for named datasets', () => {
+    expect(galleryClassLabel(getDataset('fashion-mnist'), 0)).toBe('0 — T-shirt');
+    expect(galleryClassLabel(getDataset('quickdraw'), 2)).toBe('2 — chat');
+  });
+
+  it('falls back to the index when the class has no name', () => {
+    expect(galleryClassLabel(getDataset('mnist'), 10)).toBe('10');
   });
 });
 

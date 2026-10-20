@@ -477,9 +477,21 @@ export function denseCellLabel(unit: number, value: number): string {
 }
 
 /** Libellé accessible d'une classe de sortie, avec la mention du maximum. */
-export function outputCellLabel(digit: number, probability: number, isMax: boolean): string {
-  const base = `chiffre ${digit} : ${formatValue(probability * 100, 1)} %`;
+export function outputCellLabel(
+  digit: number,
+  probability: number,
+  isMax: boolean,
+  className?: string,
+): string {
+  const name = className ? ` (${className})` : '';
+  const base = `classe ${digit}${name} : ${formatValue(probability * 100, 1)} %`;
   return isMax ? `${base}, maximum` : base;
+}
+
+/** Libellé d'une classe dans le sélecteur de galerie. */
+export function galleryClassLabel(dataset: DatasetDefinition, index: number): string {
+  const name = dataset.classNames[index] ?? String(index);
+  return name === String(index) ? name : `${index} — ${name}`;
 }
 
 /**
@@ -1670,14 +1682,15 @@ export class MnistCnn extends LitElement {
 
   private get inputHint(): string {
     if (this.galleryLabel === null) {
-      return "Dessinez un chiffre à la souris ou au doigt ; l'inférence se met à jour pendant le tracé.";
+      return `Dessinez une entrée à la souris ou au doigt, ou choisissez un exemple de ${this.currentDataset.name} ; l'inférence se met à jour pendant le tracé.`;
     }
-    return `Exemple de la galerie MNIST : le chiffre attendu est un ${this.galleryLabel}.`;
+    const name = this.currentDataset.classNames[this.galleryLabel] ?? String(this.galleryLabel);
+    return `Exemple de la galerie ${this.currentDataset.name} : la classe attendue est « ${name} ».`;
   }
 
-  /** Nombre d'exemples proposés par chiffre dans la galerie chargée. */
+  /** Nombre d'exemples proposés par classe dans la galerie chargée. */
   private get galleryPerClass(): number {
-    return this.gallerySample === null ? 0 : this.gallerySample.count / MNIST_CLASS_COUNT;
+    return this.gallerySample === null ? 0 : this.gallerySample.count / this.outputClasses;
   }
 
   /** Vrai quand la galerie est chargée et qu'un chiffre est affiché. */
@@ -2287,7 +2300,7 @@ export class MnistCnn extends LitElement {
       return;
     }
     const classValue = Number(target.value);
-    if (!Number.isInteger(classValue) || classValue < 0 || classValue >= MNIST_CLASS_COUNT) {
+    if (!Number.isInteger(classValue) || classValue < 0 || classValue >= this.outputClasses) {
       return;
     }
     this.galleryClass = classValue;
@@ -2968,7 +2981,12 @@ export class MnistCnn extends LitElement {
                   return html`
                     <li
                       class=${`drl-dense-output-cell${isMax ? ' drl-dense-output-cell--max' : ''}`}
-                      aria-label=${outputCellLabel(digit, probability, isMax)}
+                      aria-label=${outputCellLabel(
+                        digit,
+                        probability,
+                        isMax,
+                        this.currentDataset.classNames[digit],
+                      )}
                     >
                       <span
                         class="drl-dense-square"
@@ -2998,7 +3016,7 @@ export class MnistCnn extends LitElement {
               width=${INPUT_CANVAS_SIZE}
               height=${INPUT_CANVAS_SIZE}
               role="img"
-              aria-label="Surface de dessin 28 par 28 pixels pour un chiffre MNIST"
+              aria-label="Surface de dessin 28 par 28 pixels"
               @pointerdown=${this.onDrawPointerDown}
               @pointermove=${this.onDrawPointerMove}
               @pointerup=${this.onDrawPointerUp}
@@ -3029,10 +3047,12 @@ export class MnistCnn extends LitElement {
               }
             </div>
             <div class="drl-field">
-              <label class="drl-field-label" for="drl-mnist-cnn-sample">Exemple MNIST</label>
+              <label class="drl-field-label" for="drl-mnist-cnn-sample"
+                >Exemple ${this.currentDataset.name}</label
+              >
               <select
                 id="drl-mnist-cnn-sample"
-                aria-label="Choisir un exemple MNIST de la galerie"
+                aria-label="Choisir un exemple de ${this.currentDataset.name}"
                 @click=${this.handleSampleSelectorOpen}
                 @change=${this.handleGallerySelect}
               >
@@ -3040,13 +3060,13 @@ export class MnistCnn extends LitElement {
                   this.galleryLoading
                     ? html`<option>Chargement de la galerie…</option>`
                     : this.gallerySample === null
-                      ? html`<option value="">Charger la galerie MNIST…</option>`
+                      ? html`<option value="">Charger la galerie…</option>`
                       : repeat(
-                          Array.from({ length: MNIST_CLASS_COUNT }, (_unused, digit) => digit),
-                          (digit) => digit,
-                          (digit) =>
-                            html`<option value=${digit} ?selected=${digit === this.galleryClass}>
-                              Chiffre ${digit}
+                          this.currentDataset.classNames.map((_name, index) => index),
+                          (index) => index,
+                          (index) =>
+                            html`<option value=${index} ?selected=${index === this.galleryClass}>
+                              ${galleryClassLabel(this.currentDataset, index)}
                             </option>`,
                         )
                 }
@@ -3191,7 +3211,13 @@ export class MnistCnn extends LitElement {
             </div>
             <div class="drl-stat">
               <p class="drl-stat-label">Classe prédite</p>
-              <p class="drl-stat-value">${this.predictedClass ?? '–'}</p>
+              <p class="drl-stat-value">
+                ${
+                  this.predictedClass === null
+                    ? '–'
+                    : galleryClassLabel(this.currentDataset, this.predictedClass)
+                }
+              </p>
             </div>
             <div class="drl-stat">
               <p class="drl-stat-label">Entrée</p>
@@ -3204,16 +3230,24 @@ export class MnistCnn extends LitElement {
           </div>
 
           <h4 class="drl-panel-title">Probabilités par classe</h4>
-          <div class="drl-probs" role="list" aria-label="Probabilités des dix classes de chiffres">
+          <div
+            class="drl-probs"
+            role="list"
+            aria-label="Probabilités par classe pour ${this.currentDataset.name}"
+          >
             ${
               result
                 ? repeat(
                     result.probabilities,
                     (_probability: number, digit: number) => digit,
-                    (probability, digit) => html`
+                    (probability, digit) => {
+                      const label = `${galleryClassLabel(this.currentDataset, digit)} : ${formatPercent(probability * 100)}`;
+                      return html`
                     <div
                       class="${digit === this.predictedClass ? 'drl-prob-row drl-prob-row--max' : 'drl-prob-row'}"
                       role="listitem"
+                      aria-label=${label}
+                      title=${label}
                     >
                       <span class="drl-prob-digit">${digit}</span>
                       <span class="drl-prob-bar-wrap"
@@ -3222,7 +3256,8 @@ export class MnistCnn extends LitElement {
                       ></span>
                       <span class="drl-prob-value">${formatPercent(probability * 100)}</span>
                     </div>
-                  `,
+                  `;
+                    },
                   )
                 : html`<p class="drl-hint">En attente du premier passage avant.</p>`
             }
