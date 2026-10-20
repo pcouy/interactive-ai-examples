@@ -151,6 +151,23 @@ describe('statusLine', () => {
     );
   });
 
+  it('shows a dash for a non-finite validation accuracy', () => {
+    const nanLine = statusLine(
+      input({ state: 'training', metricsStarted: true, validationAccuracy: Number.NaN }),
+    );
+    expect(nanLine).toContain('précision validation (sous-ensemble) : –');
+    expect(nanLine).not.toContain('NaN');
+    const infinityLine = statusLine(
+      input({
+        state: 'training',
+        metricsStarted: true,
+        validationAccuracy: Number.POSITIVE_INFINITY,
+      }),
+    );
+    expect(infinityLine).toContain('précision validation (sous-ensemble) : –');
+    expect(infinityLine).not.toContain('Infinity');
+  });
+
   it('shows the metrics of a finished run', () => {
     expect(
       statusLine(
