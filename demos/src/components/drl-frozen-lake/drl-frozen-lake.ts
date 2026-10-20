@@ -4,7 +4,7 @@ import type { PropertyValues, TemplateResult } from 'lit';
 import { css, html, nothing } from 'lit';
 import { customElement, property } from 'lit/decorators.js';
 import { DemoElement } from '../../base/demo-element.js';
-import type { FrozenLakeAction } from '../../core/frozen-lake.js';
+import type { FrozenLakeAction, FrozenLakeSize } from '../../core/frozen-lake.js';
 import { FROZEN_LAKE_ACTIONS, FrozenLakeCore } from '../../core/frozen-lake.js';
 import { drlTokens } from '../../styles/tokens.js';
 
@@ -325,30 +325,27 @@ export class FrozenLake extends DemoElement {
     this.core.replayEnabled = this.replayEnabled;
     this.core.replayBatchSize = this.replayBatchSize;
     if (changed.has('gridSize')) {
+      if (this.gridSize !== 4 && this.gridSize !== 6 && this.gridSize !== 8) {
+        console.warn(
+          `drl-frozen-lake: unsupported grid size ${this.gridSize}, using ${this.size}.`,
+        );
+        // Keep the property in sync with the coerced size that is rendered.
+        this.gridSize = this.size;
+      }
       this.core.setSize(this.size);
       this.buildGrid();
       this.draw();
     }
     if (changed.has('slipProbability')) {
-      this.core.setSlipProbability(this.slipProbability);
+      this.core.slipProbability = this.slipProbability;
       this.draw();
     }
   }
 
-  private readonly handleSize4 = (): void => {
-    this.gridSize = 4;
+  private selectSize(size: FrozenLakeSize): void {
+    this.gridSize = size;
     this.requestUpdate();
-  };
-
-  private readonly handleSize6 = (): void => {
-    this.gridSize = 6;
-    this.requestUpdate();
-  };
-
-  private readonly handleSize8 = (): void => {
-    this.gridSize = 8;
-    this.requestUpdate();
-  };
+  }
 
   private readonly handleReplayToggle = (): void => {
     this.replayEnabled = !this.replayEnabled;
@@ -465,7 +462,10 @@ export class FrozenLake extends DemoElement {
     );
   }
 
-  /** Places the tooltip at the cursor with a small offset, inside the grid wrap. */
+  /**
+   * Places the tooltip at the cursor with a small offset, inside the grid wrap.
+   * This is generic grid logic: extract it when a second grid demo needs it.
+   */
   private positionTooltip(event: PointerEvent): void {
     const tooltip = this.tooltip;
     const wrap = this.gridWrap;
@@ -619,7 +619,7 @@ export class FrozenLake extends DemoElement {
           type="button"
           class="drl-button"
           aria-pressed=${this.size === 4 ? 'true' : 'false'}
-          @click=${this.handleSize4}
+          @click=${() => this.selectSize(4)}
         >
           4×4
         </button>
@@ -627,7 +627,7 @@ export class FrozenLake extends DemoElement {
           type="button"
           class="drl-button"
           aria-pressed=${this.size === 6 ? 'true' : 'false'}
-          @click=${this.handleSize6}
+          @click=${() => this.selectSize(6)}
         >
           6×6
         </button>
@@ -635,7 +635,7 @@ export class FrozenLake extends DemoElement {
           type="button"
           class="drl-button"
           aria-pressed=${this.size === 8 ? 'true' : 'false'}
-          @click=${this.handleSize8}
+          @click=${() => this.selectSize(8)}
         >
           8×8
         </button>
@@ -649,7 +649,12 @@ export class FrozenLake extends DemoElement {
         </button>
       </div>
       <div class="drl-grid-wrap">
-        <svg class="drl-grid" viewBox="0 0 480 480" role="img" aria-label="Grille Frozen Lake">
+        <svg
+          class="drl-grid"
+          viewBox="0 0 ${GRID_SIZE} ${GRID_SIZE}"
+          role="img"
+          aria-label="Grille Frozen Lake"
+        >
           <g class="drl-cells"></g>
           <g class="drl-arrows"></g>
           <circle class="drl-agent" r="10"></circle>
@@ -658,7 +663,7 @@ export class FrozenLake extends DemoElement {
       </div>
       <svg
         class="drl-curve-svg"
-        viewBox="0 0 480 90"
+        viewBox="0 0 ${CURVE_WIDTH} ${CURVE_HEIGHT}"
         role="img"
         aria-label="Courbe des récompenses"
       >

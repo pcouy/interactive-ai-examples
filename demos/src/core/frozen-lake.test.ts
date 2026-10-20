@@ -120,6 +120,15 @@ describe('FrozenLakeEnv maps', () => {
     expect(terminalCells(env)).toEqual([15]);
   });
 
+  it('derives the size from the desc rows when size is omitted', () => {
+    const template = ['SFFFFF', 'FHFWFF', 'FFFHFF', 'HHFFCF', 'FFFHFF', 'FFFFFG'];
+    const env = new FrozenLakeEnv({ desc: template });
+    expect(env.size).toBe(6);
+    expect(env.map).toHaveLength(36);
+    expect(env.cellAt(0)).toBe('start');
+    expect(env.cellAt(35)).toBe('goal');
+  });
+
   it('throws when a map row has the wrong length', () => {
     expect(
       () => new FrozenLakeEnv({ size: 4, desc: ['SFF', 'FFFF', 'FFFF', 'FFFG'] }),
@@ -228,6 +237,15 @@ describe('FrozenLakeEnv slip', () => {
     expect(env.slipProbability).toBe(1);
     env.slipProbability = -1;
     expect(env.slipProbability).toBe(0);
+  });
+
+  it('reads and writes the slip probability through the accessor pair', () => {
+    const env = new FrozenLakeEnv({ size: 4 });
+    expect(env.slipProbability).toBe(0);
+    env.slipProbability = 0.5;
+    expect(env.slipProbability).toBe(0.5);
+    env.slipProbability = 2;
+    expect(env.slipProbability).toBe(1);
   });
 
   it('never leaves the grid over many slippery steps', () => {
@@ -664,8 +682,10 @@ describe('FrozenLakeCore configuration', () => {
     const stats = { ...core.stats };
     const history = [...core.rewardHistory];
 
-    core.setSlipProbability(1);
-    core.setSlipProbability(0);
+    core.slipProbability = 1;
+    expect(core.slipProbability).toBe(1);
+    core.slipProbability = 0;
+    expect(core.slipProbability).toBe(0);
     expect(core.stats).toEqual(stats);
     expect([...core.rewardHistory]).toEqual(history);
   });

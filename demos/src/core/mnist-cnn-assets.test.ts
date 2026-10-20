@@ -77,6 +77,12 @@ describe('parseMnistCnnManifest', () => {
     expect(() => parseMnistCnnManifest(manifest)).toThrow(/unsupported schema version one/);
   });
 
+  it('rejects unknown root-level keys', () => {
+    const withExtraKey = manifestClone();
+    withExtraKey.exportedAt = '2026-01-01';
+    expect(() => parseMnistCnnManifest(withExtraKey)).toThrow(/unsupported manifest keys/);
+  });
+
   it('rejects unsupported architecture metadata', () => {
     const withExtraKey = manifestClone();
     (withExtraKey.architecture as Record<string, unknown>).kernelSize = 3;

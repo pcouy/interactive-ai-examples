@@ -238,3 +238,55 @@ describe('QLearningAgent determinism', () => {
     }
   });
 });
+
+describe('QLearningAgent legal actions', () => {
+  it('explores only within the legal set when epsilon is 1', () => {
+    const actions = ['left', 'right', 'jump'] as const;
+    const legal = ['left', 'right'] as const;
+    // Each call consumes one draw for the epsilon test, then one for the index.
+    const agent = new QLearningAgent<string, (typeof actions)[number]>(actions, {
+      epsilon: 1,
+      rng: rngFromSequence([0, 0, 0, 0.999999]),
+    });
+    for (let step = 0; step < 10; step += 1) {
+      const chosen = agent.selectAction('s', legal);
+      expect(legal).toContain(chosen);
+      expect(chosen).not.toBe('jump');
+    }
+  });
+
+  it('ignores a higher value outside the legal set', () => {
+    const agent = new QLearningAgent<string, number>([0, 1, 2], { learningRate: 1 });
+    agent.update({ observation: 's', action: 2, reward: 10, nextObservation: 's', done: true });
+    expect(agent.maxValue('s')).toBeCloseTo(10);
+    expect(agent.maxValue('s', [0, 1])).toBe(0);
+  });
+
+  it('makes greedyAction respect the legal set', () => {
+    const agent = new QLearningAgent<string, number>([0, 1, 2], {
+      learningRate: 1,
+      rng: () => 0,
+    });
+    agent.update({ observation: 's', action: 2, reward: 10, nextObservation: 's', done: true });
+    // Actions 0 and 1 are both unseen and tied, so the rng of 0 picks action 0.
+    expect(agent.greedyAction('s', [0, 1])).toBe(0);
+    expect(agent.greedyAction('s')).toBe(2);
+  });
+
+  it('makes policyAction respect the legal set', () => {
+    const agent = new QLearningAgent<string, number>([0, 1, 2], { learningRate: 1 });
+    agent.update({ observation: 's', action: 2, reward: 10, nextObservation: 's', done: true });
+    // The legal order decides the deterministic tie-break.
+    expect(agent.policyAction('s', [1, 0])).toBe(1);
+    expect(agent.policyAction('s')).toBe(2);
+  });
+
+  it('throws for an empty legal set on every selection method', () => {
+    const agent = new QLearningAgent<string, number>([0, 1]);
+    const message = 'QLearningAgent needs at least one legal action.';
+    expect(() => agent.selectAction('s', [])).toThrowError(message);
+    expect(() => agent.greedyAction('s', [])).toThrowError(message);
+    expect(() => agent.maxValue('s', [])).toThrowError(message);
+    expect(() => agent.policyAction('s', [])).toThrowError(message);
+  });
+});

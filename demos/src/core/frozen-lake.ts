@@ -42,11 +42,16 @@ const SLIP_OUTCOMES: Readonly<
   up: ['left', 'right'],
 };
 
-function clampProbability(value: number): number {
+/** Clamps a probability-like value to the closed range [0, 1]. */
+function clampUnit(value: number): number {
   return Math.min(Math.max(value, 0), 1);
 }
 
-function sizeFromRows(rows: readonly string[]): FrozenLakeSize {
+/**
+ * Returns the grid size for a set of map rows. The environment supports only
+ * the sizes 4, 6 and 8, so any other row count throws.
+ */
+export function sizeFromDesc(rows: readonly string[]): FrozenLakeSize {
   const size = rows.length;
   if (size === 4 || size === 6 || size === 8) {
     return size;
@@ -112,12 +117,58 @@ function cellsFromMap(
   return cells;
 }
 
+/** Result of one {@link FrozenLakeEnv.step}. */
 export interface FrozenLakeStep {
+  /** Index of the cell the agent occupies after the step. */
   readonly observation: number;
+  /** Reward granted by the step. */
   readonly reward: number;
+  /** True when the step ended the episode on a hole or the goal. */
   readonly done: boolean;
 }
 
+/** Constructor options for {@link FrozenLakeEnv}. */
+export interface FrozenLakeEnvOptions {
+  /**
+   * Grid size. Default 4. Only 4, 6 and 8 are supported. When `desc` is given
+   * and this field is omitted, the size is derived from the row count.
+   */
+  size?: FrozenLakeSize;
+  /**
+   * Probability that the intended move is replaced by a uniformly random
+   * perpendicular move. Default 0. The setter clamps the stored value to [0, 1].
+   */
+  slipProbability?: number;
+  /**
+   * Reward collected on every candy visit. Default {@link DEFAULT_CANDY_REWARD}.
+   * The setter clamps the stored value to [0, 1].
+   */
+  candyReward?: number;
+  /**
+   * Custom map rows. When given without `size`, the row count defines the grid
+   * size. Every row must match the width and the map needs exactly one 'S'.
+   */
+  desc?: readonly string[];
+  /**
+   * Random source used for slips. Default `Math.random`. It must return a number
+   * in [0, 1). Inject a seeded source for deterministic runs.
+   */
+  rng?: () => number;
+}
+
+/**
+ * Frozen Lake grid environment.
+ *
+ * Cells and symbols: 'S' start, 'H' hole, 'G' goal, 'W' wall, 'C' candy, and
+ * anything else is a frozen cell.
+ *
+ * The slip probability is the chance that the intended move is replaced by a
+ * uniformly random perpendicular move. A candy cell grants its reward on every
+ * visit and the episode continues. A wall blocks a move like a grid edge, so
+ * the agent stays in place. Inject `rng` for deterministic runs.
+ *
+ * The supported sizes are 4, 6 and 8; no other size is supported.
+ */
 export class FrozenLakeEnv {
   readonly size: FrozenLakeSize;
 
@@ -133,19 +184,11 @@ export class FrozenLakeEnv {
 
   private candy: number;
 
-  constructor(
-    options: {
-      size?: FrozenLakeSize;
-      slipProbability?: number;
-      candyReward?: number;
-      desc?: readonly string[];
-      rng?: () => number;
-    } = {},
-  ) {
-    this.size = options.size ?? 4;
+  constructor(options: FrozenLakeEnvOptions = {}) {
+    this.size = options.size ?? (options.desc ? sizeFromDesc(options.desc) : 4);
     this.cells = cellsFromMap(this.size, options.desc ?? MAPS[this.size]);
-    this.slip = clampProbability(options.slipProbability ?? 0);
-    this.candy = clampProbability(options.candyReward ?? DEFAULT_CANDY_REWARD);
+    this.slip = clampUnit(options.slipProbability ?? 0);
+    this.candy = clampUnit(options.candyReward ?? DEFAULT_CANDY_REWARD);
     this.rng = options.rng ?? Math.random;
     this.position = this.startIndex();
     this.finished = false;
@@ -160,7 +203,7 @@ export class FrozenLakeEnv {
   }
 
   set slipProbability(value: number) {
-    this.slip = clampProbability(value);
+    this.slip = clampUnit(value);
   }
 
   /**
@@ -173,7 +216,7 @@ export class FrozenLakeEnv {
   }
 
   set candyReward(value: number) {
-    this.candy = clampProbability(value);
+    this.candy = clampUnit(value);
   }
 
   get observation(): number {
@@ -188,12 +231,17 @@ export class FrozenLakeEnv {
     return this.cells;
   }
 
+  /** Returns the agent to the start cell and clears the terminal flag. */
   reset(): number {
     this.position = this.startIndex();
     this.finished = false;
     return this.position;
   }
 
+  /**
+   * Applies `action`, applies a possible slip, and returns the new step result.
+   * A terminal episode ignores further actions and keeps the final observation.
+   */
   step(action: FrozenLakeAction): FrozenLakeStep {
     if (this.finished) {
       return { observation: this.position, reward: 0, done: true };
@@ -261,13 +309,60 @@ export class FrozenLakeEnv {
   }
 }
 
+/** Aggregate training counters for {@link FrozenLakeCore}. */
 export interface FrozenLakeStats {
+  /** Number of finished episodes. */
   readonly episodes: number;
+  /** Number of episodes that ended on the goal. */
   readonly successes: number;
+  /** Number of environment steps taken. */
   readonly steps: number;
+  /** Successes divided by episodes, or 0 before the first episode. */
   readonly successRate: number;
 }
 
+/** Constructor options for {@link FrozenLakeCore}. */
+export interface FrozenLakeCoreOptions {
+  /** Grid size. Default 4. Only 4, 6 and 8 are supported. */
+  size?: FrozenLakeSize;
+  /** Probability that the intended move slips. Default 0. Clamped to [0, 1]. */
+  slipProbability?: number;
+  /** Reward for a candy visit. Default {@link DEFAULT_CANDY_REWARD}. Clamped to [0, 1]. */
+  candyReward?: number;
+  /** Agent learning rate. Default 0.1. Not clamped. */
+  learningRate?: number;
+  /** Agent discount factor. Default 0.99. Not clamped. */
+  discountFactor?: number;
+  /** Agent exploration rate. Default 0.1. Not clamped. */
+  epsilon?: number;
+  /** Agent value for an unseen pair. Default 0. Not clamped. */
+  initialValue?: number;
+  /** Base rng seed. Default {@link DEFAULT_SEED}. */
+  seed?: number;
+  /**
+   * Custom map rows. When given without `size`, the row count defines the grid
+   * size. The map is kept across reset() and cleared by setSize().
+   */
+  desc?: readonly string[];
+  /** Enables replay-buffer training. Default false. */
+  replayEnabled?: boolean;
+  /** Replay batch size. Default 8. */
+  replayBatchSize?: number;
+  /** Replay buffer capacity. Default 1000. */
+  replayCapacity?: number;
+}
+
+/**
+ * Frozen Lake training core.
+ *
+ * It wires the environment, the Q-learning agent and an optional replay buffer.
+ * The three parts use independent rng streams: the env uses `seed`, the agent
+ * uses `seed + 1` and the buffer uses `seed + 2`.
+ *
+ * `tick` runs one environment step and then one update, or a replay batch of
+ * updates when replay is enabled. The reward history keeps the 300 most recent
+ * episode returns.
+ */
 export class FrozenLakeCore {
   private readonly seed: number;
 
@@ -297,30 +392,15 @@ export class FrozenLakeCore {
 
   private lastBatch: readonly Transition<number, FrozenLakeAction>[] = [];
 
-  constructor(
-    options: {
-      size?: FrozenLakeSize;
-      slipProbability?: number;
-      candyReward?: number;
-      learningRate?: number;
-      discountFactor?: number;
-      epsilon?: number;
-      initialValue?: number;
-      seed?: number;
-      desc?: readonly string[];
-      replayEnabled?: boolean;
-      replayBatchSize?: number;
-      replayCapacity?: number;
-    } = {},
-  ) {
+  constructor(options: FrozenLakeCoreOptions = {}) {
     this.seed = options.seed ?? DEFAULT_SEED;
     this.customMap = options.desc;
-    this.env = this.buildEnv(
-      options.size,
-      options.slipProbability,
-      options.candyReward,
-      this.customMap,
-    );
+    this.env = this.buildEnv({
+      size: options.size,
+      slipProbability: options.slipProbability,
+      candyReward: options.candyReward,
+      desc: this.customMap,
+    });
     this.agent = new QLearningAgent<number, FrozenLakeAction>(FROZEN_LAKE_ACTIONS, {
       learningRate: options.learningRate,
       discountFactor: options.discountFactor,
@@ -345,6 +425,7 @@ export class FrozenLakeCore {
     return this.env.observation;
   }
 
+  /** Current aggregate training counters. */
   get stats(): FrozenLakeStats {
     return {
       episodes: this.episodes,
@@ -354,10 +435,15 @@ export class FrozenLakeCore {
     };
   }
 
+  /** Reward of each recent episode, oldest first, capped at 300 entries. */
   get rewardHistory(): readonly number[] {
     return this.history;
   }
 
+  /**
+   * Greedy action of every cell, or null for a terminal or wall cell. Allocates
+   * a fresh array on every read.
+   */
   get greedyActions(): readonly (FrozenLakeAction | null)[] {
     const total = this.env.size * this.env.size;
     const actions: (FrozenLakeAction | null)[] = [];
@@ -367,6 +453,10 @@ export class FrozenLakeCore {
     return actions;
   }
 
+  /**
+   * Max value of every cell, or 0 for a terminal or wall cell. Allocates a
+   * fresh array on every read.
+   */
   get greedyValues(): readonly number[] {
     const total = this.env.size * this.env.size;
     const values: number[] = [];
@@ -418,6 +508,12 @@ export class FrozenLakeCore {
     this.agent.initialValue = value;
   }
 
+  /**
+   * Runs one environment step and trains the agent on it. With replay enabled
+   * it stores the transition and applies a replay batch of updates. Otherwise
+   * it applies a single online update. Episode boundaries update the stats and
+   * the reward history, then reset the environment.
+   */
   tick(): void {
     const observation = this.env.observation;
     const action = this.agent.selectAction(observation);
@@ -457,23 +553,34 @@ export class FrozenLakeCore {
     }
   }
 
+  /** Rebuilds the environment from the current options and resets training. */
   reset(): void {
-    this.env = this.buildEnv(
-      this.env.size,
-      this.env.slipProbability,
-      this.env.candyReward,
-      this.customMap,
-    );
+    this.env = this.buildEnv({
+      size: this.env.size,
+      slipProbability: this.env.slipProbability,
+      candyReward: this.env.candyReward,
+      desc: this.customMap,
+    });
     this.resetTraining();
   }
 
+  /** Switches to the preset map of `size` and resets training. */
   setSize(size: FrozenLakeSize): void {
     this.customMap = undefined;
-    this.env = this.buildEnv(size, this.env.slipProbability, this.env.candyReward, undefined);
+    this.env = this.buildEnv({
+      size,
+      slipProbability: this.env.slipProbability,
+      candyReward: this.env.candyReward,
+    });
     this.resetTraining();
   }
 
-  setSlipProbability(value: number): void {
+  /** Probability that the intended move slips. Clamped to [0, 1] by the env. */
+  get slipProbability(): number {
+    return this.env.slipProbability;
+  }
+
+  set slipProbability(value: number) {
     this.env.slipProbability = value;
   }
 
@@ -524,12 +631,12 @@ export class FrozenLakeCore {
   setCustomMap(rows: readonly string[]): void {
     const customMap = rows.slice();
     // Build first so an invalid map leaves the current environment untouched.
-    this.env = this.buildEnv(
-      this.env.size,
-      this.env.slipProbability,
-      this.env.candyReward,
-      customMap,
-    );
+    this.env = this.buildEnv({
+      size: this.env.size,
+      slipProbability: this.env.slipProbability,
+      candyReward: this.env.candyReward,
+      desc: customMap,
+    });
     this.customMap = customMap;
     this.resetTraining();
   }
@@ -559,19 +666,13 @@ export class FrozenLakeCore {
     return !this.env.isTerminal(index) && !this.env.isWall(index);
   }
 
-  private buildEnv(
-    size: FrozenLakeSize | undefined,
-    slipProbability: number | undefined,
-    candyReward: number | undefined,
-    desc: readonly string[] | undefined,
-  ): FrozenLakeEnv {
+  private buildEnv(options: FrozenLakeEnvOptions): FrozenLakeEnv {
     // A custom map defines its own grid size, so it overrides the size option
-    // while it is active. setSize() clears it.
+    // while it is active. setSize() clears it. Omitting the size lets the
+    // environment derive it from the rows.
     return new FrozenLakeEnv({
-      size: desc ? sizeFromRows(desc) : size,
-      slipProbability,
-      candyReward,
-      desc,
+      ...options,
+      size: options.desc ? undefined : options.size,
       rng: mulberry32(this.seed),
     });
   }

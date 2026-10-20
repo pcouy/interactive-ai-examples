@@ -54,6 +54,9 @@ export interface MnistSplits {
   readonly test: MnistIdxDataset;
 }
 
+/** Nombre d'exemples proposés par chiffre dans la galerie MNIST. */
+export const GALLERY_PER_CLASS = 10;
+
 interface ViteImportMeta extends ImportMeta {
   readonly env?: { readonly BASE_URL?: string };
 }
@@ -222,32 +225,44 @@ export function loadMnistSplits(): Promise<MnistSplits> {
 }
 
 /**
- * Sélectionne un indice par classe `0` à `9` dans le jeu donné (première
- * occurrence rencontrée), de façon déterministe. Rejette une classe absente.
+ * Sélectionne les `perClass` premiers indices de chaque classe `0` à `9` dans le
+ * jeu donné, classe par classe (les `perClass` premiers de la classe 0, puis ceux
+ * de la classe 1, et ainsi de suite), de façon déterministe : l'ordre naturel du
+ * jeu est conservé dans chaque classe. Rejette un `perClass` qui n'est pas un
+ * entier positif et une classe qui n'a pas assez d'exemples.
  */
-export function selectGalleryIndices(dataset: MnistIdxDataset): Uint32Array {
-  const first = new Array<number>(MNIST_CLASS_COUNT).fill(-1);
-  let missing = MNIST_CLASS_COUNT;
-  for (let index = 0; index < dataset.labels.length && missing > 0; index += 1) {
-    const label = dataset.labels[index];
-    if (label < MNIST_CLASS_COUNT && first[label] === -1) {
-      first[label] = index;
-      missing -= 1;
-    }
+export function selectGalleryIndices(
+  dataset: MnistIdxDataset,
+  perClass: number = GALLERY_PER_CLASS,
+): Uint32Array {
+  if (!Number.isInteger(perClass) || perClass < 1) {
+    throw new RangeError(
+      `mnist-assets: perClass must be a positive integer, received ${String(perClass)}.`,
+    );
   }
+  const picked: number[] = [];
   for (let label = 0; label < MNIST_CLASS_COUNT; label += 1) {
-    if (first[label] === -1) {
-      throw new RangeError(`mnist-assets: the dataset has no example for class ${label}.`);
+    let found = 0;
+    for (let index = 0; index < dataset.labels.length && found < perClass; index += 1) {
+      if (dataset.labels[index] === label) {
+        picked.push(index);
+        found += 1;
+      }
+    }
+    if (found < perClass) {
+      throw new RangeError(
+        `mnist-assets: the dataset has only ${found} example(s) for class ${label}, need ${perClass}.`,
+      );
     }
   }
-  return Uint32Array.from(first);
+  return Uint32Array.from(picked);
 }
 
 /**
- * Galerie de dix exemples, un par classe, échantillonnés dans le jeu de test
+ * Galerie de `perClass` exemples par chiffre, échantillonnés dans le jeu de test
  * officiel et matérialisés en `MnistSample` (`Float32` dans `[0, 1]`).
  */
-export async function loadMnistGallery(): Promise<MnistSample> {
+export async function loadMnistGallery(perClass: number = GALLERY_PER_CLASS): Promise<MnistSample> {
   const splits = await loadMnistSplits();
-  return materializeSample(splits.test, selectGalleryIndices(splits.test));
+  return materializeSample(splits.test, selectGalleryIndices(splits.test, perClass));
 }
