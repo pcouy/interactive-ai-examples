@@ -549,6 +549,14 @@ describe('DrlDeepBluePage custom evaluator', () => {
     );
   });
 
+  it('links the textarea to the warning through aria-describedby', () => {
+    const page = createPage();
+    page.evaluator = 'custom';
+    const text = collectStrings(internals(page).renderCustomBlock());
+    expect(text).toContain('id="drl-custom-warning"');
+    expect(text).toContain('aria-describedby="drl-custom-warning"');
+  });
+
   it('shows the game default source in the textarea', () => {
     const page = createPage();
     page.evaluator = 'custom';

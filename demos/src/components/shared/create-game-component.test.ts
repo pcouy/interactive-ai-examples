@@ -471,6 +471,23 @@ describe('custom evaluator mode', () => {
     runWillUpdate(element, 'customEvaluator');
     expect((element as unknown as { pending: unknown }).pending).toBeNull();
   });
+
+  it('clears the transposition table when customEvaluator changes', () => {
+    const element = createTicTacToeElement();
+    element.players = '["agent","agent"]';
+    element.transposition = true;
+    element.depth = 3;
+    element.stepTurn();
+    expect(element.transpositionTable.size()).toBeGreaterThan(0);
+
+    const sentinel: Evaluator<TicTacToeState, TicTacToeMove> = {
+      id: 'sentinel',
+      evaluate: () => 0,
+    };
+    element.customEvaluator = sentinel;
+    runWillUpdate(element, 'customEvaluator');
+    expect(element.transpositionTable.size()).toBe(0);
+  });
 });
 
 type TicTacToeElement = GameComponentApi<TicTacToeState, TicTacToeMove>;

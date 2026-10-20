@@ -581,7 +581,7 @@ export class DrlDeepBluePage extends LitElement {
           <code>cols</code>, <code>game</code>, puis <code>lines</code> (morpion) ou
           <code>windows</code> (puissance 4).
         </p>
-        <p class="drl-page-custom-warning">
+        <p class="drl-page-custom-warning" id="drl-custom-warning">
           Code exécuté dans la page, sans isolation. À utiliser uniquement en local avec du code de
           confiance.
         </p>
@@ -590,6 +590,7 @@ export class DrlDeepBluePage extends LitElement {
           class="drl-page-custom-source"
           spellcheck="false"
           autocomplete="off"
+          aria-describedby="drl-custom-warning"
           .value=${this.customSources[this.activeGameId]}
           @input=${this.onCustomInput}
         ></textarea>
@@ -739,7 +740,7 @@ export class DrlDeepBluePage extends LitElement {
         // Le champ n'a de sens qu'en mode `custom` : ailleurs l'agent l'ignore,
         // mais on l'omet pour que l'intention reste lisible.
         customEvaluator:
-          this.evaluator === 'custom'
+          parseEvaluatorMode(this.evaluator) === 'custom'
             ? (this.customEvaluators[this.activeGameId] as
                 | Evaluator<Connect4State, Connect4Move>
                 | undefined)
@@ -764,7 +765,7 @@ export class DrlDeepBluePage extends LitElement {
       // Le champ n'a de sens qu'en mode `custom` : ailleurs l'agent l'ignore,
       // mais on l'omet pour que l'intention reste lisible.
       customEvaluator:
-        this.evaluator === 'custom'
+        parseEvaluatorMode(this.evaluator) === 'custom'
           ? (this.customEvaluators[this.activeGameId] as
               | Evaluator<TicTacToeState, TicTacToeMove>
               | undefined)
@@ -847,6 +848,9 @@ export class DrlDeepBluePage extends LitElement {
     this.customError = null;
     // Le rejoué doit repartir de zéro avec le nouvel évaluateur.
     this.treeElement?.clearTree();
+    // Le champ et les liaisons enfants sont rafraîchis même si l'identité de
+    // l'état n'a pas changé (brouillon appliqué à l'identique).
+    this.requestUpdate();
   };
 
   private readonly onCustomReset = (): void => {
@@ -860,6 +864,7 @@ export class DrlDeepBluePage extends LitElement {
       this.customEvaluators = { ...this.customEvaluators, [gameId]: result.evaluator };
     }
     this.treeElement?.clearTree();
+    this.requestUpdate();
   };
 
   private readonly onSamplesChange = (event: Event): void => {

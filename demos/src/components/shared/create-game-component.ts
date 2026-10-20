@@ -838,7 +838,9 @@ export function createGameComponent<S, M>(
       ) {
         this.pending = null;
       }
-      if (changed.has('evaluator')) {
+      if (changed.has('evaluator') || changed.has('customEvaluator')) {
+        // Une nouvelle fonction d'évaluation rend caduques les scores de
+        // l'ancienne : la table est vidée pour éviter toute réutilisation.
         this.tt.clear();
         this.ttSize = this.tt.size();
       }

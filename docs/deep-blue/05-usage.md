@@ -258,7 +258,7 @@ levée pendant la recherche retombe sur `0`.
 À la compilation, une sonde exécute le corps sur `game.initialState()` pour
 `rootPlayer` 0 puis 1. Une erreur de syntaxe, une exception à la sonde, ou un
 résultat non numérique/non fini à la sonde renvoie `{ ok: false, error }`
-(`'the evaluator must return a finite number'` dans ce dernier cas) : le corps
+(`"L'évaluateur doit retourner un nombre fini"` dans ce dernier cas) : le corps
 n'entre jamais en recherche tant qu'il n'est pas valide.
 
 `defaultCustomSource(gameId)` renvoie le corps par défaut du jeu actif :

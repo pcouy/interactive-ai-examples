@@ -193,7 +193,7 @@ export function compileCustomEvaluator(
       return { ok: false, error: errorMessage(error) };
     }
     if (typeof value !== 'number' || !Number.isFinite(value)) {
-      return { ok: false, error: 'the evaluator must return a finite number' };
+      return { ok: false, error: "L'évaluateur doit retourner un nombre fini" };
     }
   }
 
