@@ -62,6 +62,8 @@ export interface BalancedSampleOptions {
   perClass: number;
   /** Graine entière non négative : la même graine donne toujours le même tirage. */
   seed: number;
+  /** Nombre de classes, de 2 à 20. Défaut : `MNIST_CLASS_COUNT` (10). */
+  readonly classCount?: number;
 }
 
 /** Échantillon équilibré extrait d'un jeu de données MNIST. */
@@ -95,6 +97,8 @@ export interface StratifiedSampleOptions {
   readonly fraction: number;
   /** Graine entière non négative : la même graine donne toujours le même tirage. */
   readonly seed: number;
+  /** Nombre de classes, de 2 à 20. Défaut : `MNIST_CLASS_COUNT` (10). */
+  readonly classCount?: number;
 }
 
 function asBytes(input: IdxBuffer): Uint8Array {
@@ -183,12 +187,12 @@ function readLabelCount(bytes: Uint8Array): number {
   return count;
 }
 
-/** Vérifie que chaque libellé est compris entre 0 et 9. */
-function validateLabelValues(labels: Uint8Array): void {
+/** Vérifie que chaque libellé est compris entre 0 et `classCount - 1`. */
+function validateLabelValues(labels: Uint8Array, classCount: number): void {
   for (let index = 0; index < labels.length; index += 1) {
-    if (labels[index] > 9) {
+    if (labels[index] >= classCount) {
       throw new RangeError(
-        `mnist-data: invalid label ${labels[index]} at index ${index}, expected 0 to 9`,
+        `mnist-data: invalid label ${labels[index]} at index ${index}, expected 0 to ${classCount - 1}`,
       );
     }
   }
@@ -252,8 +256,15 @@ export function loadMnistDataset(imageBuffer: IdxBuffer, labelBuffer: IdxBuffer)
  * même nombre d'exemples. Les tableaux retournés sont des vues sur les buffers
  * d'entrée : le module ne les modifie jamais, et l'appelant ne doit pas les
  * modifier tant que le jeu est utilisé.
+ *
+ * `classCount` borne les libellés acceptés (de `0` à `classCount - 1`) et vaut
+ * `MNIST_CLASS_COUNT` (10) par défaut. Il doit être un entier d'au moins 2.
  */
-export function loadIdxDataset(imageBuffer: IdxBuffer, labelBuffer: IdxBuffer): MnistIdxDataset {
+export function loadIdxDataset(
+  imageBuffer: IdxBuffer,
+  labelBuffer: IdxBuffer,
+  classCount: number = MNIST_CLASS_COUNT,
+): MnistIdxDataset {
   const imageBytes = asBytes(imageBuffer);
   const labelBytes = asBytes(labelBuffer);
   const header = readImageHeader(imageBytes);
@@ -264,7 +275,7 @@ export function loadIdxDataset(imageBuffer: IdxBuffer, labelBuffer: IdxBuffer): 
     );
   }
   const labels = labelBytes.subarray(LABEL_HEADER_BYTES, LABEL_HEADER_BYTES + labelCount);
-  validateLabelValues(labels);
+  validateLabelValues(labels, resolveClassCount(classCount));
   const images = imageBytes.subarray(IMAGE_HEADER_BYTES, IMAGE_HEADER_BYTES + header.payloadLength);
   return { count: header.count, images, labels };
 }
@@ -293,6 +304,17 @@ function validatePerClass(perClass: number): void {
   if (!Number.isInteger(perClass) || perClass < 1) {
     throw new RangeError(`mnist-data: invalid perClass ${perClass}, expected a positive integer`);
   }
+}
+
+/** Résout et valide le nombre de classes, avec `MNIST_CLASS_COUNT` par défaut. */
+function resolveClassCount(classCount: number | undefined): number {
+  const value = classCount ?? MNIST_CLASS_COUNT;
+  if (!Number.isInteger(value) || value < 2) {
+    throw new RangeError(
+      `mnist-data: classCount must be an integer of at least 2, received ${String(value)}.`,
+    );
+  }
+  return value;
 }
 
 function validateDataset(dataset: MnistDataset): void {
@@ -324,33 +346,37 @@ function shuffledIndices(length: number, rng: () => number): number[] {
 }
 
 /**
- * Échantillonne `perClass` exemples de chaque chiffre `0` à `9`, de façon
- * déterministe pour une graine donnée. La sélection se fait par classe
+ * Échantillonne `perClass` exemples de chaque classe `0` à `classCount - 1`, de
+ * façon déterministe pour une graine donnée. La sélection se fait par classe
  * (mélange de Fisher-Yates avec le PRNG de la graine), puis l'ordre des
  * exemples retenus est mélangé une dernière fois pour entrelacer les classes.
  *
- * Rejette une graine ou un `perClass` invalides, un `perClass` supérieur
- * au nombre d'exemples disponibles dans une classe, et un jeu dont `count`
- * ou la longueur des images ne correspond pas aux libellés.
+ * `classCount` vaut `MNIST_CLASS_COUNT` (10) par défaut et doit être un entier
+ * d'au moins 2.
+ *
+ * Rejette un `classCount` ou une graine ou un `perClass` invalides, un
+ * `perClass` supérieur au nombre d'exemples disponibles dans une classe, et un
+ * jeu dont `count` ou la longueur des images ne correspond pas aux libellés.
  *
  * Ne modifie jamais le jeu source : les tableaux retournés sont des copies.
  */
 export function sampleBalanced(dataset: MnistDataset, options: BalancedSampleOptions): MnistSample {
-  const { perClass, seed } = options;
+  const { perClass, seed, classCount } = options;
   validateSeed(seed);
   validatePerClass(perClass);
+  const resolvedClassCount = resolveClassCount(classCount);
   validateDataset(dataset);
 
-  const classCounts = new Array<number>(MNIST_CLASS_COUNT).fill(0);
+  const classCounts = new Array<number>(resolvedClassCount).fill(0);
   for (const label of dataset.labels) {
-    if (label >= MNIST_CLASS_COUNT) {
+    if (label >= resolvedClassCount) {
       throw new RangeError(
-        `mnist-data: dataset label ${label} outside the 0 to ${MNIST_CLASS_COUNT - 1} range`,
+        `mnist-data: dataset label ${label} outside the 0 to ${resolvedClassCount - 1} range`,
       );
     }
     classCounts[label] += 1;
   }
-  for (let label = 0; label < MNIST_CLASS_COUNT; label += 1) {
+  for (let label = 0; label < resolvedClassCount; label += 1) {
     if (classCounts[label] < perClass) {
       throw new RangeError(
         `mnist-data: class ${label} has only ${classCounts[label]} examples, need ${perClass}`,
@@ -360,10 +386,10 @@ export function sampleBalanced(dataset: MnistDataset, options: BalancedSampleOpt
 
   const rng = mulberry32(seed);
   const perImage = MNIST_PIXELS_PER_IMAGE;
-  const images = new Float32Array(perClass * MNIST_CLASS_COUNT * perImage);
-  const labels = new Uint8Array(perClass * MNIST_CLASS_COUNT);
+  const images = new Float32Array(perClass * resolvedClassCount * perImage);
+  const labels = new Uint8Array(perClass * resolvedClassCount);
   let cursor = 0;
-  for (let label = 0; label < MNIST_CLASS_COUNT; label += 1) {
+  for (let label = 0; label < resolvedClassCount; label += 1) {
     const classIndices: number[] = [];
     for (let index = 0; index < dataset.labels.length; index += 1) {
       if (dataset.labels[index] === label) {
@@ -418,14 +444,18 @@ function validateFraction(fraction: number): void {
 
 /**
  * Sélectionne une fraction stratifiée du jeu IDX brut, de façon déterministe
- * pour une graine donnée. Chaque classe `0` à `9` fournit
+ * pour une graine donnée. Chaque classe `0` à `classCount - 1` fournit
  * `max(1, round(classCount × fraction))` exemples (au moins un), mélangés par
  * Fisher-Yates avec le PRNG de la graine, puis l'ensemble retenu est mélangé
  * une dernière fois pour entrelacer les classes.
  *
- * Rejette une fraction hors de `(0, 1]`, une graine invalide, un jeu dont
- * `count` ou la longueur des images ne correspond pas aux libellés, un libellé
- * hors de `0` à `9`, et une classe sans aucun exemple.
+ * `classCount` vaut `MNIST_CLASS_COUNT` (10) par défaut et doit être un entier
+ * d'au moins 2.
+ *
+ * Rejette un `classCount` ou une fraction hors de `(0, 1]`, une graine
+ * invalide, un jeu dont `count` ou la longueur des images ne correspond pas aux
+ * libellés, un libellé hors de `0` à `classCount - 1`, et une classe sans
+ * aucun exemple.
  *
  * Ne modifie jamais le jeu source : seul un tableau d'indices est retourné.
  */
@@ -433,20 +463,21 @@ export function selectStratifiedIndices(
   dataset: MnistIdxDataset,
   options: StratifiedSampleOptions,
 ): Uint32Array {
-  const { fraction, seed } = options;
+  const { fraction, seed, classCount } = options;
   validateSeed(seed);
   validateFraction(fraction);
+  const resolvedClassCount = resolveClassCount(classCount);
   validateIdxDataset(dataset);
 
   const buckets: number[][] = [];
-  for (let label = 0; label < MNIST_CLASS_COUNT; label += 1) {
+  for (let label = 0; label < resolvedClassCount; label += 1) {
     buckets.push([]);
   }
   for (let index = 0; index < dataset.labels.length; index += 1) {
     const label = dataset.labels[index];
-    if (label >= MNIST_CLASS_COUNT) {
+    if (label >= resolvedClassCount) {
       throw new RangeError(
-        `mnist-data: IDX dataset label ${label} outside the 0 to ${MNIST_CLASS_COUNT - 1} range`,
+        `mnist-data: IDX dataset label ${label} outside the 0 to ${resolvedClassCount - 1} range`,
       );
     }
     buckets[label].push(index);
@@ -454,7 +485,7 @@ export function selectStratifiedIndices(
 
   const rng = mulberry32(seed);
   const selected: number[] = [];
-  for (let label = 0; label < MNIST_CLASS_COUNT; label += 1) {
+  for (let label = 0; label < resolvedClassCount; label += 1) {
     const available = buckets[label].length;
     if (available === 0) {
       throw new RangeError(`mnist-data: class ${label} has no examples to sample`);

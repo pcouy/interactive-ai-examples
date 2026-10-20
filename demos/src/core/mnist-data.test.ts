@@ -77,6 +77,17 @@ function balancedLabels(repeats: number): number[] {
   return labels;
 }
 
+/** Étend `balancedLabels` à un nombre de classes arbitraire. */
+function classLabels(classes: number, perClass: number): number[] {
+  const labels: number[] = [];
+  for (let repeat = 0; repeat < perClass; repeat += 1) {
+    for (let label = 0; label < classes; label += 1) {
+      labels.push(label);
+    }
+  }
+  return labels;
+}
+
 describe('parseIdxImages', () => {
   it('decodes a valid image file into normalized float32 pixels', () => {
     const file = buildImageFile(2);
@@ -302,6 +313,40 @@ describe('sampleBalanced', () => {
     );
   });
 
+  it('samples a custom class count', () => {
+    const dataset = buildDataset(classLabels(4, 3));
+    const sample = sampleBalanced(dataset, { perClass: 2, seed: 5, classCount: 4 });
+    expect(sample.count).toBe(8);
+    const counts = new Array<number>(4).fill(0);
+    for (const label of sample.labels) {
+      counts[label] += 1;
+    }
+    expect(counts).toEqual([2, 2, 2, 2]);
+    for (const label of sample.labels) {
+      expect(label).toBeGreaterThanOrEqual(0);
+      expect(label).toBeLessThan(4);
+    }
+  });
+
+  it('rejects labels above the custom class count', () => {
+    const corrupted: MnistDataset = {
+      count: 1,
+      images: new Float32Array(MNIST_PIXELS_PER_IMAGE),
+      labels: new Uint8Array([4]),
+    };
+    expect(() => sampleBalanced(corrupted, { perClass: 1, seed: 7, classCount: 4 })).toThrow(
+      /outside the 0 to 3 range/,
+    );
+  });
+
+  it('rejects invalid class counts', () => {
+    for (const classCount of [1, 0, -2, 2.5, Number.NaN]) {
+      expect(() => sampleBalanced(dataset, { perClass: 1, seed: 7, classCount })).toThrow(
+        /classCount must be an integer of at least 2/,
+      );
+    }
+  });
+
   it('rejects a dataset whose shape disagrees with its labels', () => {
     const wrongCount: MnistDataset = {
       count: 1,
@@ -405,6 +450,36 @@ describe('loadIdxDataset', () => {
     );
   });
 
+  it('loads twenty classes when classCount is 20', () => {
+    const labels = classLabels(20, 1);
+    const dataset = loadIdxDataset(buildImageFile(labels.length), buildLabelFile(labels), 20);
+    expect(dataset.count).toBe(labels.length);
+    expect(dataset.labels).toEqual(new Uint8Array(labels));
+  });
+
+  it('rejects labels 10 to 19 without an explicit classCount', () => {
+    const labels = classLabels(20, 1);
+    expect(() => loadIdxDataset(buildImageFile(labels.length), buildLabelFile(labels))).toThrow(
+      /invalid label 10 at index 10/,
+    );
+  });
+
+  it('rejects a label equal to classCount', () => {
+    const labels = [...classLabels(20, 1), 20];
+    expect(() => loadIdxDataset(buildImageFile(labels.length), buildLabelFile(labels), 20)).toThrow(
+      /invalid label 20 at index 20/,
+    );
+  });
+
+  it('rejects an invalid classCount', () => {
+    const labels = classLabels(10, 1);
+    for (const classCount of [1, 0, -2, 2.5, Number.NaN]) {
+      expect(() =>
+        loadIdxDataset(buildImageFile(labels.length), buildLabelFile(labels), classCount),
+      ).toThrow(/classCount must be an integer of at least 2/);
+    }
+  });
+
   it('leaves the IDX input buffers byte-identical', () => {
     const { dataset, imageFile, labelFile } = buildRawIdxDataset(balancedLabels(2));
     const imageCopy = new Uint8Array(imageFile);
@@ -465,6 +540,59 @@ describe('selectStratifiedIndices', () => {
     const labels = [...indices].map((index) => dataset.labels[index]);
     const sorted = [...labels].sort((a, b) => a - b);
     expect(labels).not.toEqual(sorted);
+  });
+
+  it('returns indices from every class for twenty classes', () => {
+    const labels = classLabels(20, 2);
+    const source = loadIdxDataset(buildImageFile(labels.length), buildLabelFile(labels), 20);
+    const indices = selectStratifiedIndices(source, { fraction: 0.5, seed: 1, classCount: 20 });
+    expect(indices).toHaveLength(20);
+    const present = new Set<number>();
+    for (const index of indices) {
+      present.add(source.labels[index]);
+    }
+    expect([...present].sort((a, b) => a - b)).toEqual([...Array(20).keys()]);
+  });
+
+  it('supports a two-class dataset', () => {
+    const labels = classLabels(2, 3);
+    const source = loadIdxDataset(buildImageFile(labels.length), buildLabelFile(labels), 2);
+    const indices = selectStratifiedIndices(source, { fraction: 0.5, seed: 2, classCount: 2 });
+    // round(3 × 0.5) = 2 exemples par classe.
+    expect(indices).toHaveLength(4);
+    const sorted = [...indices].map((index) => source.labels[index]).sort((a, b) => a - b);
+    expect(sorted).toEqual([0, 0, 1, 1]);
+  });
+
+  it('defaults to ten classes and rejects a label of 10', () => {
+    const labels = classLabels(10, 1);
+    const source = loadIdxDataset(buildImageFile(labels.length), buildLabelFile(labels));
+    const indices = selectStratifiedIndices(source, { fraction: 1, seed: 3 });
+    expect(indices).toHaveLength(10);
+    const rejected = loadIdxDataset(
+      buildImageFile(labels.length + 1),
+      buildLabelFile([...labels, 10]),
+      11,
+    );
+    expect(() => selectStratifiedIndices(rejected, { fraction: 0.5, seed: 3 })).toThrow(
+      /outside the 0 to 9 range/,
+    );
+  });
+
+  it('rejects a label above the custom class count', () => {
+    const labels = [...classLabels(20, 1), 20];
+    const source = loadIdxDataset(buildImageFile(labels.length), buildLabelFile(labels), 21);
+    expect(() =>
+      selectStratifiedIndices(source, { fraction: 0.5, seed: 1, classCount: 20 }),
+    ).toThrow(/outside the 0 to 19 range/);
+  });
+
+  it('rejects invalid class counts', () => {
+    for (const classCount of [1, 0, -2, 2.5, Number.NaN]) {
+      expect(() =>
+        selectStratifiedIndices(dataset, { fraction: 0.5, seed: 7, classCount }),
+      ).toThrow(/classCount must be an integer of at least 2/);
+    }
   });
 
   it('rejects invalid fractions', () => {
