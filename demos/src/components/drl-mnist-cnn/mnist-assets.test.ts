@@ -1,4 +1,5 @@
 import { afterEach, describe, expect, it, vi } from 'vitest';
+import type { MnistIdxDataset } from '../../core/mnist-data.js';
 
 const IMAGE_MAGIC = 2051;
 const LABEL_MAGIC = 2049;
@@ -33,6 +34,14 @@ async function gzip(bytes: Uint8Array<ArrayBuffer>): Promise<Uint8Array<ArrayBuf
 const TRAIN_LABELS = [0, 0, 1, 1, 2, 2, 3, 3, 4, 4, 5, 5, 6, 6, 7, 7, 8, 8, 9, 9];
 const TEST_LABELS = [0, 1, 2, 3, 4, 5, 6, 7, 8, 9];
 
+/** Jeu de test de la galerie : 20 exemples par chiffre, dans un ordre entrelacé. */
+const GALLERY_TEST_LABELS: number[] = [];
+for (let round = 0; round < 20; round += 1) {
+  for (let digit = 0; digit < 10; digit += 1) {
+    GALLERY_TEST_LABELS.push((digit + round) % 10);
+  }
+}
+
 async function gzippedAssets(): Promise<Map<string, Uint8Array<ArrayBuffer>>> {
   return new Map([
     ['train-images-idx3-ubyte.gz', await gzip(imageIdx(TRAIN_LABELS.length))],
@@ -40,6 +49,43 @@ async function gzippedAssets(): Promise<Map<string, Uint8Array<ArrayBuffer>>> {
     ['t10k-images-idx3-ubyte.gz', await gzip(imageIdx(TEST_LABELS.length))],
     ['t10k-labels-idx1-ubyte.gz', await gzip(labelIdx(TEST_LABELS))],
   ]);
+}
+
+/**
+ * Ressources de la galerie : 20 exemples par chiffre dans le jeu de test, contre
+ * seulement deux dans le jeu d'entraînement — la galerie lit le jeu de test.
+ */
+async function gzippedGalleryAssets(): Promise<Map<string, Uint8Array<ArrayBuffer>>> {
+  return new Map([
+    ['train-images-idx3-ubyte.gz', await gzip(imageIdx(TRAIN_LABELS.length))],
+    ['train-labels-idx1-ubyte.gz', await gzip(labelIdx(TRAIN_LABELS))],
+    ['t10k-images-idx3-ubyte.gz', await gzip(imageIdx(GALLERY_TEST_LABELS.length))],
+    ['t10k-labels-idx1-ubyte.gz', await gzip(labelIdx(GALLERY_TEST_LABELS))],
+  ]);
+}
+
+/**
+ * Oracle indépendant de `selectGalleryIndices` : les `perClass` premiers indices
+ * de chaque classe, classe par classe, dans l'ordre naturel du jeu.
+ */
+function firstOccurrencesPerClass(labels: number[], perClass: number): number[] {
+  const expected: number[] = [];
+  for (let label = 0; label < 10; label += 1) {
+    const indices = labels
+      .map((value, index) => (value === label ? index : -1))
+      .filter((index) => index >= 0);
+    expected.push(...indices.slice(0, perClass));
+  }
+  return expected;
+}
+
+/** Jeu IDX minimal construit à partir de libellés, sans image. */
+function labelsDataset(labels: number[]): MnistIdxDataset {
+  return {
+    count: labels.length,
+    images: new Uint8Array(labels.length * 28 * 28),
+    labels: Uint8Array.from(labels),
+  };
 }
 
 function stubFetch(
@@ -233,15 +279,98 @@ describe('mnistFetchErrorMessage', () => {
   });
 });
 
+describe('selectGalleryIndices', () => {
+  const dataset = labelsDataset(GALLERY_TEST_LABELS);
+
+  /** Charge le module et retourne `selectGalleryIndices`. */
+  async function loader(): Promise<typeof import('./mnist-assets.js')> {
+    return loadLoader();
+  }
+
+  it('returns the first ten examples of each class, class by class', async () => {
+    const { selectGalleryIndices } = await loader();
+    const indices = selectGalleryIndices(dataset);
+    expect(indices).toBeInstanceOf(Uint32Array);
+    expect(Array.from(indices)).toHaveLength(100);
+    // Ordre classe par classe, ordre naturel du jeu conservé dans chaque classe.
+    expect(Array.from(indices)).toEqual(firstOccurrencesPerClass(GALLERY_TEST_LABELS, 10));
+    // Les dix premiers indices appartiennent tous à la classe 0.
+    expect(Array.from(indices.slice(0, 10))).toEqual([0, 19, 28, 37, 46, 55, 64, 73, 82, 91]);
+  });
+
+  it('honours a smaller perClass', async () => {
+    const { selectGalleryIndices } = await loader();
+    const indices = selectGalleryIndices(dataset, 3);
+    expect(indices).toBeInstanceOf(Uint32Array);
+    expect(Array.from(indices)).toHaveLength(30);
+    expect(Array.from(indices)).toEqual(firstOccurrencesPerClass(GALLERY_TEST_LABELS, 3));
+    expect(Array.from(indices.slice(0, 3))).toEqual([0, 19, 28]);
+  });
+
+  it('rejects a perClass that is not a positive integer', async () => {
+    const { selectGalleryIndices } = await loader();
+    for (const perClass of [0, -3, 1.5, Number.NaN]) {
+      expect(() => selectGalleryIndices(dataset, perClass)).toThrow(RangeError);
+    }
+  });
+
+  it('names the class that lacks examples and the count it has', async () => {
+    const { selectGalleryIndices } = await loader();
+    const sparse = labelsDataset([
+      0, 0, 0, 1, 1, 1, 2, 2, 2, 3, 3, 3, 4, 4, 4, 5, 5, 5, 6, 6, 6, 7, 7, 7, 8, 8, 8, 9, 9,
+    ]);
+    expect(() => selectGalleryIndices(sparse, 3)).toThrow(RangeError);
+    expect(() => selectGalleryIndices(sparse, 3)).toThrow(/class 9/);
+    expect(() => selectGalleryIndices(sparse, 3)).toThrow(/2 example/);
+  });
+});
+
 describe('loadMnistGallery', () => {
-  it('returns ten examples, one per class, from the test split', async () => {
-    stubFetch(await gzippedAssets());
+  it('returns ten examples per class from the test split', async () => {
+    stubFetch(await gzippedGalleryAssets());
     const { loadMnistGallery } = await loadLoader();
     const gallery = await loadMnistGallery();
-    expect(gallery.count).toBe(10);
-    expect(gallery.images).toHaveLength(10 * 28 * 28);
+    expect(gallery.count).toBe(100);
     expect(gallery.images).toBeInstanceOf(Float32Array);
-    expect([...gallery.labels].sort((a, b) => a - b)).toEqual([0, 1, 2, 3, 4, 5, 6, 7, 8, 9]);
+    expect(gallery.images).toHaveLength(100 * 28 * 28);
+    // Ordre classe par classe : dix 0, dix 1, …, dix 9.
+    const expectedLabels: number[] = [];
+    for (let label = 0; label < 10; label += 1) {
+      for (let index = 0; index < 10; index += 1) {
+        expectedLabels.push(label);
+      }
+    }
+    expect(Array.from(gallery.labels)).toEqual(expectedLabels);
+    // Les deux premiers exemples de la classe 0 sont deux images distinctes :
+    // le deuxième ne recopie pas le premier.
+    expect(gallery.images[784]).toBeGreaterThan(gallery.images[0]);
+  });
+
+  it('returns twenty examples per class when asked', async () => {
+    stubFetch(await gzippedGalleryAssets());
+    const { loadMnistGallery } = await loadLoader();
+    const gallery = await loadMnistGallery(20);
+    expect(gallery.count).toBe(200);
+    expect(gallery.images).toHaveLength(200 * 28 * 28);
+    expect(Array.from(gallery.labels)).toHaveLength(200);
+    for (let label = 0; label < 10; label += 1) {
+      expect(gallery.labels.filter((value) => value === label)).toHaveLength(20);
+    }
+  });
+
+  it('rejects a perClass above the test split size and names a class', async () => {
+    stubFetch(await gzippedGalleryAssets());
+    const { loadMnistGallery } = await loadLoader();
+    // Le jeu d'entraînement ne compte que deux exemples par chiffre : un échec
+    // ici prouve que la galerie lit bien le jeu de test.
+    const error = await loadMnistGallery(21).then(
+      () => {
+        throw new Error('expected the gallery load to fail');
+      },
+      (reason: Error) => reason,
+    );
+    expect(error).toBeInstanceOf(RangeError);
+    expect(error.message).toMatch(/class/);
   });
 });
 

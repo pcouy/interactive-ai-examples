@@ -30,8 +30,9 @@
       <p><a href="./index.html">← Playground</a></p>
       <drl-card heading="MNIST CNN — démonstration interactive">
         <p>
-          Dessinez un chiffre sur la surface 28×28, ou choisissez un exemple de la
-          galerie MNIST : le réseau à quatre couches de convolution 3×3 suivies
+          Dessinez un chiffre sur la surface 28×28, ou choisissez un chiffre dans
+          la galerie MNIST et parcourez ses dix exemples avec « Précédent » et
+          « Suivant » : le réseau à quatre couches de convolution 3×3 suivies
           d'une sigmoïde, puis dense 8 + sigmoïde et dix logits, fait un passage
           avant en pur TypeScript (sans TensorFlow.js) et met à jour les
           probabilités, les filtres et les cartes de caractéristiques.
@@ -47,16 +48,22 @@
           <strong>Entrée</strong> ou <strong>Appliquer</strong> écrit la valeur,
           <strong>Échap</strong> ou <strong>Annuler</strong> ferme, et le poids prend
           effet immédiatement. Des poids édités à la main affichent un badge
-          <strong>Modifié</strong> et une origine le signalant. Le bouton
-          <strong>Entraîner</strong> charge TensorFlow.js paresseusement et les
-          exemples MNIST locaux, puis entraîne sur les sous-ensembles d'entraînement
-          et de validation choisis par deux curseurs de pourcentage indépendants ;
+          <strong>Modifié</strong> et une origine le signalant. Les boutons
+          <strong>Entraîner 1 époque</strong> et <strong>Entraîner en boucle</strong>
+          chargent TensorFlow.js paresseusement et les exemples MNIST locaux, puis
+          entraînent sur les sous-ensembles d'entraînement et de validation choisis
+          par deux curseurs de pourcentage indépendants : l'entraînement repart
+          toujours des poids affichés, qu'ils soient pré-entraînés, aléatoires ou
+          modifiés à la main, et deux courbes affichent la perte d'entraînement et
+          la précision de validation avec un point par époque ;
           <strong>Pause</strong> arrête la boucle au lot suivant,
           <strong>Réinitialiser les poids</strong> restaure les initiaux et
           <strong>Poids aléatoires</strong> tire une graine nouvelle. La galerie
-          d'exemples se télécharge à la première ouverture du sélecteur, pas au
-          chargement de la page ; la précision affichée est celle du sous-ensemble
-          de validation tenu à l'écart, pas celle du jeu complet. Le bouton
+          MNIST se télécharge à la première ouverture du sélecteur ou au premier
+          clic sur « Précédent » ou « Suivant », pas au chargement de la page ;
+          chaque chiffre propose dix exemples du jeu de test ; la précision affichée
+          est celle du sous-ensemble de validation tenu à l'écart, pas celle du jeu
+          complet. Le bouton
           <strong>Effacer</strong> vide le dessin, les quatre curseurs de nombre de
           filtres reconstruisent le modèle, et le curseur de taux d'apprentissage
           n'agit qu'à la prochaine run. Le dessin et la sélection d'une case

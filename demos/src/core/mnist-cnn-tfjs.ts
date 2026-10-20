@@ -88,6 +88,10 @@ export interface MnistTrainingProgress {
   readonly batchesProcessed: number;
   /** Perte d'entraînement moyenne de la dernière fenêtre lue. */
   readonly loss: number;
+  /** Perte d'entraînement moyenne de la dernière époque achevée, ou `null`. */
+  readonly epochLoss: number | null;
+  /** Nombre d'époques achevées depuis le début de l'entraînement. */
+  readonly completedEpochs: number;
   /** Perte de validation, ou `null` si aucun jeu de validation n'est fourni. */
   readonly validationLoss: number | null;
   /** Exactitude de validation dans `[0, 1]`, ou `null` sans jeu de validation. */
@@ -610,6 +614,8 @@ export class MnistCnnTfjsTrainer {
 
     let batchesProcessed = 0;
     let loss = Number.NaN;
+    let epochLoss: number | null = null;
+    let completedEpochs = 0;
     let validationLoss: number | null = null;
     let validationAccuracy: number | null = null;
     let status: MnistTrainingStatus = 'completed';
@@ -620,6 +626,8 @@ export class MnistCnnTfjsTrainer {
         status: 'running',
         batchesProcessed,
         loss,
+        epochLoss,
+        completedEpochs,
         validationLoss,
         validationAccuracy,
         elapsedMs: now - startedAt,
@@ -628,6 +636,10 @@ export class MnistCnnTfjsTrainer {
 
     try {
       for (let epoch = 0; epoch < epochs; epoch += 1) {
+        // Accumulateurs de l'époque : la perte moyenne de l'époque est la moyenne
+        // pondérée par lots de toutes les fenêtres lues, y compris la dernière.
+        let epochLossSum = 0;
+        let epochBatches = 0;
         const reshuffle = options.train.reshuffle;
         if (reshuffle !== undefined) {
           reshuffle(deriveEpochSeed(this.seed, epoch));
@@ -666,9 +678,12 @@ export class MnistCnnTfjsTrainer {
           // La fenêtre de perte n'est lue qu'à intervalle : aucune
           // synchronisation GPU par lot.
           if (this.pendingCosts.length >= lossSampleEvery) {
+            const windowBatches = this.pendingCosts.length;
             const windowLoss = await this.readPendingLoss();
             if (windowLoss !== null) {
               loss = windowLoss;
+              epochLossSum += windowLoss * windowBatches;
+              epochBatches += windowBatches;
             }
           }
           const now = Date.now();
@@ -684,19 +699,17 @@ export class MnistCnnTfjsTrainer {
             next += 1;
           }
         }
-        if (this.cancelled) {
-          status = 'cancelled';
-          break;
+        // Fin d'époque : on vide la fenêtre de perte, on valide sur le sous-ensemble
+        // tenu à l'écart, puis on émet un évènement qui porte les trois mesures de
+        // l'époque — même si l'intervalle n'est pas écoulé. Une annulation pendant
+        // la validation laisse l'époque non achevée : ni validation, ni incrément.
+        const windowBatches = this.pendingCosts.length;
+        const epochEndLoss = await this.readPendingLoss();
+        if (epochEndLoss !== null) {
+          loss = epochEndLoss;
+          epochLossSum += epochEndLoss * windowBatches;
+          epochBatches += windowBatches;
         }
-        // Fin d'époque : on vide la fenêtre de perte, puis on émet un évènement
-        // même si l'intervalle n'est pas écoulé.
-        const epochLoss = await this.readPendingLoss();
-        if (epochLoss !== null) {
-          loss = epochLoss;
-        }
-        const epochEndedAt = Date.now();
-        emitRunning(epochEndedAt);
-        lastProgressAt = epochEndedAt;
         if (this.cancelled) {
           status = 'cancelled';
           break;
@@ -706,6 +719,11 @@ export class MnistCnnTfjsTrainer {
           validationLoss = metrics.loss;
           validationAccuracy = metrics.accuracy;
         }
+        epochLoss = epochBatches > 0 ? epochLossSum / epochBatches : null;
+        completedEpochs += 1;
+        const epochEndedAt = Date.now();
+        emitRunning(epochEndedAt);
+        lastProgressAt = epochEndedAt;
       }
     } finally {
       this.disposePendingCosts();
@@ -717,6 +735,8 @@ export class MnistCnnTfjsTrainer {
       status,
       batchesProcessed,
       loss,
+      epochLoss,
+      completedEpochs,
       validationLoss,
       validationAccuracy,
       elapsedMs: Date.now() - startedAt,

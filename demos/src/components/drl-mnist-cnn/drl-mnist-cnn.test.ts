@@ -4,7 +4,7 @@ import type {
   MnistCnnLayerWeights,
   MnistCnnWeights,
 } from '../../core/mnist-cnn.js';
-import type { WeightEditorEvent } from './drl-mnist-cnn.js';
+import type { TrainingRunInput, WeightEditorEvent } from './drl-mnist-cnn.js';
 import {
   applyWeightEditorEvent,
   argmaxIndex,
@@ -28,7 +28,9 @@ import {
   pointerToCell,
   pointerToGrid,
   selectedWeightValue,
+  stepGalleryIndex,
   stratifiedExampleCountEstimate,
+  trainingRunRequest,
 } from './drl-mnist-cnn.js';
 import type { RectLike } from './filter-links.js';
 import { linkGeometry } from './filter-links.js';
@@ -78,6 +80,22 @@ function weightsWithConv2(kernel: Float32Array, outputChannels: number): MnistCn
 /** Géométrie d'une couche : `conv1` stride 1 sans remplissage, `conv2` stride 2 remplissage 1. */
 const CONV1_GEOMETRY = { stride: 1, padding: 0, inputSize: 28 } as const;
 const CONV2_GEOMETRY = { stride: 2, padding: 1, inputSize: 26 } as const;
+
+/** Poids minimaux pour `trainingRunRequest` : la requête ne valide aucune forme. */
+function minimalWeights(): MnistCnnWeights {
+  const layer = (kernelLength: number, biasLength: number) => ({
+    kernel: new Float32Array(kernelLength),
+    bias: new Float32Array(biasLength),
+  });
+  return {
+    conv1: layer(9, 1),
+    conv2: layer(9, 1),
+    conv3: layer(9, 1),
+    conv4: layer(9, 1),
+    dense1: layer(200, 8),
+    dense2: layer(80, 10),
+  };
+}
 
 /** Événement de case de noyau, avec le canal d'entrée de la liaison concernée. */
 function filterCellEvent(
@@ -773,5 +791,72 @@ describe('parseWeightInput', () => {
     expect(parseWeightInput(',')).toBeNull();
     expect(parseWeightInput(',5')).toBeNull();
     expect(parseWeightInput('-')).toBeNull();
+  });
+});
+
+describe('trainingRunRequest', () => {
+  const filters = [2, 3, 4, 5] as MnistCnnFilters;
+  const weights = minimalWeights();
+
+  function input(overrides: Partial<TrainingRunInput> = {}): TrainingRunInput {
+    return {
+      filters,
+      learningRate: 0.01,
+      trainPercent: 25,
+      validationPercent: 15,
+      epochs: 4,
+      weights,
+      ...overrides,
+    };
+  }
+
+  it('returns the exact weights it was given as initialWeights', () => {
+    expect(trainingRunRequest(input()).initialWeights).toBe(weights);
+  });
+
+  it('forwards the training parameters from the input', () => {
+    const request = trainingRunRequest(
+      input({ epochs: 9, trainPercent: 40, validationPercent: 20, learningRate: 0.02 }),
+    );
+    expect(request.epochs).toBe(9);
+    expect(request.trainPercent).toBe(40);
+    expect(request.validationPercent).toBe(20);
+    expect(request.learningRate).toBe(0.02);
+    expect(request.filters).toBe(filters);
+  });
+
+  it('pins the batch size and the seed', () => {
+    const request = trainingRunRequest(input());
+    expect(request.batchSize).toBe(64);
+    expect(request.seed).toBe(42);
+  });
+});
+
+describe('stepGalleryIndex', () => {
+  it('steps forward and wraps past the last example', () => {
+    expect(stepGalleryIndex(0, 10, 1)).toBe(1);
+    expect(stepGalleryIndex(9, 10, 1)).toBe(0);
+  });
+
+  it('steps backward and wraps before the first example', () => {
+    expect(stepGalleryIndex(0, 10, -1)).toBe(9);
+    expect(stepGalleryIndex(2, 10, -1)).toBe(1);
+  });
+
+  it('keeps the index when the delta is zero', () => {
+    expect(stepGalleryIndex(5, 10, 0)).toBe(5);
+  });
+
+  it('returns 0 when the gallery is empty', () => {
+    expect(stepGalleryIndex(0, 0, 1)).toBe(0);
+    expect(stepGalleryIndex(7, 0, -1)).toBe(0);
+  });
+
+  it('wraps an index past the end', () => {
+    expect(stepGalleryIndex(12, 10, 1)).toBe(3);
+  });
+
+  it('clamps a negative index to the first example', () => {
+    expect(stepGalleryIndex(-1, 10, 1)).toBe(0);
   });
 });

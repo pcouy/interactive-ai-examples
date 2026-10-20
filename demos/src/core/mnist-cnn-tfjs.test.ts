@@ -478,6 +478,48 @@ describe('cancellation', () => {
     expect(tf.memory().numTensors).toBe(before);
   });
 
+  it('a very large epoch count starts and stops on cancel', async () => {
+    const trainer = await makeTrainer(SMALL_FILTERS, { batchSize: 2 });
+    const events: MnistTrainingProgress[] = [];
+    const result = await trainer.train({
+      train: makeSource(20),
+      epochs: Number.MAX_SAFE_INTEGER,
+      progressIntervalMs: 0,
+      onProgress: (progress) => {
+        events.push(progress);
+        if (progress.status === 'running') {
+          void trainer.cancel();
+        }
+      },
+    });
+    expect(result.status).toBe('cancelled');
+    // La boucle a bien démarré : un premier lot a été traité avant l'arrêt.
+    expect(events.length).toBeGreaterThan(0);
+    expect(result.batchesProcessed).toBe(1);
+  });
+
+  it('a cancelled run reports no completed epoch', async () => {
+    const trainer = await makeTrainer(SMALL_FILTERS, { batchSize: 2 });
+    const events: MnistTrainingProgress[] = [];
+    const result = await trainer.train({
+      train: makeSource(20),
+      progressIntervalMs: 0,
+      onProgress: (progress) => {
+        events.push(progress);
+        if (progress.status === 'running' && progress.completedEpochs === 0) {
+          void trainer.cancel();
+        }
+      },
+    });
+    expect(result.status).toBe('cancelled');
+    expect(result.completedEpochs).toBe(0);
+    // Aucun évènement ne rapporte une époque achevée : l'annulation est intervenue
+    // avant la fin de la première époque.
+    expect(events.some((event) => event.status === 'running' && event.completedEpochs > 0)).toBe(
+      false,
+    );
+  });
+
   it('ignores a cancellation requested after completion', async () => {
     const trainer = await makeTrainer(SMALL_FILTERS, { batchSize: 2 });
     const first = await trainer.train({ train: makeSource(2), epochs: 1 });
@@ -489,12 +531,17 @@ describe('cancellation', () => {
 
   it('skips validation when cancellation is requested during the last batch', async () => {
     const trainer = await makeTrainer(SMALL_FILTERS, { batchSize: 4 });
+    // `progressIntervalMs: 0` émet un évènement par lot : l'annulation porte sur le
+    // premier lot, avant la fin de l'époque — la validation n'a pas lieu. Un
+    // évènement de fin d'époque est émis après la validation : annuler depuis
+    // celui-ci ne pourrait pas la sauter.
     const result = await trainer.train({
       train: makeSource(4),
       validation: makeSource(4, 2),
       epochs: 1,
+      progressIntervalMs: 0,
       onProgress: (progress) => {
-        if (progress.status === 'running') {
+        if (progress.status === 'running' && progress.completedEpochs === 0) {
           void trainer.cancel();
         }
       },
@@ -803,6 +850,10 @@ describe('loss sampling', () => {
     // Fenêtre finale partielle : moyenne des deux derniers lots seulement.
     const expected = (batchLosses[3] + batchLosses[4]) / 2;
     expect(result.loss).toBeCloseTo(expected, 4);
+    // Perte d'époque : moyenne pondérée par lots de toutes les fenêtres lues,
+    // y compris la dernière.
+    const epochMean = batchLosses.reduce((total, value) => total + value, 0) / batchLosses.length;
+    expect(result.epochLoss).toBeCloseTo(epochMean, 4);
   });
 
   it('disposes pending cost tensors after completion and cancellation', async () => {
@@ -852,6 +903,68 @@ describe('progress throttling', () => {
     expect(running[0].batchesProcessed).toBe(4);
     expect(events.at(-1)?.status).toBe('completed');
     expect(events.at(-1)?.batchesProcessed).toBe(4);
+  });
+});
+
+describe('epoch progress', () => {
+  it('emits one epoch-end event per epoch with the epoch loss', async () => {
+    const trainer = await makeTrainer(SMALL_FILTERS, { batchSize: 2 });
+    const events: MnistTrainingProgress[] = [];
+    const result = await trainer.train({
+      train: makeSource(4),
+      epochs: 3,
+      progressIntervalMs: 0,
+      onProgress: (progress) => events.push(progress),
+    });
+    expect(result.status).toBe('completed');
+    expect(result.completedEpochs).toBe(3);
+    // Avec `progressIntervalMs: 0`, un événement est aussi émis après chaque lot :
+    // il porte alors `completedEpochs` au numéro de l'époque *précédente*. Seul un
+    // événement de fin d'époque l'incrémente : on ne retient donc que les événements
+    // qui font avancer `completedEpochs` par rapport à l'événement précédent.
+    const epochEnds: MnistTrainingProgress[] = [];
+    let lastCompletedEpochs = 0;
+    for (const event of events) {
+      if (event.status !== 'running' || event.completedEpochs <= lastCompletedEpochs) {
+        continue;
+      }
+      epochEnds.push(event);
+      lastCompletedEpochs = event.completedEpochs;
+    }
+    expect(epochEnds.map((event) => event.completedEpochs)).toEqual([1, 2, 3]);
+    for (const event of epochEnds) {
+      expect(Number.isFinite(event.epochLoss)).toBe(true);
+      expect(event.epochLoss).toBeGreaterThan(0);
+    }
+    expect(Number.isFinite(result.epochLoss)).toBe(true);
+  });
+
+  it('the epoch-end event carries the validation accuracy of the same epoch', async () => {
+    const trainer = await makeTrainer(SMALL_FILTERS, { batchSize: 2 });
+    const events: MnistTrainingProgress[] = [];
+    const result = await trainer.train({
+      train: makeSource(4, 1),
+      validation: makeSource(6, 2),
+      epochs: 2,
+      progressIntervalMs: 0,
+      onProgress: (progress) => events.push(progress),
+    });
+    expect(result.status).toBe('completed');
+    const firstEpochEnd = events.find(
+      (event) => event.status === 'running' && event.completedEpochs === 1,
+    );
+    expect(firstEpochEnd).toBeDefined();
+    if (firstEpochEnd === undefined) {
+      throw new Error('expected a running event for the first completed epoch');
+    }
+    const accuracy: number | null = firstEpochEnd.validationAccuracy;
+    expect(accuracy).not.toBeNull();
+    if (accuracy === null) {
+      throw new Error('expected the first epoch-end event to carry a validation accuracy');
+    }
+    expect(accuracy).toBeGreaterThanOrEqual(0);
+    expect(accuracy).toBeLessThanOrEqual(1);
+    expect(result.validationAccuracy).toBe(accuracy);
   });
 });
 
