@@ -1,8 +1,13 @@
 import type { PropertyValues, TemplateResult } from 'lit';
 import { css, html, LitElement, nothing } from 'lit';
 import { customElement, property, state } from 'lit/decorators.js';
-import type { Connect4Move } from '../../core/games/connect4.js';
-import type { TicTacToeMove } from '../../core/games/tic-tac-toe.js';
+import type { Evaluator } from '../../core/contracts.js';
+import type { Connect4Move, Connect4State } from '../../core/games/connect4.js';
+import type { TicTacToeMove, TicTacToeState } from '../../core/games/tic-tac-toe.js';
+import {
+  compileCustomEvaluator,
+  defaultCustomSource,
+} from '../../core/search/evaluators/custom.js';
 import { createReadOnlyOverlay } from '../../core/search/transposition.js';
 import type { TreeModel } from '../../core/search/tree-model.js';
 import '../drl-connect4/drl-connect4.js';
@@ -228,6 +233,68 @@ export class DrlDeepBluePage extends LitElement {
         color: var(--drl-fg);
       }
 
+      .drl-page-custom {
+        width: 100%;
+        margin-bottom: var(--drl-space-3);
+      }
+
+      .drl-page-custom-label {
+        display: block;
+        font-weight: 700;
+        margin-bottom: var(--drl-space-1);
+      }
+
+      .drl-page-custom-source {
+        display: block;
+        width: 100%;
+        min-height: 12rem;
+        box-sizing: border-box;
+        font-family: monospace;
+        font-size: 0.9em;
+        line-height: 1.5;
+        tab-size: 2;
+        resize: vertical;
+        padding: var(--drl-space-2);
+        border: 1px solid var(--drl-border);
+        border-radius: var(--drl-radius);
+        background: var(--drl-surface);
+        color: var(--drl-fg);
+      }
+
+      .drl-page-custom-actions {
+        display: flex;
+        flex-wrap: wrap;
+        gap: var(--drl-space-2);
+        margin-top: var(--drl-space-2);
+      }
+
+      .drl-page-custom-actions button {
+        font: inherit;
+        padding: var(--drl-space-1) var(--drl-space-2);
+        border: 1px solid var(--drl-border);
+        border-radius: calc(var(--drl-radius) / 2);
+        background: var(--drl-bg);
+        color: var(--drl-fg);
+        cursor: pointer;
+      }
+
+      .drl-page-custom-actions button:hover {
+        border-color: var(--drl-accent);
+      }
+
+      .drl-page-custom-warning {
+        margin: var(--drl-space-1) 0 0;
+        padding: var(--drl-space-1) var(--drl-space-2);
+        border-left: 3px solid var(--drl-arrow);
+        color: var(--drl-arrow);
+      }
+
+      .drl-page-error {
+        margin: var(--drl-space-2) 0 0;
+        color: var(--drl-arrow);
+        white-space: pre-wrap;
+      }
+
       .drl-page-layout {
         display: grid;
         grid-template-columns: minmax(0, 2fr) minmax(0, 3fr);
@@ -312,6 +379,20 @@ export class DrlDeepBluePage extends LitElement {
   @state()
   replayMove: unknown = null;
 
+  // Brouillon par jeu du code source personnalisé. Volontairement hors de
+  // l'état réactif : chaque frappe relancerait un rendu et replacerait le
+  // curseur du champ.
+  private customSources: Record<DeepBlueGameId, string> = {
+    'tic-tac-toe': defaultCustomSource('tic-tac-toe'),
+    connect4: defaultCustomSource('connect4'),
+  };
+
+  @state()
+  private customEvaluators: Partial<Record<DeepBlueGameId, Evaluator<unknown, unknown>>> = {};
+
+  @state()
+  private customError: string | null = null;
+
   private treeGameId: DeepBlueGameId | null = null;
 
   private get activeGameId(): DeepBlueGameId {
@@ -320,6 +401,26 @@ export class DrlDeepBluePage extends LitElement {
 
   private get activeSettings(): GameSettings {
     return GAME_SETTINGS[this.activeGameId];
+  }
+
+  /** Évaluateur compilé actif, uniquement quand l'évaluateur choisi est `custom`. */
+  private get activeCustomEvaluator(): Evaluator<unknown, unknown> | null {
+    if (parseEvaluatorMode(this.evaluator) !== 'custom') {
+      return null;
+    }
+    return this.customEvaluators[this.activeGameId] ?? null;
+  }
+
+  /** Compile le brouillon du jeu donné si aucun évaluateur n'y est encore stocké. */
+  private ensureCustomEvaluator(gameId: DeepBlueGameId): void {
+    if (this.customEvaluators[gameId] !== undefined) {
+      return;
+    }
+    const game = gameId === 'connect4' ? CONNECT4_GAME_CONFIG.game : TIC_TAC_TOE_GAME_CONFIG.game;
+    const result = compileCustomEvaluator(this.customSources[gameId], game, gameId);
+    if (result.ok) {
+      this.customEvaluators = { ...this.customEvaluators, [gameId]: result.evaluator };
+    }
   }
 
   private get gameElement(): GameComponentApi<unknown, unknown> | null {
@@ -338,6 +439,12 @@ export class DrlDeepBluePage extends LitElement {
     super.updated(changed);
     if (this.treeGameId !== this.activeGameId) {
       this.syncTreeGame();
+    }
+    // Une page créée directement en `custom` (attribut ou propriété avant le
+    // premier rendu) n'a pas encore d'évaluateur compilé : on prépare ici le
+    // défaut du jeu actif. L'appel est idempotent, donc pas de boucle de rendu.
+    if (parseEvaluatorMode(this.evaluator) === 'custom') {
+      this.ensureCustomEvaluator(this.activeGameId);
     }
   }
 
@@ -360,6 +467,7 @@ export class DrlDeepBluePage extends LitElement {
       </header>
       <div class="drl-page-modes">${this.renderVsModeRow()}</div>
       <div class="drl-page-search">${this.renderSearchFields()}</div>
+      ${this.renderCustomBlock()}
       <div class="drl-page-layout">
         <section class="drl-page-panel">${this.renderGame()}</section>
         <section class="drl-page-panel">
@@ -434,6 +542,7 @@ export class DrlDeepBluePage extends LitElement {
           <option value="windows">windows</option>
           <option value="rollout">rollout</option>
           <option value="random">random</option>
+          <option value="custom">custom</option>
         </select>
       </label>
       ${evaluator === 'rollout' ? this.renderSamplesField() : nothing}
@@ -454,6 +563,47 @@ export class DrlDeepBluePage extends LitElement {
         />
         Transposition
       </label>
+    `;
+  }
+
+  private renderCustomBlock(): TemplateResult | typeof nothing {
+    if (parseEvaluatorMode(this.evaluator) !== 'custom') {
+      return nothing;
+    }
+    return html`
+      <section class="drl-page-custom">
+        <label class="drl-page-custom-label" for="drl-custom-source">
+          Évaluateur personnalisé (JavaScript)
+        </label>
+        <p class="drl-page-hint">
+          Le corps reçoit <code>state</code> et <code>ctx</code>, et doit retourner un nombre fini.
+          <code>ctx</code> expose <code>rootPlayer</code>, <code>opponent</code>, <code>rows</code>,
+          <code>cols</code>, <code>game</code>, puis <code>lines</code> (morpion) ou
+          <code>windows</code> (puissance 4).
+        </p>
+        <p class="drl-page-custom-warning" id="drl-custom-warning">
+          Code exécuté dans la page, sans isolation. À utiliser uniquement en local avec du code de
+          confiance.
+        </p>
+        <textarea
+          id="drl-custom-source"
+          class="drl-page-custom-source"
+          spellcheck="false"
+          autocomplete="off"
+          aria-describedby="drl-custom-warning"
+          .value=${this.customSources[this.activeGameId]}
+          @input=${this.onCustomInput}
+        ></textarea>
+        <div class="drl-page-custom-actions">
+          <button type="button" @click=${this.onCustomApply}>Appliquer</button>
+          <button type="button" @click=${this.onCustomReset}>Réinitialiser</button>
+        </div>
+        ${
+          this.customError === null
+            ? nothing
+            : html`<p class="drl-page-error" role="alert">${this.customError}</p>`
+        }
+      </section>
     `;
   }
 
@@ -520,6 +670,7 @@ export class DrlDeepBluePage extends LitElement {
           .pruning=${this.pruning}
           .strictPruning=${this.strictPruning}
           .discount=${this.discount}
+          .customEvaluator=${this.activeCustomEvaluator}
           @drl-search-started=${this.onSearchStarted}
           @drl-step=${this.onGameStep}
           @drl-game-reset=${this.onTreeReset}
@@ -539,6 +690,7 @@ export class DrlDeepBluePage extends LitElement {
         .pruning=${this.pruning}
         .strictPruning=${this.strictPruning}
         .discount=${this.discount}
+        .customEvaluator=${this.activeCustomEvaluator}
         @drl-search-started=${this.onSearchStarted}
         @drl-step=${this.onGameStep}
         @drl-game-reset=${this.onTreeReset}
@@ -570,7 +722,10 @@ export class DrlDeepBluePage extends LitElement {
     // Le rejoué lit la table partagée en lecture seule et écrit dans sa propre
     // table temporaire : la table réelle n'est jamais polluée par le rejoué.
     const realTable = game?.transpositionTable;
-    const replayTable = realTable === undefined ? undefined : createReadOnlyOverlay(realTable);
+    // L'overlay n'est construit que si la transposition est active : sinon on
+    // passe `undefined` et le rejoué n'utilise aucune table.
+    const replayTable =
+      this.transposition && realTable !== undefined ? createReadOnlyOverlay(realTable) : undefined;
     if (this.activeGameId === 'connect4') {
       const agent = createGameAgent(CONNECT4_GAME_CONFIG.game, {
         mode: parseEvaluatorMode(this.evaluator),
@@ -582,6 +737,14 @@ export class DrlDeepBluePage extends LitElement {
         strictPruning: this.strictPruning,
         recorder: tree.recorder,
         heuristic: CONNECT4_GAME_CONFIG.heuristic,
+        // Le champ n'a de sens qu'en mode `custom` : ailleurs l'agent l'ignore,
+        // mais on l'omet pour que l'intention reste lisible.
+        customEvaluator:
+          parseEvaluatorMode(this.evaluator) === 'custom'
+            ? (this.customEvaluators[this.activeGameId] as
+                | Evaluator<Connect4State, Connect4Move>
+                | undefined)
+            : undefined,
         samples,
         discount,
         rng: Math.random,
@@ -599,6 +762,14 @@ export class DrlDeepBluePage extends LitElement {
       strictPruning: this.strictPruning,
       recorder: tree.recorder,
       heuristic: TIC_TAC_TOE_GAME_CONFIG.heuristic,
+      // Le champ n'a de sens qu'en mode `custom` : ailleurs l'agent l'ignore,
+      // mais on l'omet pour que l'intention reste lisible.
+      customEvaluator:
+        parseEvaluatorMode(this.evaluator) === 'custom'
+          ? (this.customEvaluators[this.activeGameId] as
+              | Evaluator<TicTacToeState, TicTacToeMove>
+              | undefined)
+          : undefined,
       samples,
       discount,
       rng: Math.random,
@@ -607,11 +778,17 @@ export class DrlDeepBluePage extends LitElement {
   }
 
   private readonly onGamePick = (event: Event): void => {
-    const select = event.target;
-    if (!(select instanceof HTMLSelectElement)) {
+    const select = event.target as HTMLSelectElement | null;
+    if (select === null || typeof select.value !== 'string') {
       return;
     }
     this.gameKey = readGameId(select.value);
+    this.customError = null;
+    // Le jeu peut n'avoir jamais été compilé : on prépare son défaut pour que
+    // le sélecteur `custom` et le rejoué disposent tout de suite d'un évaluateur.
+    if (parseEvaluatorMode(this.evaluator) === 'custom') {
+      this.ensureCustomEvaluator(this.activeGameId);
+    }
   };
 
   private readonly onModePick = (event: Event): void => {
@@ -638,7 +815,56 @@ export class DrlDeepBluePage extends LitElement {
     if (select === null || typeof select.value !== 'string') {
       return;
     }
-    this.evaluator = parseEvaluatorMode(select.value);
+    const mode = parseEvaluatorMode(select.value);
+    this.evaluator = mode;
+    // Passer en `custom` compile le défaut du jeu actif s'il ne l'est pas déjà.
+    // Revenir à un autre évaluateur laisse brouillons et évaluateurs en place :
+    // un retour en `custom` retrouve alors l'état précédent.
+    if (mode === 'custom') {
+      this.ensureCustomEvaluator(this.activeGameId);
+    }
+  };
+
+  private readonly onCustomInput = (event: Event): void => {
+    const textarea = event.target as HTMLTextAreaElement | null;
+    if (textarea === null || typeof textarea.value !== 'string') {
+      return;
+    }
+    // Brouillon hors état réactif : aucune mise à jour déclenchée, le curseur
+    // du champ ne bouge pas pendant la frappe.
+    this.customSources[this.activeGameId] = textarea.value;
+  };
+
+  private readonly onCustomApply = (): void => {
+    const gameId = this.activeGameId;
+    const game = gameId === 'connect4' ? CONNECT4_GAME_CONFIG.game : TIC_TAC_TOE_GAME_CONFIG.game;
+    const result = compileCustomEvaluator(this.customSources[gameId], game, gameId);
+    if (!result.ok) {
+      // La source est invalide : l'ancien évaluateur reste en place.
+      this.customError = result.error;
+      return;
+    }
+    this.customEvaluators = { ...this.customEvaluators, [gameId]: result.evaluator };
+    this.customError = null;
+    // Le rejoué doit repartir de zéro avec le nouvel évaluateur.
+    this.treeElement?.clearTree();
+    // Le champ et les liaisons enfants sont rafraîchis même si l'identité de
+    // l'état n'a pas changé (brouillon appliqué à l'identique).
+    this.requestUpdate();
+  };
+
+  private readonly onCustomReset = (): void => {
+    const gameId = this.activeGameId;
+    const source = defaultCustomSource(gameId);
+    this.customSources[gameId] = source;
+    const game = gameId === 'connect4' ? CONNECT4_GAME_CONFIG.game : TIC_TAC_TOE_GAME_CONFIG.game;
+    const result = compileCustomEvaluator(source, game, gameId);
+    this.customError = null;
+    if (result.ok) {
+      this.customEvaluators = { ...this.customEvaluators, [gameId]: result.evaluator };
+    }
+    this.treeElement?.clearTree();
+    this.requestUpdate();
   };
 
   private readonly onSamplesChange = (event: Event): void => {

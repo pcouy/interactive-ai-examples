@@ -83,10 +83,12 @@ export function createTranspositionTable(): TranspositionTable {
  * propres entrées dans une table temporaire privée ; la table réelle n'est lue
  * qu'en lecture.
  * - `store` n'écrit que dans la table temporaire ;
- * - `probe` renvoie d'abord la table temporaire, sinon l'entrée réelle avec
- *   `turn: -1`, si bien qu'une entrée réelle à profondeur égale n'est jamais
- *   traitée comme du tour courant (seule une entrée strictement plus profonde
- *   reste consommable) ;
+ * - `probe` et `snapshot` préfèrent l'entrée la plus profonde : la table
+ *   temporaire quand elle est au moins aussi profonde que l'entrée réelle,
+ *   sinon l'entrée réelle avec `turn: -1` ; à profondeur égale, l'entrée
+ *   temporaire l'emporte. Une entrée réelle à profondeur égale n'est donc
+ *   jamais traitée comme du tour courant (seule une entrée strictement plus
+ *   profonde reste consommable) ;
  * - `currentTurn` / `beginTurn` / `clear` ne pilotent que la table temporaire.
  */
 export function createReadOnlyOverlay(real: TranspositionTable): TranspositionTable {
@@ -97,14 +99,15 @@ export function createReadOnlyOverlay(real: TranspositionTable): TranspositionTa
     },
     probe(key: string): ProbedEntry | null {
       const own = temp.probe(key);
-      if (own !== null) {
+      const fromReal = real.probe(key);
+      if (own === null) {
+        return fromReal === null ? null : { ...fromReal, turn: -1 };
+      }
+      if (fromReal === null) {
         return own;
       }
-      const fromReal = real.probe(key);
-      if (fromReal === null) {
-        return null;
-      }
-      return { ...fromReal, turn: -1 };
+      // À profondeur égale, l'entrée temporaire (du tour courant) l'emporte.
+      return own.depth >= fromReal.depth ? own : { ...fromReal, turn: -1 };
     },
     snapshot(): readonly TranspositionSnapshotEntry[] {
       const merged = new Map<string, TranspositionSnapshotEntry>();
@@ -112,7 +115,10 @@ export function createReadOnlyOverlay(real: TranspositionTable): TranspositionTa
         merged.set(entry.key, { ...entry, turn: -1 });
       }
       for (const entry of temp.snapshot()) {
-        merged.set(entry.key, entry);
+        const existing = merged.get(entry.key);
+        if (existing === undefined || entry.depth >= existing.depth) {
+          merged.set(entry.key, entry);
+        }
       }
       return [...merged.values()].sort((a, b) => (a.key < b.key ? -1 : a.key > b.key ? 1 : 0));
     },

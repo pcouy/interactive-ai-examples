@@ -872,6 +872,9 @@ describe('createMinimaxAgent', () => {
       .snapshot()
       .find((entry) => entry.key === ticTacToe.stateKey(ttHitVisit.state));
     expect(consumed?.depth).toBe(entryDepth);
+    // Le tour 0 prouve que la profondeur provient de l'entrée temporaire de
+    // l'overlay (du tour courant), pas de l'entrée réelle (toujours turn -1).
+    expect(consumed?.turn).toBe(0);
     // L'évènement de valeur du même nœud porte la même profondeur.
     const matchingValue = replay.values.find((value) => value.nodeKey === ttHitVisit.nodeKey);
     expect(matchingValue?.entryDepth).toBe(entryDepth);

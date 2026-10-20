@@ -219,6 +219,58 @@ describe('createReadOnlyOverlay', () => {
     expect(real.probe('k')?.score).toBe(0.1);
   });
 
+  it('prefers a deeper real entry over a shallower temp entry', () => {
+    const real = createTranspositionTable();
+    real.store('k', { score: 0.7, depth: 5, exact: true });
+    const overlay = createReadOnlyOverlay(real);
+    // L'entrée temporaire est strictement moins profonde : elle ne doit pas
+    // masquer l'entrée réelle, exposée avec turn -1.
+    overlay.store('k', { score: 0.1, depth: 2, exact: true });
+    expect(overlay.probe('k')).toEqual({ score: 0.7, depth: 5, exact: true, turn: -1 });
+  });
+
+  it('prefers a deeper temp entry over a real entry', () => {
+    const real = createTranspositionTable();
+    real.store('k', { score: 0.1, depth: 2, exact: true });
+    const overlay = createReadOnlyOverlay(real);
+    overlay.store('k', { score: 0.8, depth: 5, exact: true });
+    expect(overlay.probe('k')).toEqual({ score: 0.8, depth: 5, exact: true, turn: 0 });
+  });
+
+  it('lets a temp entry win at equal depth', () => {
+    const real = createTranspositionTable();
+    real.store('k', { score: 0.1, depth: 3, exact: true });
+    const overlay = createReadOnlyOverlay(real);
+    overlay.store('k', { score: 0.9, depth: 3, exact: true });
+    expect(overlay.probe('k')).toEqual({ score: 0.9, depth: 3, exact: true, turn: 0 });
+  });
+
+  it('merges the snapshot with the deeper entry winning and temp at equal depth', () => {
+    const real = createTranspositionTable();
+    real.store('shallower-temp', { score: 0.7, depth: 5, exact: true });
+    real.store('deeper-temp', { score: 0.1, depth: 2, exact: true });
+    real.store('equal-depth', { score: 0.2, depth: 3, exact: true });
+    const overlay = createReadOnlyOverlay(real);
+    overlay.store('shallower-temp', { score: 0.1, depth: 2, exact: true });
+    overlay.store('deeper-temp', { score: 0.8, depth: 4, exact: true });
+    overlay.store('equal-depth', { score: 0.9, depth: 3, exact: true });
+    const snapshot = overlay.snapshot();
+    // L'entrée réelle plus profonde est conservée, avec turn -1.
+    expect(snapshot.find((row) => row.key === 'shallower-temp')).toEqual({
+      key: 'shallower-temp',
+      score: 0.7,
+      depth: 5,
+      exact: true,
+      turn: -1,
+    });
+    // L'entrée temporaire plus profonde l'emporte.
+    expect(snapshot.find((row) => row.key === 'deeper-temp')?.score).toBe(0.8);
+    expect(snapshot.find((row) => row.key === 'deeper-temp')?.turn).toBe(0);
+    // À profondeur égale, l'entrée temporaire l'emporte.
+    expect(snapshot.find((row) => row.key === 'equal-depth')?.score).toBe(0.9);
+    expect(snapshot.find((row) => row.key === 'equal-depth')?.turn).toBe(0);
+  });
+
   it('follows its own temp turn for currentTurn and beginTurn', () => {
     const real = createTranspositionTable();
     const overlay = createReadOnlyOverlay(real);

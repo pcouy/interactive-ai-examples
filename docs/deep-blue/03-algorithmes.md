@@ -215,8 +215,8 @@ Deep Blue ne l'utilise pas : il applique la politique par défaut (`'all'`) et
 s'appuie sur une table en lecture seule par-dessus la table partagée
 (`createReadOnlyOverlay`). Le rejoué lit donc la table réelle sans jamais
 l'écrire ; il stocke ses propres entrées dans une table temporaire privée, qui
-porte ses touches du tour courant. Seule la clause de profondeur égale dépend
-du tour.
+porte ses propres entrées du tour courant. Seule la clause de profondeur égale
+dépend du tour.
 
 **Pédagogie visée** : « deux positions différentes mènent au même sous-arbre ;
 on ne le calcule qu'une fois » — visible dans la viz via le compteur

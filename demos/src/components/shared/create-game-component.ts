@@ -40,7 +40,7 @@ import {
 import { drlTokens } from '../../styles/tokens.js';
 import type { DrlCellClickEvent, PieceStyle } from '../drl-game-board/drl-game-board.js';
 
-export type EvaluatorMode = 'windows' | 'rollout' | 'random';
+export type EvaluatorMode = 'windows' | 'rollout' | 'random' | 'custom';
 
 const DEFAULT_PLAYER_KINDS: readonly [PlayerKind, PlayerKind] = ['human', 'agent'];
 const DEFAULT_EVALUATOR: string = 'windows';
@@ -160,6 +160,7 @@ export interface GameComponentApi<S, M> extends LitElement {
   players: string;
   depth: number;
   evaluator: string;
+  customEvaluator: Evaluator<S, M> | null;
   rolloutSamples: number;
   discount: number;
   transposition: boolean;
@@ -249,7 +250,7 @@ export function parsePlayersConfig(
 }
 
 export function parseEvaluatorMode(value: string): EvaluatorMode {
-  if (value === 'rollout' || value === 'random') {
+  if (value === 'rollout' || value === 'random' || value === 'custom') {
     return value;
   }
   return 'windows';
@@ -292,6 +293,8 @@ export interface GameAgentOptions<S, M> {
   readonly strictPruning?: boolean;
   readonly recorder: TreeRecorder<S>;
   readonly heuristic: Evaluator<S, M>;
+  /** Évaluateur personnalisé utilisé quand `mode` vaut `'custom'`. */
+  readonly customEvaluator?: Evaluator<S, M>;
   readonly samples?: number;
   readonly discount?: number;
   readonly rng?: () => number;
@@ -309,7 +312,9 @@ export function createGameAgent<S, M>(
   const evaluator: Evaluator<S, M> =
     options.mode === 'rollout'
       ? createRandomRolloutEvaluator<S, M>({ samples: options.samples })
-      : options.heuristic;
+      : options.mode === 'custom'
+        ? (options.customEvaluator ?? options.heuristic)
+        : options.heuristic;
   const transposition = options.transposition
     ? (options.transpositionTable ?? createTranspositionTable())
     : undefined;
@@ -597,6 +602,9 @@ export function createGameComponent<S, M>(
     showSearchFields = true;
 
     @property({ attribute: false })
+    customEvaluator: Evaluator<S, M> | null = null;
+
+    @property({ attribute: false })
     recorder: TreeRecorder<S> | null = null;
 
     @state()
@@ -821,6 +829,7 @@ export function createGameComponent<S, M>(
         changed.has('players') ||
         changed.has('depth') ||
         changed.has('evaluator') ||
+        changed.has('customEvaluator') ||
         changed.has('rolloutSamples') ||
         changed.has('discount') ||
         changed.has('transposition') ||
@@ -829,7 +838,9 @@ export function createGameComponent<S, M>(
       ) {
         this.pending = null;
       }
-      if (changed.has('evaluator')) {
+      if (changed.has('evaluator') || changed.has('customEvaluator')) {
+        // Une nouvelle fonction d'évaluation rend caduques les scores de
+        // l'ancienne : la table est vidée pour éviter toute réutilisation.
         this.tt.clear();
         this.ttSize = this.tt.size();
       }
@@ -1474,6 +1485,7 @@ export function createGameComponent<S, M>(
         strictPruning: this.strictPruning,
         recorder,
         heuristic: config.heuristic,
+        customEvaluator: this.customEvaluator ?? undefined,
         samples: this.rolloutSamples,
         discount: sanitizeDiscount(this.discount, 1),
         rng: Math.random,
