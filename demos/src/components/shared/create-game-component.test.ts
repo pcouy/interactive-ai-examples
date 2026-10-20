@@ -1,5 +1,10 @@
 import { describe, expect, it } from 'vitest';
-import { noopRecorder, type PlayerKind, type SearchAgent } from '../../core/contracts.js';
+import {
+  type Evaluator,
+  noopRecorder,
+  type PlayerKind,
+  type SearchAgent,
+} from '../../core/contracts.js';
 import {
   type TicTacToeMove,
   type TicTacToeState,
@@ -242,6 +247,10 @@ describe('parseEvaluatorMode', () => {
     expect(parseEvaluatorMode('')).toBe('windows');
     expect(parseEvaluatorMode('WINDOWS')).toBe('windows');
   });
+
+  it('recognizes the custom mode', () => {
+    expect(parseEvaluatorMode('custom')).toBe('custom');
+  });
 });
 
 describe('sanitizeDepth', () => {
@@ -394,6 +403,73 @@ describe('createGameAgent', () => {
         .legalMoves(state)
         .some((legal) => sameMove(legal, move as { col: number })),
     ).toBe(true);
+  });
+});
+
+describe('custom evaluator mode', () => {
+  const customOptions = {
+    depth: 2,
+    fallbackDepth: 6,
+    transposition: false,
+    prune: true,
+    recorder: noopRecorder,
+  } as const;
+
+  it('uses the supplied custom evaluator instead of the heuristic', () => {
+    let calls = 0;
+    const sentinel: Evaluator<TicTacToeState, TicTacToeMove> = {
+      id: 'sentinel',
+      evaluate() {
+        calls += 1;
+        return 0;
+      },
+    };
+    const state = playTicTacToe([4]);
+    const agent = createGameAgent(ticTacToe, {
+      ...customOptions,
+      mode: 'custom',
+      heuristic: TIC_TAC_TOE_GAME_CONFIG.heuristic,
+      customEvaluator: sentinel,
+    });
+    const move = runAgentToDone(agent, state);
+    expect(move).not.toBeNull();
+    expect(calls).toBeGreaterThan(0);
+  });
+
+  it('falls back to the heuristic when no custom evaluator is supplied', () => {
+    let heuristicCalls = 0;
+    const countingHeuristic: Evaluator<TicTacToeState, TicTacToeMove> = {
+      id: 'counting',
+      evaluate(state, ctx) {
+        heuristicCalls += 1;
+        return TIC_TAC_TOE_GAME_CONFIG.heuristic.evaluate(state, ctx);
+      },
+    };
+    const state = playTicTacToe([4]);
+    const agent = createGameAgent(ticTacToe, {
+      ...customOptions,
+      mode: 'custom',
+      heuristic: countingHeuristic,
+    });
+    const move = runAgentToDone(agent, state);
+    expect(move).not.toBeNull();
+    expect(heuristicCalls).toBeGreaterThan(0);
+  });
+
+  it('clears the pending turn when customEvaluator changes', () => {
+    const element = createTicTacToeElement();
+    element.players = '["agent","agent"]';
+    element.depth = 3;
+    (element as unknown as { startTurn(): void }).startTurn();
+    expect((element as unknown as { pending: unknown }).pending).not.toBeNull();
+
+    const sentinel: Evaluator<TicTacToeState, TicTacToeMove> = {
+      id: 'sentinel',
+      evaluate: () => 0,
+    };
+    element.customEvaluator = sentinel;
+    runWillUpdate(element, 'customEvaluator');
+    expect((element as unknown as { pending: unknown }).pending).toBeNull();
   });
 });
 
