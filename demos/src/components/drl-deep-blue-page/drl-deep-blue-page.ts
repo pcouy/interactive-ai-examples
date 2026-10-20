@@ -14,13 +14,28 @@ import {
   createGameAgent,
   type GameComponentApi,
   parseEvaluatorMode,
+  sanitizeDepth,
   sanitizeDiscount,
+  sanitizeSamples,
   TIC_TAC_TOE_GAME_CONFIG,
 } from '../shared/create-game-component.js';
 
 export type DeepBlueGameId = 'tic-tac-toe' | 'connect4';
 
 const DEFAULT_PLAYERS = '["human","agent"]';
+/** Nombre d'échantillons par défaut quand l'évaluateur rollout est choisi. */
+const DEFAULT_ROLLOUT_SAMPLES = 10;
+
+interface VsMode {
+  readonly label: string;
+  readonly players: string;
+}
+
+const VS_MODES: readonly VsMode[] = [
+  { label: 'Humain vs Agent', players: '["human","agent"]' },
+  { label: 'Agent vs Humain', players: '["agent","human"]' },
+  { label: 'Agent vs Agent', players: '["agent","agent"]' },
+];
 
 interface GameSettings {
   readonly pieceStyle: PieceStyle;
@@ -136,6 +151,74 @@ export class DrlDeepBluePage extends LitElement {
         border-color: var(--drl-accent);
       }
 
+      .drl-page-modes {
+        display: flex;
+        flex-wrap: wrap;
+        align-items: center;
+        gap: var(--drl-space-2);
+        margin-bottom: var(--drl-space-3);
+      }
+
+      .drl-page-mode {
+        font: inherit;
+        padding: var(--drl-space-1) var(--drl-space-2);
+        border: 1px solid var(--drl-border);
+        border-radius: calc(var(--drl-radius) / 2);
+        background: var(--drl-bg);
+        color: var(--drl-fg);
+        cursor: pointer;
+      }
+
+      .drl-page-mode:hover {
+        border-color: var(--drl-accent);
+      }
+
+      .drl-page-mode[aria-pressed='true'] {
+        border-color: var(--drl-accent);
+        color: var(--drl-accent);
+      }
+
+      .drl-page-search {
+        display: flex;
+        flex-wrap: wrap;
+        align-items: center;
+        gap: var(--drl-space-2);
+        margin-bottom: var(--drl-space-3);
+      }
+
+      .drl-page-field {
+        display: inline-flex;
+        align-items: center;
+        gap: var(--drl-space-1);
+        color: var(--drl-muted);
+      }
+
+      .drl-page-field select {
+        font: inherit;
+        padding: var(--drl-space-1) var(--drl-space-2);
+        border: 1px solid var(--drl-border);
+        border-radius: calc(var(--drl-radius) / 2);
+        background: var(--drl-surface);
+        color: var(--drl-fg);
+        cursor: pointer;
+      }
+
+      .drl-page-field select:hover {
+        border-color: var(--drl-accent);
+      }
+
+      .drl-page-number {
+        width: calc(var(--drl-space-3) * 3);
+        max-width: 100%;
+        box-sizing: border-box;
+        font: inherit;
+        padding: 2px 4px;
+        border: 1px solid var(--drl-border);
+        border-radius: calc(var(--drl-radius) / 2);
+        background: var(--drl-surface);
+        color: var(--drl-fg);
+      }
+
       .drl-page-layout {
         display: grid;
         grid-template-columns: minmax(0, 2fr) minmax(0, 3fr);
@@ -199,11 +282,17 @@ export class DrlDeepBluePage extends LitElement {
   @property({ attribute: 'evaluator' })
   evaluator = 'windows';
 
+  @property({ type: Number, attribute: 'rollout-samples' })
+  rolloutSamples = DEFAULT_ROLLOUT_SAMPLES;
+
+  @property({ type: Boolean, attribute: 'auto-fit' })
+  autoFit = true;
+
   @property({ type: Boolean, attribute: 'transposition' })
   transposition = false;
 
   @property({ type: Boolean, attribute: 'pruning' })
-  pruning = true;
+  pruning = false;
 
   @property({ type: Boolean, attribute: 'strict-pruning' })
   strictPruning = false;
@@ -260,6 +349,8 @@ export class DrlDeepBluePage extends LitElement {
           </select>
         </label>
       </header>
+      <div class="drl-page-modes">${this.renderVsModeRow()}</div>
+      <div class="drl-page-search">${this.renderSearchFields()}</div>
       <div class="drl-page-layout">
         <section class="drl-page-panel">${this.renderGame()}</section>
         <section class="drl-page-panel">
@@ -286,10 +377,123 @@ export class DrlDeepBluePage extends LitElement {
             class="drl-page-tree"
             .pieceStyle=${settings.pieceStyle}
             .nodeSize=${settings.nodeSize}
+            .autoFit=${this.autoFit}
             @drl-root-changed=${this.onRootChanged}
           ></drl-eval-tree>
         </section>
       </div>
+    `;
+  }
+
+  private renderVsModeRow(): TemplateResult {
+    return html`
+      ${VS_MODES.map(
+        (mode) => html`
+          <button
+            type="button"
+            class="drl-page-mode"
+            data-players=${mode.players}
+            aria-pressed=${this.players === mode.players}
+            @click=${this.onModePick}
+          >
+            ${mode.label}
+          </button>
+        `,
+      )}
+    `;
+  }
+
+  private renderSearchFields(): TemplateResult {
+    const settings = this.activeSettings;
+    const evaluator = parseEvaluatorMode(this.evaluator);
+    return html`
+      <label class="drl-page-field">
+        <span>Profondeur</span>
+        <input
+          class="drl-page-number"
+          type="number"
+          min="1"
+          step="1"
+          placeholder=${settings.defaultDepth}
+          .value=${this.depth === null ? '' : String(this.depth)}
+          @change=${this.onDepthChange}
+        />
+      </label>
+      <label class="drl-page-field">
+        <span>Évaluateur</span>
+        <select .value=${this.evaluator} @change=${this.onEvaluatorChange}>
+          <option value="windows">windows</option>
+          <option value="rollout">rollout</option>
+          <option value="random">random</option>
+        </select>
+      </label>
+      ${evaluator === 'rollout' ? this.renderSamplesField() : nothing}
+      ${evaluator === 'random' ? nothing : this.renderDiscountField()}
+      <label class="drl-page-field">
+        <span>Élagage</span>
+        <select .value=${this.pruning ? 'alpha-beta' : 'minimax'} @change=${this.onPruningChange}>
+          <option value="alpha-beta">alpha-beta</option>
+          <option value="minimax">minimax</option>
+        </select>
+      </label>
+      ${evaluator === 'random' ? nothing : this.renderStrictPruningField()}
+      <label class="drl-page-field">
+        <input
+          type="checkbox"
+          .checked=${this.transposition}
+          @change=${this.onTranspositionChange}
+        />
+        Transposition
+      </label>
+    `;
+  }
+
+  private renderSamplesField(): TemplateResult {
+    return html`
+      <label class="drl-page-field">
+        <span>Échantillons de rollout</span>
+        <input
+          class="drl-page-number"
+          type="number"
+          min="1"
+          step="1"
+          .value=${String(this.rolloutSamples)}
+          @change=${this.onSamplesChange}
+        />
+      </label>
+    `;
+  }
+
+  private renderDiscountField(): TemplateResult {
+    return html`
+      <label class="drl-page-field">
+        <span>Actualisation (γ)</span>
+        <input
+          class="drl-page-number"
+          type="number"
+          min="0.05"
+          max="1"
+          step="0.05"
+          .value=${this.discount.toFixed(2)}
+          @change=${this.onDiscountChange}
+        />
+      </label>
+    `;
+  }
+
+  private renderStrictPruningField(): TemplateResult {
+    return html`
+      <label
+        class="drl-page-field"
+        title="Ne coupe que sur un dépassement strict de la borne (max : > β, min : < α) et départage au hasard les coups à valeur égale. Décochez pour l'alpha-bêta classique (>= / <=, premier coup retenu à égalité)."
+      >
+        <input
+          type="checkbox"
+          .checked=${this.strictPruning}
+          @change=${this.onStrictPruningChange}
+        />
+        Élagage strict
+      </label>
     `;
   }
 
@@ -301,6 +505,8 @@ export class DrlDeepBluePage extends LitElement {
           .players=${this.players}
           .depth=${this.depth ?? CONNECT4_GAME_CONFIG.defaultDepth}
           .evaluator=${this.evaluator}
+          .rolloutSamples=${this.rolloutSamples}
+          .showSearchFields=${false}
           .transposition=${this.transposition}
           .pruning=${this.pruning}
           .strictPruning=${this.strictPruning}
@@ -318,6 +524,8 @@ export class DrlDeepBluePage extends LitElement {
         .players=${this.players}
         .depth=${this.depth ?? TIC_TAC_TOE_GAME_CONFIG.defaultDepth}
         .evaluator=${this.evaluator}
+        .rolloutSamples=${this.rolloutSamples}
+        .showSearchFields=${false}
         .transposition=${this.transposition}
         .pruning=${this.pruning}
         .strictPruning=${this.strictPruning}
@@ -348,7 +556,7 @@ export class DrlDeepBluePage extends LitElement {
     if (tree === null) {
       return;
     }
-    const samples = game?.rolloutSamples ?? 1;
+    const samples = this.rolloutSamples;
     const discount = sanitizeDiscount(this.discount, 1);
     // L'agent rejoué ignore les entrées du tour courant : ce qui vient d'être
     // déployé par la recherche jouée apparaît donc déplié dans l'arbre.
@@ -395,6 +603,73 @@ export class DrlDeepBluePage extends LitElement {
       return;
     }
     this.gameKey = readGameId(select.value);
+  };
+
+  private readonly onModePick = (event: Event): void => {
+    const button = event.target as HTMLElement | null;
+    const players = button?.dataset.players;
+    if (players !== undefined) {
+      this.players = players;
+    }
+  };
+
+  private readonly onDepthChange = (event: Event): void => {
+    const input = event.target as HTMLInputElement | null;
+    if (input === null || typeof input.value !== 'string') {
+      return;
+    }
+    this.depth =
+      input.value === ''
+        ? null
+        : sanitizeDepth(Number(input.value), this.activeSettings.defaultDepth);
+  };
+
+  private readonly onEvaluatorChange = (event: Event): void => {
+    const select = event.target as HTMLSelectElement | null;
+    if (select === null || typeof select.value !== 'string') {
+      return;
+    }
+    this.evaluator = select.value;
+  };
+
+  private readonly onSamplesChange = (event: Event): void => {
+    const input = event.target as HTMLInputElement | null;
+    if (input === null || typeof input.value !== 'string') {
+      return;
+    }
+    this.rolloutSamples = sanitizeSamples(Number(input.value), DEFAULT_ROLLOUT_SAMPLES);
+  };
+
+  private readonly onDiscountChange = (event: Event): void => {
+    const input = event.target as HTMLInputElement | null;
+    if (input === null || typeof input.value !== 'string') {
+      return;
+    }
+    this.discount = sanitizeDiscount(Number(input.value), 1);
+  };
+
+  private readonly onPruningChange = (event: Event): void => {
+    const select = event.target as HTMLSelectElement | null;
+    if (select === null || typeof select.value !== 'string') {
+      return;
+    }
+    this.pruning = select.value === 'alpha-beta';
+  };
+
+  private readonly onStrictPruningChange = (event: Event): void => {
+    const input = event.target as HTMLInputElement | null;
+    if (input === null || typeof input.checked !== 'boolean') {
+      return;
+    }
+    this.strictPruning = input.checked;
+  };
+
+  private readonly onTranspositionChange = (event: Event): void => {
+    const input = event.target as HTMLInputElement | null;
+    if (input === null || typeof input.checked !== 'boolean') {
+      return;
+    }
+    this.transposition = input.checked;
   };
 
   private readonly onSearchStarted = (event: Event): void => {

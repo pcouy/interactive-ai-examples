@@ -109,6 +109,69 @@ function boundEvent(template: unknown, event: string): unknown {
   return undefined;
 }
 
+/** Liaison Lit dans un template, avec le nom d'attribut tel que `.prop`, `@event` ou `?bool`. */
+interface TemplateBinding {
+  readonly attribute: string;
+  readonly value: unknown;
+}
+
+const BINDING_RE = /([?@.]?[A-Za-z0-9_-]+)=$/;
+
+/** Remonte toutes les liaisons d'un template, en parcourant les templates imbriqués. */
+function collectBindings(template: unknown): TemplateBinding[] {
+  if (Array.isArray(template)) {
+    return template.flatMap((item) => collectBindings(item));
+  }
+  if (typeof template !== 'object' || template === null) {
+    return [];
+  }
+  const { strings, values } = template as {
+    strings?: readonly string[];
+    values?: readonly unknown[];
+  };
+  if (strings === undefined || values === undefined) {
+    return [];
+  }
+  const bindings: TemplateBinding[] = [];
+  for (let index = 0; index < values.length; index += 1) {
+    const match = BINDING_RE.exec(strings[index] ?? '');
+    if (match !== null) {
+      bindings.push({ attribute: match[1], value: values[index] });
+    }
+    bindings.push(...collectBindings(values[index]));
+  }
+  return bindings;
+}
+
+/** Texte statique d'un template, templates imbriqués inclus, dans l'ordre du document. */
+function collectStrings(template: unknown): string {
+  if (typeof template !== 'object' || template === null) {
+    return '';
+  }
+  const { strings, values } = template as {
+    strings?: readonly string[];
+    values?: readonly unknown[];
+  };
+  if (strings === undefined || values === undefined) {
+    return '';
+  }
+  let text = '';
+  for (let index = 0; index < strings.length; index += 1) {
+    text += strings[index];
+    if (index < values.length) {
+      text += collectStrings(values[index]);
+    }
+  }
+  return text;
+}
+
+/** Page sans DOM : `performUpdate` neutralisé pour inspecter les templates. */
+function createPage(): DrlDeepBluePage {
+  const page = new DrlDeepBluePage();
+  (page as unknown as { performUpdate(): void }).performUpdate = () => {};
+  return page;
+}
+
 describe('DrlDeepBluePage strict pruning forwarding', () => {
   it('binds strictPruning on both game elements', () => {
     const page = new DrlDeepBluePage();
@@ -168,5 +231,132 @@ describe('DrlDeepBluePage step forwarding', () => {
     const page = newPage();
     stubTree(page, null);
     expect(() => (page as unknown as { onGameStep(): void }).onGameStep()).not.toThrow();
+  });
+});
+
+describe('DrlDeepBluePage configuration controls', () => {
+  interface Internals {
+    render(): unknown;
+    renderGame(): unknown;
+    onPruningChange(event: Event): void;
+  }
+
+  function internals(page: DrlDeepBluePage): Internals {
+    return page as unknown as Internals;
+  }
+
+  it('defaults pruning to false and forwards it to both game elements', () => {
+    const page = createPage();
+    expect(boundProperty(internals(page).renderGame(), 'pruning')).toBe(false);
+    page.pruning = true;
+    expect(boundProperty(internals(page).renderGame(), 'pruning')).toBe(true);
+    page.gameKey = 'connect4';
+    expect(boundProperty(internals(page).renderGame(), 'pruning')).toBe(true);
+  });
+
+  it('defaults rolloutSamples to 10 and forwards it to both game elements', () => {
+    const page = createPage();
+    expect(boundProperty(internals(page).renderGame(), 'rolloutSamples')).toBe(10);
+    page.rolloutSamples = 25;
+    expect(boundProperty(internals(page).renderGame(), 'rolloutSamples')).toBe(25);
+    page.gameKey = 'connect4';
+    expect(boundProperty(internals(page).renderGame(), 'rolloutSamples')).toBe(25);
+  });
+
+  it('binds showSearchFields to false on both game elements', () => {
+    const page = createPage();
+    expect(boundProperty(internals(page).renderGame(), 'showSearchFields')).toBe(false);
+    page.gameKey = 'connect4';
+    expect(boundProperty(internals(page).renderGame(), 'showSearchFields')).toBe(false);
+  });
+
+  it('binds autoFit to the tree and reflects its value', () => {
+    const page = createPage();
+    expect(boundProperty(internals(page).render(), 'autoFit')).toBe(true);
+    page.autoFit = false;
+    expect(boundProperty(internals(page).render(), 'autoFit')).toBe(false);
+  });
+
+  it('sets a Boolean from the pruning select', () => {
+    const page = createPage();
+    const onPruningChange = internals(page).onPruningChange;
+    onPruningChange({ target: { value: 'minimax' } } as unknown as Event);
+    expect(page.pruning).toBe(false);
+    onPruningChange({ target: { value: 'alpha-beta' } } as unknown as Event);
+    expect(page.pruning).toBe(true);
+  });
+});
+
+describe('DrlDeepBluePage vs-mode controls', () => {
+  it('lists the three player modes and updates players on click', () => {
+    const page = createPage();
+    const internals = page as unknown as {
+      renderVsModeRow(): unknown;
+      onModePick(event: Event): void;
+    };
+    const modes = collectBindings(internals.renderVsModeRow())
+      .filter((binding) => binding.attribute === 'data-players')
+      .map((binding) => binding.value);
+    expect(modes).toEqual(['["human","agent"]', '["agent","human"]', '["agent","agent"]']);
+
+    const pressed = (): unknown[] =>
+      collectBindings(internals.renderVsModeRow())
+        .filter((binding) => binding.attribute === 'aria-pressed')
+        .map((binding) => binding.value);
+    expect(pressed()).toEqual([true, false, false]);
+
+    internals.onModePick({
+      target: { dataset: { players: '["agent","agent"]' } },
+    } as unknown as Event);
+    expect(page.players).toBe('["agent","agent"]');
+    expect(pressed()).toEqual([false, false, true]);
+  });
+});
+
+describe('DrlDeepBluePage search fields', () => {
+  function searchFields(page: DrlDeepBluePage): string {
+    const internals = page as unknown as { renderSearchFields(): unknown };
+    return collectStrings(internals.renderSearchFields());
+  }
+
+  it('shows rollout samples only for the rollout evaluator', () => {
+    const page = createPage();
+    page.evaluator = 'windows';
+    expect(searchFields(page)).not.toContain('Échantillons de rollout');
+    page.evaluator = 'rollout';
+    expect(searchFields(page)).toContain('Échantillons de rollout');
+  });
+
+  it('hides discount and strict pruning for the random evaluator', () => {
+    const page = createPage();
+    page.evaluator = 'windows';
+    const windowsText = searchFields(page);
+    expect(windowsText).toContain('Actualisation');
+    expect(windowsText).toContain('Élagage strict');
+    page.evaluator = 'random';
+    const randomText = searchFields(page);
+    expect(randomText).not.toContain('Actualisation');
+    expect(randomText).not.toContain('Élagage strict');
+  });
+
+  it('orders the controls depth, evaluator, samples, discount, pruning, strict, transposition', () => {
+    const page = createPage();
+    page.evaluator = 'rollout';
+    const text = searchFields(page);
+    const markers = [
+      'Profondeur',
+      'Évaluateur',
+      'Échantillons de rollout',
+      'Actualisation',
+      'Élagage',
+      'Élagage strict',
+      'Transposition',
+    ];
+    let previous = -1;
+    for (const marker of markers) {
+      const index = text.indexOf(marker);
+      expect(index).toBeGreaterThan(previous);
+      previous = index;
+    }
   });
 });
