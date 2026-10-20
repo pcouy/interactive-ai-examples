@@ -208,7 +208,7 @@ export class DrlDeepBluePage extends LitElement {
       }
 
       .drl-page-number {
-        width: calc(var(--drl-space-3) * 3);
+        width: calc(var(--drl-space-3) * 5);
         max-width: 100%;
         box-sizing: border-box;
         font: inherit;
@@ -473,7 +473,7 @@ export class DrlDeepBluePage extends LitElement {
           type="number"
           min="0.05"
           max="1"
-          step="0.05"
+          step="0.01"
           .value=${this.discount.toFixed(2)}
           @change=${this.onDiscountChange}
         />
