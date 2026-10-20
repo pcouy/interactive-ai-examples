@@ -45,7 +45,8 @@
         margin: 0.5rem 0;
       }
 
-      .drl-field > label {
+      .drl-field > label,
+      .drl-field-label {
         color: #64748b;
         font-size: 0.9rem;
       }
@@ -58,6 +59,7 @@
       }
 
       input[type='text'],
+      input[type='number'],
       select,
       button {
         font: inherit;
@@ -68,8 +70,39 @@
         color: #0f172a;
       }
 
+      input[type='number'] {
+        width: 5.5rem;
+      }
+
       button {
         cursor: pointer;
+      }
+
+      .drl-hint {
+        margin: 0;
+        color: #64748b;
+        font-size: 0.85rem;
+      }
+
+      .drl-readout {
+        display: grid;
+        grid-template-columns: repeat(3, minmax(0, 1fr));
+        /* Column flow with two rows: each dt lands above its dd, so the
+           interleaved dt/dd children stay paired instead of flowing row-major. */
+        grid-auto-flow: column;
+        grid-template-rows: auto auto;
+        gap: 0.35rem;
+        margin: 0;
+        font-variant-numeric: tabular-nums;
+      }
+
+      .drl-readout dt {
+        color: #64748b;
+        font-size: 0.85rem;
+      }
+
+      .drl-readout dd {
+        margin: 0;
       }
 
       .drl-error {
@@ -88,6 +121,15 @@
           à imiter une fonction f(x₁, x₂) que vous saisissez, évaluée sur des couples (x₁, x₂)
           tirés au hasard : chaque point du graphique est un exemple, et sa couleur donne sa
           valeur cible t = f(x₁, x₂).
+        </p>
+        <p>
+          Les entrées sont tirées dans le carré [−d, d]², où d est réglable par le curseur
+          « Domaine des entrées ». Le curseur « Échelle verticale » étire la surface de loss en
+          hauteur sans modifier la forme de la vallée.
+        </p>
+        <p>
+          Les champs w₁, w₂ et b placent les poids à la main : l'entraînement reprend à partir de
+          cette position.
         </p>
         <p>
           La vue 2D montre les exemples colorés selon leur cible t. Derrière eux, une grille 16×16
@@ -136,6 +178,22 @@
             step="10"
             value="40"
           ></drl-slider>
+          <drl-slider
+            id="height-scale"
+            label="Échelle verticale"
+            min="0.3"
+            max="5"
+            step="0.1"
+            value="1.5"
+          ></drl-slider>
+          <drl-slider
+            id="input-domain"
+            label="Domaine des entrées — x₁, x₂ ∈ [−d, d]"
+            min="0.1"
+            max="20"
+            step="0.1"
+            value="1"
+          ></drl-slider>
         </div>
         <div class="drl-field">
           <label for="expression">Fonction cible f(x₁, x₂)</label>
@@ -157,6 +215,36 @@
           <label for="bias">Biais</label>
           <input id="bias" type="checkbox" />
         </div>
+        <div class="drl-field">
+          <span class="drl-field-label">Poids du neurone</span>
+          <div class="drl-row">
+            <label for="w1">w₁</label>
+            <input id="w1" type="number" step="0.01" />
+            <label for="w2">w₂</label>
+            <input id="w2" type="number" step="0.01" />
+            <label for="b">b</label>
+            <input id="b" type="number" step="0.01" disabled />
+          </div>
+          <p id="b-hint" class="drl-hint" hidden>Cochez « Biais » pour éditer b.</p>
+        </div>
+        <div class="drl-field">
+          <span class="drl-field-label">Point de test</span>
+          <div class="drl-row">
+            <label for="probe-x1">x₁</label>
+            <input id="probe-x1" type="number" step="0.01" />
+            <label for="probe-x2">x₂</label>
+            <input id="probe-x2" type="number" step="0.01" />
+          </div>
+          <dl class="drl-readout" aria-live="polite">
+            <dt>Cible t</dt>
+            <dd id="probe-t">—</dd>
+            <dt>Prédiction ŷ</dt>
+            <dd id="probe-y">—</dd>
+            <dt>Loss</dt>
+            <dd id="probe-loss">—</dd>
+          </dl>
+          <p id="probe-hint" class="drl-hint">Saisissez x₁ et x₂ pour évaluer le neurone en ce point.</p>
+        </div>
       </drl-card>
     </main>
     <script type="module" src="/src/index.ts"></script>
@@ -169,6 +257,16 @@
       const lossKind = document.getElementById('loss-kind');
       const bias = document.getElementById('bias');
       const diverged = document.getElementById('diverged');
+      const w1Input = document.getElementById('w1');
+      const w2Input = document.getElementById('w2');
+      const bInput = document.getElementById('b');
+      const bHint = document.getElementById('b-hint');
+      const probeX1Input = document.getElementById('probe-x1');
+      const probeX2Input = document.getElementById('probe-x2');
+      const probeT = document.getElementById('probe-t');
+      const probeY = document.getElementById('probe-y');
+      const probeLoss = document.getElementById('probe-loss');
+      const probeHint = document.getElementById('probe-hint');
 
       function bind(id, apply) {
         const slider = document.getElementById(id);
@@ -204,6 +302,27 @@
         }, 150);
       });
 
+      // No debounce: setHeightScale re-normalizes the cached samples, so each event is cheap.
+      bind('height-scale', (element, value) => {
+        element.heightScale = value;
+      });
+      // Writing `inputDomain` rebuilds the dataset and the landscape, so debounce
+      // the slider the same way as the count slider.
+      let domainTimer = 0;
+      const domainSlider = document.getElementById('input-domain');
+      domainSlider?.addEventListener('drl-input', (event) => {
+        if (demo === null) {
+          return;
+        }
+        clearTimeout(domainTimer);
+        const value = event.detail;
+        domainTimer = setTimeout(() => {
+          if (demo !== null) {
+            demo.inputDomain = value;
+          }
+        }, 150);
+      });
+
       function applyExpression() {
         if (demo === null || expressionInput === null) {
           return;
@@ -224,6 +343,7 @@
       });
 
       demo?.addEventListener('drl-target-error', (event) => {
+        refreshProbe();
         if (expressionError === null) {
           return;
         }
@@ -240,6 +360,7 @@
           return;
         }
         demo.lossKind = lossKind.value;
+        refreshProbe();
       });
 
       bias?.addEventListener('change', () => {
@@ -247,6 +368,53 @@
           return;
         }
         demo.bias = bias.checked;
+        if (bInput !== null) {
+          bInput.disabled = !bias.checked;
+        }
+        if (bHint !== null) {
+          bHint.hidden = bias.checked;
+        }
+        refreshProbe();
+      });
+
+      // Manual weights: validate, then place the value on the component. An
+      // empty or non-finite entry restores the current value of the element.
+      function bindWeight(id, input) {
+        input?.addEventListener('change', () => {
+          if (demo === null || input === null) {
+            return;
+          }
+          const value = Number(input.value);
+          if (input.value.trim() === '' || !Number.isFinite(value)) {
+            input.value = String(demo[id]);
+            return;
+          }
+          demo.setWeights({ [id]: value });
+          const placed = demo[id];
+          if (Number(input.value) !== placed) {
+            input.value = String(placed);
+          }
+        });
+      }
+
+      bindWeight('w1', w1Input);
+      bindWeight('w2', w2Input);
+      bindWeight('b', bInput);
+
+      demo?.addEventListener('drl-weights', (event) => {
+        const weights = event.detail;
+        for (const [id, input] of [
+          ['w1', w1Input],
+          ['w2', w2Input],
+          ['b', bInput],
+        ]) {
+          // Leave the field the user is editing alone.
+          if (input === null || input === document.activeElement) {
+            continue;
+          }
+          input.value = String(Number(weights[id].toFixed(6)));
+        }
+        refreshProbe();
       });
 
       demo?.addEventListener('drl-diverged', (event) => {
@@ -254,6 +422,71 @@
           diverged.hidden = !event.detail;
         }
       });
+
+      function formatProbe(value) {
+        return Number.isFinite(value) ? value.toFixed(2).replace('.', ',') : '—';
+      }
+
+      function readProbe(input) {
+        if (input === null || input.value.trim() === '') {
+          return null;
+        }
+        // type="number" never yields a comma in `value`: no replacement needed.
+        return Number(input.value);
+      }
+
+      function refreshProbe() {
+        if (demo === null) {
+          return;
+        }
+        const x1 = readProbe(probeX1Input);
+        const x2 = readProbe(probeX2Input);
+        if (x1 === null || x2 === null || !Number.isFinite(x1) || !Number.isFinite(x2)) {
+          if (probeT !== null) {
+            probeT.textContent = '—';
+          }
+          if (probeY !== null) {
+            probeY.textContent = '—';
+          }
+          if (probeLoss !== null) {
+            probeLoss.textContent = '—';
+          }
+          if (probeHint !== null) {
+            probeHint.textContent = 'Saisissez x₁ et x₂ pour évaluer le neurone en ce point.';
+            probeHint.hidden = false;
+          }
+          return;
+        }
+        const result = demo.evaluate(x1, x2);
+        if (probeY !== null) {
+          probeY.textContent = formatProbe(result.predicted);
+        }
+        if (!Number.isFinite(result.target)) {
+          if (probeT !== null) {
+            probeT.textContent = '—';
+          }
+          if (probeLoss !== null) {
+            probeLoss.textContent = '—';
+          }
+          if (probeHint !== null) {
+            probeHint.textContent = 't non fini en ce point.';
+            probeHint.hidden = false;
+          }
+          return;
+        }
+        if (probeT !== null) {
+          probeT.textContent = formatProbe(result.target);
+        }
+        if (probeLoss !== null) {
+          probeLoss.textContent = formatProbe(result.loss);
+        }
+        if (probeHint !== null) {
+          probeHint.hidden = true;
+        }
+      }
+
+      probeX1Input?.addEventListener('input', refreshProbe);
+      probeX2Input?.addEventListener('input', refreshProbe);
 
       if (demo !== null) {
         if (expressionInput !== null) {
@@ -264,6 +497,33 @@
         }
         if (bias !== null) {
           bias.checked = demo.bias;
+        }
+        if (bInput !== null) {
+          bInput.disabled = !demo.bias;
+        }
+        if (bHint !== null) {
+          bHint.hidden = demo.bias;
+        }
+        const domainSliderStart = document.getElementById('input-domain');
+        if (domainSliderStart !== null) {
+          domainSliderStart.value = demo.inputDomain;
+        }
+        const heightScaleSliderStart = document.getElementById('height-scale');
+        if (heightScaleSliderStart !== null) {
+          heightScaleSliderStart.value = demo.heightScale;
+        }
+        // firstUpdated runs before this script attaches its drl-weights
+        // listener, so the initial broadcast is missed: seed the fields here.
+        // The firstUpdated sync has already run, so these are the real
+        // weights, not 0.
+        if (w1Input !== null) {
+          w1Input.value = String(demo.w1);
+        }
+        if (w2Input !== null) {
+          w2Input.value = String(demo.w2);
+        }
+        if (bInput !== null) {
+          bInput.value = String(demo.b);
         }
       }
     </script>

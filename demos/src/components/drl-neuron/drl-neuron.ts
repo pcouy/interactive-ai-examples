@@ -4,19 +4,30 @@ import type { PropertyValues, TemplateResult } from 'lit';
 import { css, html } from 'lit';
 import { customElement, property, state } from 'lit/decorators.js';
 import { DemoElement } from '../../base/demo-element.js';
-import type { LossKind, NeuronExample, NeuronPhase } from '../../core/neuron.js';
+import type {
+  LossKind,
+  NeuronEvaluation,
+  NeuronExample,
+  NeuronPhase,
+  WeightUpdate,
+} from '../../core/neuron.js';
 import { NeuronCore } from '../../core/neuron.js';
 import { drlTokens } from '../../styles/tokens.js';
-import { createLandscapeScene, type LandscapeScene } from '../shared/landscape-scene.js';
+import {
+  createLandscapeScene,
+  type LandscapeScene,
+  sanitizeHeightScale,
+} from '../shared/landscape-scene.js';
 
 /**
  * One 2-input neuron trained by mini-batch gradient descent.
  *
  * The left view is a 2D SVG scatter of the examples over the input square
- * [-1, 1]². A 16×16 grid painted behind the points shows the neuron's current
- * prediction ŷ = w₁·x₁ + w₂·x₂ + b at each cell centre. The right view is the
- * 3D loss landscape over the weight plane (w₁, w₂); a ball descends the valley
- * batch after batch.
+ * [-d, d]², where d is the configurable input domain. A 16×16 grid painted
+ * behind the points shows the neuron's current prediction ŷ = w₁·x₁ + w₂·x₂ + b
+ * at each cell centre. The right view is the 3D loss landscape over the weight
+ * plane (w₁, w₂); a ball descends the valley batch after batch. The vertical
+ * exaggeration of that landscape is configurable.
  *
  * Color scale: targets span [t min, t max]. A low target is blue
  * (--drl-accent), a high target is violet (--drl-accent-2). Predictions use the
@@ -76,12 +87,28 @@ function formatNumber(value: number): string {
   return value.toFixed(2).replace('.', ',');
 }
 
-function dataX(x: number): number {
-  return PLANE_X + ((x + 1) / 2) * PLANE_SIZE;
+/**
+ * Maps an input coordinate to the SVG plane. `domain` must be > 0; the core
+ * clamps the input domain to at least 0.1.
+ */
+export function dataX(x: number, domain: number): number {
+  return PLANE_X + ((x + domain) / (2 * domain)) * PLANE_SIZE;
 }
 
-function dataY(y: number): number {
-  return PLANE_BOTTOM - ((y + 1) / 2) * PLANE_SIZE;
+/**
+ * Maps an input coordinate to the SVG plane. `domain` must be > 0; the core
+ * clamps the input domain to at least 0.1.
+ */
+export function dataY(y: number, domain: number): number {
+  return PLANE_BOTTOM - ((y + domain) / (2 * domain)) * PLANE_SIZE;
+}
+
+/**
+ * Returns the input coordinate at the centre of grid cell `index` along one
+ * axis. The grid covers [-domain, domain] with GRID_RES cells.
+ */
+export function gridCenter(index: number, domain: number): number {
+  return -domain + ((2 * index + 1) / GRID_RES) * domain;
 }
 
 @customElement('drl-neuron')
@@ -213,8 +240,14 @@ export class Neuron extends DemoElement {
   @property({ type: Number, attribute: 'count' })
   count = 40;
 
+  @property({ type: Number, attribute: 'input-domain' })
+  inputDomain = 1;
+
   @property({ type: Number, attribute: 'batch-size' })
   batchSize = 4;
+
+  @property({ type: Number, attribute: 'height-scale' })
+  heightScale = 1.5;
 
   @state()
   private webglError = false;
@@ -284,6 +317,9 @@ export class Neuron extends DemoElement {
 
   private colorDataset: readonly NeuronExample[] | null = null;
 
+  /** Last weights broadcast to listeners, so drl-weights fires only on change. */
+  private lastWeights: { w1: number; w2: number; b: number } | null = null;
+
   protected override async firstUpdated(): Promise<void> {
     const svgElement = this.renderRoot.querySelector<SVGSVGElement>('svg');
     if (svgElement) {
@@ -311,6 +347,7 @@ export class Neuron extends DemoElement {
     this.core.setDataset({
       expression: this.expression,
       count: Math.max(1, Math.round(this.count)),
+      inputDomain: this.inputDomain,
     });
     this.core.setLoss(this.lossKind);
     this.core.setBiasEnabled(this.bias);
@@ -353,6 +390,7 @@ export class Neuron extends DemoElement {
       }
       this.scene = scene;
       this.rebuildHeightField();
+      scene.setHeightScale(sanitizeHeightScale(this.heightScale));
       scene.moveBall(this.core.w1, this.core.w2);
       scene.render();
     } catch {
@@ -400,6 +438,7 @@ export class Neuron extends DemoElement {
     this.core.setDataset({
       expression: this.expression,
       count: Math.max(1, Math.round(this.count)),
+      inputDomain: this.inputDomain,
       seed: (Math.random() * 0xffffffff) >>> 0,
     });
     this.dispatchTargetError();
@@ -421,6 +460,32 @@ export class Neuron extends DemoElement {
     this.draw();
   }
 
+  /**
+   * Places the neuron weights by hand and restarts training from there. Stops
+   * play and any in-flight tween so the manual placement is not overwritten.
+   */
+  setWeights(weights: WeightUpdate): void {
+    this.running = false;
+    this.tweening = false;
+    this.scene?.clearTween();
+    this.scene?.clearTrail();
+    this.core.setWeights(weights);
+    this.rebuildHeightField(true);
+    this.scene?.moveBall(this.core.w1, this.core.w2);
+    this.sync();
+    this.draw();
+  }
+
+  /**
+   * Evaluates the neuron on one input point. Delegates to the core, so the
+   * result follows the current expression, weights, bias and loss kind. The
+   * component emits no event for this: the page re-calls it when it needs a
+   * fresh value (on drl-weights, control changes and probe edits).
+   */
+  evaluate(x1: number, x2: number): NeuronEvaluation {
+    return this.core.evaluate(x1, x2);
+  }
+
   protected override willUpdate(changed: PropertyValues<this>): void {
     super.willUpdate(changed);
     if (changed.has('running') && !this.running) {
@@ -429,11 +494,18 @@ export class Neuron extends DemoElement {
     if (!this.hasUpdated) {
       return;
     }
+    // The vertical scale is a pure presentation change: it re-normalizes the
+    // cached field samples, so it must not set `reconfigured` and trigger a
+    // full height-field rebuild.
+    if (changed.has('heightScale')) {
+      this.scene?.setHeightScale(sanitizeHeightScale(this.heightScale));
+    }
     let reconfigured = false;
-    if (changed.has('expression')) {
+    if (changed.has('expression') || changed.has('inputDomain')) {
       this.core.setDataset({
         expression: this.expression,
         count: Math.max(1, Math.round(this.count)),
+        inputDomain: this.inputDomain,
       });
       this.dispatchTargetError();
       reconfigured = true;
@@ -480,6 +552,17 @@ export class Neuron extends DemoElement {
     this.gradMag = core.gradientMagnitude;
     this.currentExample = core.currentExample;
     this.exampleNumber = core.exampleIndex + 1;
+    const last = this.lastWeights;
+    if (last === null || last.w1 !== this.w1 || last.w2 !== this.w2 || last.b !== this.b) {
+      this.lastWeights = { w1: this.w1, w2: this.w2, b: this.b };
+      this.dispatchEvent(
+        new CustomEvent<{ w1: number; w2: number; b: number }>('drl-weights', {
+          detail: { w1: this.w1, w2: this.w2, b: this.b },
+          bubbles: true,
+          composed: true,
+        }),
+      );
+    }
     const diverged = core.diverged;
     if (diverged !== this.diverged) {
       this.diverged = diverged;
@@ -505,10 +588,12 @@ export class Neuron extends DemoElement {
     const w1 = this.w1;
     const w2 = this.w2;
     const bias = this.b;
+    // The input square spans [-d, d] on both axes.
+    const d = this.core.inputDomain;
 
     gridCells.attr('fill', (cell) => {
-      const cx = -1 + (2 * cell.i + 1) / GRID_RES;
-      const cy = 1 - (2 * cell.j + 1) / GRID_RES;
+      const cx = gridCenter(cell.i, d);
+      const cy = gridCenter(GRID_RES - 1 - cell.j, d);
       return this.targetColor(w1 * cx + w2 * cy + bias);
     });
 
@@ -521,8 +606,8 @@ export class Neuron extends DemoElement {
       )
       .join('circle')
       .attr('r', 7)
-      .attr('cx', (index) => dataX(dataset[index].x1))
-      .attr('cy', (index) => dataY(dataset[index].x2))
+      .attr('cx', (index) => dataX(dataset[index].x1, d))
+      .attr('cy', (index) => dataY(dataset[index].x2, d))
       .attr('fill', (index) => this.targetColor(dataset[index].t))
       .attr('stroke', 'none');
 
@@ -532,8 +617,8 @@ export class Neuron extends DemoElement {
       (this.phase === 'present' || this.phase === 'gradient' || this.phase === 'fade');
     if (example && showHalo) {
       halo
-        .attr('cx', dataX(example.x1))
-        .attr('cy', dataY(example.x2))
+        .attr('cx', dataX(example.x1, d))
+        .attr('cy', dataY(example.x2, d))
         .attr('visibility', 'visible');
     } else {
       halo.attr('visibility', 'hidden');
@@ -669,6 +754,12 @@ export class Neuron extends DemoElement {
     }
   }
 
+  /** Axis caption with the current input range, e.g. `x₁ (−1,00 … 1,00)`. */
+  private axisLabel(axis: 'x₁' | 'x₂'): string {
+    const d = this.core.inputDomain;
+    return `${axis} (−${formatNumber(d)} … ${formatNumber(d)})`;
+  }
+
   protected override renderHeader(): TemplateResult {
     return html`
       <div class="drl-status">
@@ -750,7 +841,7 @@ export class Neuron extends DemoElement {
             stroke-opacity="0.7"
             visibility="hidden"
           ></circle>
-          <text class="drl-axis" x="40" y="356" text-anchor="start">x₁</text>
+          <text class="drl-axis" x="40" y="356" text-anchor="start">${this.axisLabel('x₁')}</text>
           <text class="drl-axis" x="34" y="14" text-anchor="end">x₂</text>
           <rect
             class="drl-legend"
@@ -801,6 +892,8 @@ export class Neuron extends DemoElement {
     this.fieldLoss = null;
     this.fieldBias = null;
     this.fieldB = Number.NaN;
+    // The next sync() must re-broadcast the weights, so drop the change cache.
+    this.lastWeights = null;
     super.disconnectedCallback();
   }
 }

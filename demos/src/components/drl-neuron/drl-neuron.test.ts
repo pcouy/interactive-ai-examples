@@ -6,17 +6,20 @@
  * and the 3D scene is replaced by a fake. Only the component logic is tested.
  */
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
+import type { NeuronCore } from '../../core/neuron.js';
 import type { LandscapeScene } from '../shared/landscape-scene.js';
-import { Neuron } from './drl-neuron.js';
+import { dataX, dataY, gridCenter, Neuron } from './drl-neuron.js';
 
 /**
  * The scene factory is mocked at module level so no WebGL context is ever
  * created. Only the setup guard test drives it, through a deferred promise.
+ * The real helpers are kept because the component imports sanitizeHeightScale.
  */
 const mocks = vi.hoisted(() => ({ createLandscapeScene: vi.fn() }));
-vi.mock('../shared/landscape-scene.js', () => ({
-  createLandscapeScene: mocks.createLandscapeScene,
-}));
+vi.mock('../shared/landscape-scene.js', async (importOriginal) => {
+  const actual = await importOriginal<typeof import('../shared/landscape-scene.js')>();
+  return { ...actual, createLandscapeScene: mocks.createLandscapeScene };
+});
 
 /**
  * Creates a component instance without the Lit update loop: `performUpdate`
@@ -36,6 +39,7 @@ function fakeScene(): LandscapeScene {
     camera: {} as never,
     renderer: {} as never,
     setHeightField: vi.fn(),
+    setHeightScale: vi.fn(),
     moveBall: vi.fn(),
     tweenBall: vi.fn(),
     clearTween: vi.fn(),
@@ -56,6 +60,22 @@ function installScene(element: Neuron, scene: LandscapeScene): void {
 /** Reads a private `@state()` flag of the component. */
 function readFlag(element: Neuron, flag: 'diverged'): boolean {
   return (element as unknown as { diverged: boolean })[flag];
+}
+
+/** Marks the element as already rendered so willUpdate passes its guard. */
+function markUpdated(element: Neuron): void {
+  (element as unknown as { hasUpdated: boolean }).hasUpdated = true;
+}
+
+/** Drives the protected willUpdate with a synthetic changed-property map. */
+function runWillUpdate(element: Neuron, ...keys: string[]): void {
+  const changed = new Map<string, unknown>(keys.map((key) => [key, undefined]));
+  (element as unknown as { willUpdate(changed: Map<string, unknown>): void }).willUpdate(changed);
+}
+
+/** Reads the component core for assertions. */
+function readCore(element: Neuron): NeuronCore {
+  return (element as unknown as { core: NeuronCore }).core;
 }
 
 describe('Neuron regenerateDataset', () => {
@@ -270,6 +290,39 @@ describe('Neuron scene setup guard', () => {
 
     expect(cast.scene).toBe(scene);
     expect(mocks.createLandscapeScene).toHaveBeenCalledOnce();
+    expect(scene.setHeightScale).toHaveBeenCalledWith(1.5);
+  });
+
+  it('routes the current height scale into the scene on first connect', async () => {
+    const element = createNeuron();
+    (element as unknown as { heightScale: number }).heightScale = 2;
+    vi.stubGlobal('HTMLCanvasElement', class FakeCanvas {});
+    const canvas = new (HTMLCanvasElement as unknown as new () => HTMLCanvasElement)();
+    let resolveCreate: (scene: LandscapeScene) => void = () => {};
+    mocks.createLandscapeScene.mockImplementation(
+      () =>
+        new Promise<LandscapeScene>((resolve) => {
+          resolveCreate = resolve;
+        }),
+    );
+    Object.defineProperty(element, 'renderRoot', {
+      value: {
+        querySelector: (selector: string) => (selector === 'canvas' ? canvas : null),
+      },
+      configurable: true,
+    });
+    Object.defineProperty(element, 'isConnected', { value: true, configurable: true });
+
+    const cast = element as unknown as { setupScene(): Promise<void> };
+    const first = cast.setupScene();
+    const second = cast.setupScene();
+    expect(second).toBe(first);
+
+    const scene = fakeScene();
+    resolveCreate(scene);
+    await first;
+
+    expect(scene.setHeightScale).toHaveBeenCalledWith(2);
   });
 });
 
@@ -316,5 +369,259 @@ describe('Neuron firstUpdated', () => {
 
     resolveSetup();
     await update;
+  });
+});
+
+describe('dataX/dataY mapping', () => {
+  it.each([0.1, 1, 5, 20])('maps the input domain d=%s onto the plane', (d) => {
+    expect(dataX(-d, d)).toBeCloseTo(40);
+    expect(dataX(d, d)).toBeCloseTo(380);
+    expect(dataX(0, d)).toBeCloseTo(210);
+    expect(dataY(d, d)).toBeCloseTo(10);
+    expect(dataY(-d, d)).toBeCloseTo(350);
+    // The vertical centre is PLANE_BOTTOM - PLANE_SIZE / 2 = 180, symmetric to
+    // dataX(0, d) = PLANE_X + PLANE_SIZE / 2 = 210.
+    expect(dataY(0, d)).toBeCloseTo(180);
+  });
+
+  it('matches the old fixed [-1, 1] formulas at d=1', () => {
+    for (const value of [-1, -0.4, 0, 0.6, 1]) {
+      expect(dataX(value, 1)).toBeCloseTo(40 + ((value + 1) / 2) * 340);
+      expect(dataY(value, 1)).toBeCloseTo(350 - ((value + 1) / 2) * 340);
+    }
+  });
+});
+
+describe('Neuron height scale', () => {
+  beforeEach(() => {
+    vi.stubGlobal('requestAnimationFrame', () => 0);
+    vi.stubGlobal('cancelAnimationFrame', () => {});
+  });
+
+  afterEach(() => {
+    vi.unstubAllGlobals();
+    vi.restoreAllMocks();
+  });
+
+  it('applies the height scale without rebuilding the height field', () => {
+    const element = createNeuron();
+    const scene = fakeScene();
+    installScene(element, scene);
+    markUpdated(element);
+
+    element.heightScale = 2;
+    runWillUpdate(element, 'heightScale');
+
+    expect(scene.setHeightScale).toHaveBeenCalledWith(2);
+    expect(scene.setHeightField).not.toHaveBeenCalled();
+  });
+
+  it('falls back to the default scale when the value is not finite', () => {
+    const element = createNeuron();
+    const scene = fakeScene();
+    installScene(element, scene);
+    markUpdated(element);
+
+    element.heightScale = Number.NaN;
+    runWillUpdate(element, 'heightScale');
+
+    expect(scene.setHeightScale).toHaveBeenCalledWith(1.5);
+    expect(scene.setHeightField).not.toHaveBeenCalled();
+  });
+});
+
+describe('Neuron input domain', () => {
+  beforeEach(() => {
+    vi.stubGlobal('requestAnimationFrame', () => 0);
+    vi.stubGlobal('cancelAnimationFrame', () => {});
+  });
+
+  afterEach(() => {
+    vi.unstubAllGlobals();
+    vi.restoreAllMocks();
+  });
+
+  it('routes inputDomain to the core and rebuilds the field', () => {
+    const element = createNeuron();
+    const scene = fakeScene();
+    installScene(element, scene);
+    markUpdated(element);
+
+    element.inputDomain = 5;
+    runWillUpdate(element, 'inputDomain');
+
+    const core = readCore(element);
+    expect(core.inputDomain).toBe(5);
+    for (const example of core.dataset) {
+      expect(Math.abs(example.x1)).toBeLessThanOrEqual(5);
+      expect(Math.abs(example.x2)).toBeLessThanOrEqual(5);
+    }
+    expect(scene.setHeightField).toHaveBeenCalled();
+  });
+
+  it('keeps the input domain and the sample bounds across regenerateDataset', () => {
+    const element = createNeuron();
+    const scene = fakeScene();
+    installScene(element, scene);
+    element.inputDomain = 5;
+
+    element.regenerateDataset();
+
+    const core = readCore(element);
+    expect(core.inputDomain).toBe(5);
+    for (const example of core.dataset) {
+      expect(Math.abs(example.x1)).toBeLessThanOrEqual(5);
+      expect(Math.abs(example.x2)).toBeLessThanOrEqual(5);
+    }
+  });
+});
+
+describe('Neuron manual weights', () => {
+  beforeEach(() => {
+    vi.stubGlobal('requestAnimationFrame', () => 0);
+    vi.stubGlobal('cancelAnimationFrame', () => {});
+  });
+
+  afterEach(() => {
+    vi.unstubAllGlobals();
+    vi.restoreAllMocks();
+  });
+
+  it('places the weights, stops play and emits drl-weights once', () => {
+    const element = createNeuron();
+    const scene = fakeScene();
+    installScene(element, scene);
+    const details: Array<{ w1: number; w2: number; b: number }> = [];
+    element.addEventListener('drl-weights', (event) => {
+      details.push((event as CustomEvent<{ w1: number; w2: number; b: number }>).detail);
+    });
+
+    element.running = true;
+    (element as unknown as { tweening: boolean }).tweening = true;
+
+    element.setWeights({ w1: 0.5, w2: -0.5 });
+
+    expect(scene.clearTween).toHaveBeenCalledOnce();
+    expect(scene.setHeightField).toHaveBeenCalled();
+    expect(scene.moveBall).toHaveBeenLastCalledWith(0.5, -0.5);
+    expect(element.running).toBe(false);
+    expect((element as unknown as { tweening: boolean }).tweening).toBe(false);
+    expect(details).toHaveLength(1);
+    expect(details[0].w1).toBe(0.5);
+    expect(details[0].w2).toBe(-0.5);
+
+    // Same values: the change cache suppresses a duplicate event.
+    element.setWeights({ w1: 0.5, w2: -0.5 });
+    expect(details).toHaveLength(1);
+  });
+
+  it('rebuilds the height field when only the bias changes', () => {
+    const element = createNeuron();
+    const scene = fakeScene();
+    installScene(element, scene);
+    const core = readCore(element);
+    core.setBiasEnabled(true);
+    core.reset();
+
+    element.setWeights({ b: 0.3 });
+
+    expect(scene.setHeightField).toHaveBeenCalled();
+    expect(core.b).toBe(0.3);
+  });
+
+  it('clears divergence and emits drl-diverged with false', () => {
+    const element = createNeuron();
+    const scene = fakeScene();
+    installScene(element, scene);
+    const diverged: boolean[] = [];
+    element.addEventListener('drl-diverged', (event) => {
+      diverged.push((event as CustomEvent<boolean>).detail);
+    });
+
+    element.learningRate = 1000;
+    let guard = 400;
+    while (!readFlag(element, 'diverged') && guard > 0) {
+      element.step();
+      guard -= 1;
+    }
+    expect(readFlag(element, 'diverged')).toBe(true);
+
+    element.setWeights({ w1: 0.5, w2: -0.5 });
+
+    expect(readFlag(element, 'diverged')).toBe(false);
+    expect(diverged).toContain(true);
+    expect(diverged.at(-1)).toBe(false);
+  });
+});
+
+describe('gridCenter', () => {
+  it('returns the centre of the first and last cells for d=5', () => {
+    expect(gridCenter(0, 5)).toBeCloseTo(-5 + 5 / 16);
+    expect(gridCenter(15, 5)).toBeCloseTo(5 - 5 / 16);
+  });
+
+  it('is symmetric around zero for every cell', () => {
+    for (let i = 0; i < 16; i += 1) {
+      expect(gridCenter(i, 5)).toBeCloseTo(-gridCenter(15 - i, 5));
+    }
+  });
+});
+
+describe('axisLabel', () => {
+  it('reads the current input domain in the axis caption', () => {
+    const element = createNeuron();
+    const label = element as unknown as { axisLabel(axis: string): string };
+
+    expect(label.axisLabel('x₁')).toContain('1,00');
+
+    readCore(element).setDataset({ inputDomain: 5 });
+    expect(label.axisLabel('x₁')).toContain('5,00');
+  });
+});
+
+describe('Neuron evaluate', () => {
+  beforeEach(() => {
+    // setWeights calls sync() -> requestRender() -> requestAnimationFrame.
+    vi.stubGlobal('requestAnimationFrame', () => 0);
+    vi.stubGlobal('cancelAnimationFrame', () => {});
+  });
+
+  afterEach(() => {
+    vi.unstubAllGlobals();
+    vi.restoreAllMocks();
+  });
+
+  it('delegates to the core', () => {
+    const element = createNeuron();
+    const scene = fakeScene();
+    installScene(element, scene);
+
+    element.setWeights({ w1: 0.5, w2: -0.3 });
+
+    const result = element.evaluate(0.4, -0.6);
+    expect(result.predicted).toBeCloseTo(0.5 * 0.4 + -0.3 * -0.6, 12);
+    expect(result.predicted).toBeCloseTo(0.38, 12);
+  });
+
+  it('follows the configured expression, loss kind and bias', () => {
+    const element = createNeuron();
+    const scene = fakeScene();
+    installScene(element, scene);
+    markUpdated(element);
+
+    element.expression = 'x1 * x2 + 1';
+    element.lossKind = 'l1';
+    element.bias = true;
+    runWillUpdate(element, 'expression', 'lossKind', 'bias');
+
+    element.setWeights({ w1: 0.5, w2: -0.3, b: 0.2 });
+
+    const result = element.evaluate(0.4, -0.6);
+    expect(result.target).toBeCloseTo(0.4 * -0.6 + 1, 12);
+    expect(result.target).toBeCloseTo(0.76, 12);
+    expect(result.predicted).toBeCloseTo(0.5 * 0.4 + -0.3 * -0.6 + 0.2, 12);
+    expect(result.predicted).toBeCloseTo(0.58, 12);
+    expect(result.loss).toBeCloseTo(Math.abs(result.predicted - result.target), 12);
+    expect(result.loss).toBeCloseTo(0.18, 12);
   });
 });
