@@ -1,4 +1,8 @@
-import { describe, expect, it } from 'vitest';
+import { createHash } from 'node:crypto';
+import { mkdtemp, readdir, readFile, rm } from 'node:fs/promises';
+import { tmpdir } from 'node:os';
+import { join } from 'node:path';
+import { afterEach, describe, expect, it } from 'vitest';
 import { DATASET_SOURCE_IDS, DATASET_SOURCES } from './dataset-sources.mjs';
 import { buildTargetPath, describePlan, main, parseArgs } from './fetch-datasets.mjs';
 
@@ -29,6 +33,10 @@ describe('parseArgs', () => {
 
   it('rejects an unknown id with a clear error', () => {
     expect(() => parseArgs(['--only', 'quickdraw'])).toThrow(/unknown dataset "quickdraw"/);
+  });
+
+  it('rejects a prototype member id such as "constructor"', () => {
+    expect(() => parseArgs(['--only', 'constructor'])).toThrow(/unknown dataset/i);
   });
 
   it('rejects an unknown argument', () => {
@@ -74,6 +82,62 @@ describe('DATASET_SOURCES', () => {
         expect(file.md5).toMatch(MD5_PATTERN);
       }
     }
+  });
+});
+
+/** Répertoires temporaires créés par les tests, nettoyés après chaque test. */
+const tempDirs = [];
+
+afterEach(async () => {
+  await Promise.all(tempDirs.splice(0).map((dir) => rm(dir, { recursive: true, force: true })));
+});
+
+async function makeTempDir() {
+  const dir = await mkdtemp(join(tmpdir(), 'fetch-datasets-'));
+  tempDirs.push(dir);
+  return dir;
+}
+
+/** Jeu de données minimal : un seul fichier `x.bin` avec sa taille et son MD5. */
+function fakeSources(bytes, md5 = createHash('md5').update(bytes).digest('hex')) {
+  return {
+    fake: {
+      files: [
+        {
+          name: 'x.bin',
+          size: bytes.length,
+          md5,
+          url: 'https://example.test/x.bin',
+        },
+      ],
+    },
+  };
+}
+
+describe('main with injected sources', () => {
+  it('writes a verified download and leaves no temporary file', async () => {
+    const targetRoot = await makeTempDir();
+    const bytes = new Uint8Array([1, 2, 3, 4, 5]);
+    const sources = fakeSources(bytes);
+    const fetchImpl = async () => new Response(bytes);
+
+    expect(await main(['--only', 'fake'], { sources, targetRoot, fetchImpl })).toBe(0);
+
+    const written = await readFile(join(targetRoot, 'fake', 'x.bin'));
+    expect([...written]).toEqual([...bytes]);
+    expect(await readdir(join(targetRoot, 'fake'))).toEqual(['x.bin']);
+  });
+
+  it('fails on a checksum mismatch and leaves no target or temporary file', async () => {
+    const targetRoot = await makeTempDir();
+    const bytes = new Uint8Array([1, 2, 3, 4, 5]);
+    const sources = fakeSources(bytes, '0'.repeat(32));
+    const fetchImpl = async () => new Response(bytes);
+
+    expect(await main(['--only', 'fake'], { sources, targetRoot, fetchImpl })).toBe(1);
+
+    const entries = await readdir(join(targetRoot, 'fake'));
+    expect(entries).toEqual([]);
   });
 });
 
