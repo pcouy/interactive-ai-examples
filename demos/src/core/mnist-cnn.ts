@@ -1,9 +1,13 @@
 /**
  * Passage forward pur TypeScript du CNN de référence MNIST décrit dans
- * `tf-playground/mnist/train.py` : quatre convolutions 3×3 suivies d'une
- * sigmoïde, aplatissement, couche dense de taille 8 + sigmoïde, puis dix
- * logits bruts. Le dropout est désactivé en inférence. Ce module n'importe
- * rien : aucune dépendance DOM, Lit, D3 ou TensorFlow.js.
+ * `tf-playground/mnist/train.py` : convolutions 3×3 suivies d'une fonction
+ * d'activation, aplatissement, couches denses, puis dix logits bruts. Le
+ * dropout est désactivé en inférence. Ce module n'importe rien : aucune
+ * dépendance DOM, Lit, D3 ou TensorFlow.js.
+ *
+ * Le nombre de couches est paramétrable : 0 à 4 convolutions et 1 à 3 couches
+ * denses, couche de sortie comprise. L'architecture par défaut reste celle de
+ * référence (quatre convolutions et deux couches denses, 980 paramètres).
  *
  * Conventions de stockage :
  * - activations en NHWC (le canal est l'indice le plus rapide) ;
@@ -13,13 +17,17 @@
 
 export type MnistCnnFilters = readonly [number, number, number, number];
 
-/** Fonction d'activation des couches de convolution et de la couche cachée. */
+/** Fonction d'activation des couches de convolution et des couches denses cachées. */
 export type MnistCnnActivation = 'sigmoid' | 'tanh';
 
 export interface MnistCnnConfig {
   readonly filters: MnistCnnFilters;
+  /** Nombre de couches de convolution, de 0 à 4. Défaut : 4. */
+  readonly convLayers?: number;
+  /** Nombre de couches denses, couche de sortie comprise, de 1 à 3. Défaut : 2. */
+  readonly denseLayers?: number;
   /**
-   * Fonction d'activation des convolutions et de la couche dense cachée.
+   * Fonction d'activation des convolutions et des couches denses cachées.
    * La valeur par défaut est `DEFAULT_MNIST_CNN_ACTIVATION`. La couche de
    * logits reste linéaire dans les deux cas.
    */
@@ -33,12 +41,10 @@ export interface MnistCnnLayerWeights {
 }
 
 export interface MnistCnnWeights {
-  readonly conv1: MnistCnnLayerWeights;
-  readonly conv2: MnistCnnLayerWeights;
-  readonly conv3: MnistCnnLayerWeights;
-  readonly conv4: MnistCnnLayerWeights;
-  readonly dense1: MnistCnnLayerWeights;
-  readonly dense2: MnistCnnLayerWeights;
+  /** Poids des convolutions, dans l'ordre : longueur `convLayers`. */
+  readonly conv: readonly MnistCnnLayerWeights[];
+  /** Poids des couches denses, sortie comprise : longueur `denseLayers`. */
+  readonly dense: readonly MnistCnnLayerWeights[];
 }
 
 export interface MnistCnnFeatureMap {
@@ -52,8 +58,8 @@ export interface MnistCnnFeatureMap {
 
 export interface MnistCnnForwardResult {
   readonly featureMaps: readonly MnistCnnFeatureMap[];
-  /** Activations de la couche dense cachée (après la fonction choisie), longueur 8. */
-  readonly hidden: Float32Array;
+  /** Activation de chaque couche dense ; la dernière entrée est le softmax. */
+  readonly denseActivations: readonly Float32Array[];
   readonly logits: Float32Array;
   readonly probabilities: Float32Array;
 }
@@ -68,10 +74,49 @@ export const MIN_FILTER_COUNT = 1;
 export const MAX_FILTER_COUNT = 4;
 
 export const DEFAULT_FILTER_COUNTS: MnistCnnFilters = [3, 3, 3, 3];
-export const CONV_STRIDES: readonly number[] = [1, 2, 1, 2];
-/** Seule conv2 utilise un remplissage zéro symétrique de 1. */
-export const CONV_PADDINGS: readonly number[] = [0, 1, 0, 0];
-export const CONV_LAYER_NAMES: readonly string[] = ['conv1', 'conv2', 'conv3', 'conv4'];
+
+/** Nombre maximal de couches de convolution. */
+export const MAX_CONV_LAYERS = 4;
+/** Nombre maximal de couches denses, couche de sortie comprise. */
+export const MAX_DENSE_LAYERS = 3;
+/** Architecture par défaut : quatre convolutions et deux couches denses. */
+export const DEFAULT_CONV_LAYERS = 4;
+export const DEFAULT_DENSE_LAYERS = 2;
+
+export interface ConvLayerSpec {
+  readonly stride: number;
+  readonly padding: number;
+}
+
+/**
+ * Pas et remplissage par nombre de couches de convolution. Les couches sans
+ * pas sont retirées en premier quand le nombre baisse, puis la couche sans
+ * remplissage ; la couche avec remplissage part en dernier.
+ */
+export const CONV_SCHEDULES: Readonly<Record<number, readonly ConvLayerSpec[]>> = {
+  0: [],
+  1: [{ stride: 2, padding: 1 }],
+  2: [
+    { stride: 2, padding: 1 },
+    { stride: 2, padding: 0 },
+  ],
+  3: [
+    { stride: 1, padding: 0 },
+    { stride: 2, padding: 1 },
+    { stride: 2, padding: 0 },
+  ],
+  4: [
+    { stride: 1, padding: 0 },
+    { stride: 2, padding: 1 },
+    { stride: 1, padding: 0 },
+    { stride: 2, padding: 0 },
+  ],
+};
+
+/** Nom affiché d'une couche de convolution, à partir de 0. */
+export function convLayerName(layer: number): string {
+  return `conv${layer + 1}`;
+}
 
 const DEFAULT_SEED = 42;
 
@@ -137,6 +182,28 @@ export function validateFilterCounts(filters: MnistCnnFilters): void {
   }
 }
 
+/** Nombre de couches de convolution demandé, avec sa valeur par défaut. */
+function resolveConvLayers(config: MnistCnnConfig): number {
+  const value = config.convLayers ?? DEFAULT_CONV_LAYERS;
+  if (!Number.isInteger(value) || value < 0 || value > MAX_CONV_LAYERS) {
+    throw new RangeError(
+      `convLayers must be an integer from 0 to ${MAX_CONV_LAYERS}, received ${String(value)}.`,
+    );
+  }
+  return value;
+}
+
+/** Nombre de couches denses demandé, avec sa valeur par défaut. */
+function resolveDenseLayers(config: MnistCnnConfig): number {
+  const value = config.denseLayers ?? DEFAULT_DENSE_LAYERS;
+  if (!Number.isInteger(value) || value < 1 || value > MAX_DENSE_LAYERS) {
+    throw new RangeError(
+      `denseLayers must be an integer from 1 to ${MAX_DENSE_LAYERS}, received ${String(value)}.`,
+    );
+  }
+  return value;
+}
+
 function validateConfig(config: MnistCnnConfig): void {
   if (config === null || typeof config !== 'object') {
     throw new TypeError('MNIST CNN config with a filters tuple is required.');
@@ -150,37 +217,66 @@ function validateConfig(config: MnistCnnConfig): void {
       `MNIST CNN activation must be "sigmoid" or "tanh", received ${String(config.activation)}.`,
     );
   }
+  resolveConvLayers(config);
+  resolveDenseLayers(config);
 }
 
-function convLayerPlans(filters: MnistCnnFilters): ConvLayerPlan[] {
-  validateFilterCounts(filters);
+/** Nom affiché d'une couche dense, à partir de 0. */
+function denseLayerName(layer: number): string {
+  return `dense${layer + 1}`;
+}
+
+function convLayerPlans(config: MnistCnnConfig): ConvLayerPlan[] {
+  validateFilterCounts(config.filters);
+  const convLayers = resolveConvLayers(config);
+  const schedule = CONV_SCHEDULES[convLayers];
   const plans: ConvLayerPlan[] = [];
   let inputSize = MNIST_INPUT_SIZE;
   let inputChannels = 1;
-  for (let layer = 0; layer < CONV_LAYER_NAMES.length; layer += 1) {
-    const outputChannels = filters[layer];
-    const stride = CONV_STRIDES[layer];
-    const padding = CONV_PADDINGS[layer];
-    const outputSize = convOutputLength(inputSize, stride, padding);
+  for (let layer = 0; layer < convLayers; layer += 1) {
+    const spec = schedule[layer];
+    const outputChannels = config.filters[layer];
+    const outputSize = convOutputLength(inputSize, spec.stride, spec.padding);
     if (outputSize < 1) {
       throw new RangeError(
-        `${CONV_LAYER_NAMES[layer]}: output size ${outputSize} is invalid for input size ${inputSize}.`,
+        `${convLayerName(layer)}: output size ${outputSize} is invalid for input size ${inputSize}.`,
       );
     }
     plans.push({
-      name: CONV_LAYER_NAMES[layer],
+      name: convLayerName(layer),
       inputSize,
       outputSize,
       inputChannels,
       outputChannels,
-      stride,
-      padding,
+      stride: spec.stride,
+      padding: spec.padding,
       kernelLength: CONV_KERNEL_SIZE * CONV_KERNEL_SIZE * inputChannels * outputChannels,
     });
     inputSize = outputSize;
     inputChannels = outputChannels;
   }
   return plans;
+}
+
+/** Largeur d'entrée de la première couche dense : carte finale ou image brute. */
+function denseInputWidth(plans: readonly ConvLayerPlan[]): number {
+  if (plans.length === 0) {
+    return MNIST_INPUT_LENGTH;
+  }
+  const last = plans[plans.length - 1];
+  return last.outputSize * last.outputSize * last.outputChannels;
+}
+
+/** Largeurs des couches denses : 8 pour chaque couche cachée, 10 pour la sortie. */
+export function denseLayerWidths(denseLayers: number): readonly number[] {
+  if (!Number.isInteger(denseLayers) || denseLayers < 1 || denseLayers > MAX_DENSE_LAYERS) {
+    throw new RangeError(
+      `denseLayers must be an integer from 1 to ${MAX_DENSE_LAYERS}, received ${String(denseLayers)}.`,
+    );
+  }
+  const widths = new Array<number>(denseLayers - 1).fill(HIDDEN_DENSE_SIZE);
+  widths.push(LOGIT_COUNT);
+  return widths;
 }
 
 function validateInput(input: Float32Array): void {
@@ -215,6 +311,11 @@ function arrayKind(value: unknown): string {
     return 'undefined';
   }
   return typeof value;
+}
+
+/** Longueur d'un tableau de couches, ou mention explicite si ce n'est pas un tableau. */
+function layerArrayLength(value: unknown): string {
+  return Array.isArray(value) ? String(value.length) : 'not an array';
 }
 
 function validateLayerWeights(
@@ -260,23 +361,38 @@ function validateLayerWeights(
   }
 }
 
-function validateWeights(weights: MnistCnnWeights, filters: MnistCnnFilters): void {
+function validateWeights(weights: MnistCnnWeights, config: MnistCnnConfig): void {
   if (weights === null || typeof weights !== 'object') {
     throw new TypeError('MNIST CNN weights object is required.');
   }
-  const plans = convLayerPlans(filters);
-  validateLayerWeights(weights.conv1, 'conv1', plans[0].kernelLength, plans[0].outputChannels);
-  validateLayerWeights(weights.conv2, 'conv2', plans[1].kernelLength, plans[1].outputChannels);
-  validateLayerWeights(weights.conv3, 'conv3', plans[2].kernelLength, plans[2].outputChannels);
-  validateLayerWeights(weights.conv4, 'conv4', plans[3].kernelLength, plans[3].outputChannels);
-  const denseInputLength = plans[3].outputSize * plans[3].outputSize * plans[3].outputChannels;
-  validateLayerWeights(
-    weights.dense1,
-    'dense1',
-    denseInputLength * HIDDEN_DENSE_SIZE,
-    HIDDEN_DENSE_SIZE,
-  );
-  validateLayerWeights(weights.dense2, 'dense2', HIDDEN_DENSE_SIZE * LOGIT_COUNT, LOGIT_COUNT);
+  const convLayers = resolveConvLayers(config);
+  const denseLayers = resolveDenseLayers(config);
+  const plans = convLayerPlans(config);
+  if (!Array.isArray(weights.conv) || weights.conv.length !== convLayers) {
+    throw new RangeError(
+      `conv weights must hold ${convLayers} layer(s), received ${layerArrayLength(weights.conv)}.`,
+    );
+  }
+  for (let layer = 0; layer < convLayers; layer += 1) {
+    validateLayerWeights(
+      weights.conv[layer],
+      convLayerName(layer),
+      plans[layer].kernelLength,
+      plans[layer].outputChannels,
+    );
+  }
+  const widths = denseLayerWidths(denseLayers);
+  if (!Array.isArray(weights.dense) || weights.dense.length !== denseLayers) {
+    throw new RangeError(
+      `dense weights must hold ${denseLayers} layer(s), received ${layerArrayLength(weights.dense)}.`,
+    );
+  }
+  let inputWidth = denseInputWidth(plans);
+  for (let layer = 0; layer < denseLayers; layer += 1) {
+    const width = widths[layer];
+    validateLayerWeights(weights.dense[layer], denseLayerName(layer), inputWidth * width, width);
+    inputWidth = width;
+  }
 }
 
 /** Exige un nombre fini, utilisé pour les paramètres qui doivent être des entiers. */
@@ -335,46 +451,6 @@ export function convKernelIndex(
   return kernelBase + ic * outputChannels + oc;
 }
 
-/** Couche de convolution d'un objet de poids, par index de couche (0..3). */
-function convLayerOf(weights: MnistCnnWeights, layer: number): MnistCnnLayerWeights {
-  switch (layer) {
-    case 0:
-      return weights.conv1;
-    case 1:
-      return weights.conv2;
-    case 2:
-      return weights.conv3;
-    case 3:
-      return weights.conv4;
-    default:
-      throw new RangeError(
-        `layer must be an integer from 0 to ${CONV_LAYER_NAMES.length - 1}, received ${String(layer)}.`,
-      );
-  }
-}
-
-/** Copie les poids en remplaçant une seule couche de convolution. */
-function withConvLayer(
-  weights: MnistCnnWeights,
-  layer: number,
-  next: MnistCnnLayerWeights,
-): MnistCnnWeights {
-  switch (layer) {
-    case 0:
-      return { ...weights, conv1: next };
-    case 1:
-      return { ...weights, conv2: next };
-    case 2:
-      return { ...weights, conv3: next };
-    case 3:
-      return { ...weights, conv4: next };
-    default:
-      throw new RangeError(
-        `layer must be an integer from 0 to ${CONV_LAYER_NAMES.length - 1}, received ${String(layer)}.`,
-      );
-  }
-}
-
 /**
  * Retourne une copie des poids où un seul poids de noyau de convolution est
  * remplacé : le noyau de la couche touchée est un nouveau Float32Array, toutes
@@ -383,7 +459,7 @@ function withConvLayer(
  */
 export function withKernelWeight(
   weights: MnistCnnWeights,
-  filters: MnistCnnFilters,
+  config: MnistCnnConfig,
   layer: number,
   ic: number,
   oc: number,
@@ -391,23 +467,26 @@ export function withKernelWeight(
   kx: number,
   value: number,
 ): MnistCnnWeights {
-  validateFilterCounts(filters);
+  validateConfig(config);
+  const convLayers = resolveConvLayers(config);
   requireFiniteNumber(layer, 'layer');
-  if (!Number.isInteger(layer) || layer < 0 || layer >= CONV_LAYER_NAMES.length) {
+  if (!Number.isInteger(layer) || layer < 0 || layer >= convLayers) {
     throw new RangeError(
-      `layer must be an integer from 0 to ${CONV_LAYER_NAMES.length - 1}, received ${String(layer)}.`,
+      `layer must be an integer from 0 to ${convLayers - 1}, received ${String(layer)}.`,
     );
   }
-  validateWeights(weights, filters);
+  validateWeights(weights, config);
   if (!Number.isFinite(value)) {
     throw new RangeError(`value must be a finite number, received ${String(value)}.`);
   }
-  const plans = convLayerPlans(filters);
+  const plans = convLayerPlans(config);
   const plan = plans[layer];
-  const previous = convLayerOf(weights, layer);
+  const previous = weights.conv[layer];
   const kernel = previous.kernel.slice();
   kernel[convKernelIndex(plan.inputChannels, plan.outputChannels, ky, kx, ic, oc)] = value;
-  return withConvLayer(weights, layer, { kernel, bias: previous.bias });
+  const conv = weights.conv.slice();
+  conv[layer] = { kernel, bias: previous.bias };
+  return { ...weights, conv };
 }
 
 /**
@@ -561,59 +640,55 @@ function randomConvLayer(rng: () => number, plan: ConvLayerPlan): MnistCnnLayerW
 /**
  * Initialisation déterministe (Glorot uniforme, biais à zéro) : deux appels
  * avec la même graine et les mêmes filtres produisent exactement les mêmes
- * poids, des graines différentes produisent des poids différents.
+ * poids, des graines différentes produisent des poids différents. La séquence
+ * pseudo-aléatoire ne dépend que de l'ordre des couches.
  */
 export function initializeMnistCnnWeights(
   config: MnistCnnConfig,
   seed: number = DEFAULT_SEED,
 ): MnistCnnWeights {
   validateConfig(config);
-  const plans = convLayerPlans(config.filters);
+  const plans = convLayerPlans(config);
+  const denseLayers = resolveDenseLayers(config);
+  const widths = denseLayerWidths(denseLayers);
   const rng = mulberry32(seed);
-  const denseInputLength = plans[3].outputSize * plans[3].outputSize * plans[3].outputChannels;
-  return {
-    conv1: randomConvLayer(rng, plans[0]),
-    conv2: randomConvLayer(rng, plans[1]),
-    conv3: randomConvLayer(rng, plans[2]),
-    conv4: randomConvLayer(rng, plans[3]),
-    dense1: {
-      kernel: randomUniform(
-        rng,
-        denseInputLength * HIDDEN_DENSE_SIZE,
-        glorotLimit(denseInputLength, HIDDEN_DENSE_SIZE),
-      ),
-      bias: new Float32Array(HIDDEN_DENSE_SIZE),
-    },
-    dense2: {
-      kernel: randomUniform(
-        rng,
-        HIDDEN_DENSE_SIZE * LOGIT_COUNT,
-        glorotLimit(HIDDEN_DENSE_SIZE, LOGIT_COUNT),
-      ),
-      bias: new Float32Array(LOGIT_COUNT),
-    },
-  };
+  const conv = plans.map((plan) => randomConvLayer(rng, plan));
+  let inputWidth = denseInputWidth(plans);
+  const dense: MnistCnnLayerWeights[] = [];
+  for (let layer = 0; layer < denseLayers; layer += 1) {
+    const width = widths[layer];
+    dense.push({
+      kernel: randomUniform(rng, inputWidth * width, glorotLimit(inputWidth, width)),
+      bias: new Float32Array(width),
+    });
+    inputWidth = width;
+  }
+  return { conv, dense };
 }
 
-/** Nombre total de paramètres (poids et biais) pour le tuple de filtres donné. */
-export function mnistCnnParameterCount(filters: MnistCnnFilters = DEFAULT_FILTER_COUNTS): number {
-  const plans = convLayerPlans(filters);
+/** Nombre total de paramètres (poids et biais) pour la configuration donnée. */
+export function mnistCnnParameterCount(
+  config: MnistCnnConfig = { filters: DEFAULT_FILTER_COUNTS },
+): number {
+  const plans = convLayerPlans(config);
+  const widths = denseLayerWidths(resolveDenseLayers(config));
   let total = 0;
   for (const plan of plans) {
     total += plan.kernelLength + plan.outputChannels;
   }
-  const denseInputLength = plans[3].outputSize * plans[3].outputSize * plans[3].outputChannels;
-  total += denseInputLength * HIDDEN_DENSE_SIZE + HIDDEN_DENSE_SIZE;
-  total += HIDDEN_DENSE_SIZE * LOGIT_COUNT + LOGIT_COUNT;
+  let inputWidth = denseInputWidth(plans);
+  for (const width of widths) {
+    total += inputWidth * width + width;
+    inputWidth = width;
+  }
   return total;
 }
 
 /**
  * Passage forward complet sur une image 28×28×1 (Float32Array de 784 valeurs
  * en ordre row-major, normalisée). Retourne les cartes de caractéristiques de
- * chaque convolution et les activations cachées (8), toutes deux après la
- * fonction d'activation choisie (sigmoïde par défaut), les logits linéaires
- * (10) et les probabilités softmax (10).
+ * chaque convolution, l'activation de chaque couche dense (la dernière entrée
+ * est le softmax), les logits linéaires (10) et les probabilités softmax (10).
  */
 export function forwardMnistCnn(
   input: Float32Array,
@@ -622,20 +697,17 @@ export function forwardMnistCnn(
 ): MnistCnnForwardResult {
   validateConfig(config);
   validateInput(input);
-  validateWeights(weights, config.filters);
+  validateWeights(weights, config);
   const selectedActivation = config.activation ?? DEFAULT_MNIST_CNN_ACTIVATION;
-  const plans = convLayerPlans(config.filters);
-  const convLayers: readonly MnistCnnLayerWeights[] = [
-    weights.conv1,
-    weights.conv2,
-    weights.conv3,
-    weights.conv4,
-  ];
+  const convLayers = resolveConvLayers(config);
+  const denseLayers = resolveDenseLayers(config);
+  const plans = convLayerPlans(config);
+  const widths = denseLayerWidths(denseLayers);
   const featureMaps: MnistCnnFeatureMap[] = [];
   let activation: Float32Array = input;
-  for (let layer = 0; layer < plans.length; layer += 1) {
+  for (let layer = 0; layer < convLayers; layer += 1) {
     const plan = plans[layer];
-    const values = convolve(activation, plan, convLayers[layer], selectedActivation);
+    const values = convolve(activation, plan, weights.conv[layer], selectedActivation);
     featureMaps.push({
       name: plan.name,
       height: plan.outputSize,
@@ -645,7 +717,21 @@ export function forwardMnistCnn(
     });
     activation = values;
   }
-  const hidden = denseLayer(activation, weights.dense1, HIDDEN_DENSE_SIZE, selectedActivation);
-  const logits = denseLayer(hidden, weights.dense2, LOGIT_COUNT, null);
-  return { featureMaps, hidden, logits, probabilities: softmax(logits) };
+  const denseOutputs: Float32Array[] = [];
+  for (let layer = 0; layer < denseLayers; layer += 1) {
+    const isOutput = layer === denseLayers - 1;
+    const values = denseLayer(
+      activation,
+      weights.dense[layer],
+      widths[layer],
+      isOutput ? null : selectedActivation,
+    );
+    denseOutputs.push(values);
+    activation = values;
+  }
+  const logits = denseOutputs[denseLayers - 1];
+  const probabilities = softmax(logits);
+  const denseActivations = denseOutputs.slice(0, denseLayers - 1);
+  denseActivations.push(probabilities);
+  return { featureMaps, denseActivations, logits, probabilities };
 }

@@ -9,7 +9,12 @@
  * DOM : il ne dépend que des types et du validateur du cœur `core/mnist-cnn.ts`.
  */
 
-import { type MnistCnnFilters, validateFilterCounts } from '../../core/mnist-cnn.js';
+import {
+  DEFAULT_CONV_LAYERS,
+  MAX_CONV_LAYERS,
+  type MnistCnnFilters,
+  validateFilterCounts,
+} from '../../core/mnist-cnn.js';
 
 /**
  * Une liaison à une frontière : le couple (canal de sortie de la couche amont,
@@ -29,12 +34,22 @@ export interface LinkEndpoint {
  * dans l'ordre : frontière croissante, puis canal d'entrée croissant, puis canal
  * de sortie croissant. Une frontière `b` porte `filters[b-1] × filters[b]`
  * liaisons ; la frontière 0 (image → `conv1`) n'a pas de couche amont et est
- * omise. Le tuple de filtres est validé par `validateFilterCounts`.
+ * omise. Seules les `convLayers` premières couches sont actives : sans couche,
+ * aucune frontière n'est énumérée. Le tuple de filtres est validé par
+ * `validateFilterCounts`.
  */
-export function enumerateLinks(filters: MnistCnnFilters): readonly LinkEndpoint[] {
+export function enumerateLinks(
+  filters: MnistCnnFilters,
+  convLayers: number = DEFAULT_CONV_LAYERS,
+): readonly LinkEndpoint[] {
   validateFilterCounts(filters);
+  if (!Number.isInteger(convLayers) || convLayers < 0 || convLayers > MAX_CONV_LAYERS) {
+    throw new RangeError(
+      `enumerateLinks: convLayers must be an integer from 0 to ${String(MAX_CONV_LAYERS)}, received ${String(convLayers)}.`,
+    );
+  }
   const links: LinkEndpoint[] = [];
-  for (let boundary = 1; boundary < filters.length; boundary += 1) {
+  for (let boundary = 1; boundary < convLayers; boundary += 1) {
     const inputChannels = filters[boundary - 1];
     const outputChannels = filters[boundary];
     for (let inputChannel = 0; inputChannel < inputChannels; inputChannel += 1) {

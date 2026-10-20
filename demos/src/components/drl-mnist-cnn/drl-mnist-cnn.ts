@@ -6,16 +6,21 @@ import '../../ui/drl-slider.js';
 import {
   activationDomain,
   CONV_KERNEL_SIZE,
-  CONV_LAYER_NAMES,
+  convLayerName,
+  DEFAULT_CONV_LAYERS,
+  DEFAULT_DENSE_LAYERS,
   DEFAULT_FILTER_COUNTS,
   DEFAULT_MNIST_CNN_ACTIVATION,
   forwardMnistCnn,
   initializeMnistCnnWeights,
+  MAX_CONV_LAYERS,
+  MAX_DENSE_LAYERS,
   MAX_FILTER_COUNT,
   MIN_FILTER_COUNT,
   MNIST_INPUT_LENGTH,
   MNIST_INPUT_SIZE,
   type MnistCnnActivation,
+  type MnistCnnConfig,
   type MnistCnnFeatureMap,
   type MnistCnnFilters,
   type MnistCnnForwardResult,
@@ -342,11 +347,12 @@ function lineInArchitecture(
   inputChannel: number,
   outputChannel: number,
   filters: MnistCnnFilters,
+  convLayers: number = DEFAULT_CONV_LAYERS,
 ): boolean {
   if (
     !Number.isInteger(boundary) ||
     boundary < 0 ||
-    boundary >= filters.length ||
+    boundary >= convLayers ||
     !Number.isInteger(outputChannel) ||
     outputChannel < 0 ||
     outputChannel >= filters[boundary]
@@ -369,9 +375,13 @@ export function describeLinkLabel(
   inputChannel: number,
   outputChannel: number,
   filters: MnistCnnFilters,
+  convLayers: number = DEFAULT_CONV_LAYERS,
 ): string {
   const name = `conv${boundary + 1} — entrée ${inputChannel + 1}, sortie ${outputChannel + 1}`;
-  if (selection === null || !lineInArchitecture(boundary, inputChannel, outputChannel, filters)) {
+  if (
+    selection === null ||
+    !lineInArchitecture(boundary, inputChannel, outputChannel, filters, convLayers)
+  ) {
     return name;
   }
   if (
@@ -560,6 +570,10 @@ function sameFilters(a: MnistCnnFilters, b: MnistCnnFilters): boolean {
 /** Données d'entrée d'une requête de run d'entraînement. */
 export interface TrainingRunInput {
   readonly filters: MnistCnnFilters;
+  /** Nombre de couches de convolution, de 0 à 4. */
+  readonly convLayers: number;
+  /** Nombre de couches denses, couche de sortie comprise, de 1 à 3. */
+  readonly denseLayers: number;
   readonly learningRate: number;
   readonly batchSize: number;
   readonly trainPercent: number;
@@ -579,6 +593,8 @@ export interface TrainingRunInput {
 export function trainingRunRequest(input: TrainingRunInput): MnistRunRequest {
   return {
     filters: input.filters,
+    convLayers: input.convLayers,
+    denseLayers: input.denseLayers,
     learningRate: input.learningRate,
     batchSize: input.batchSize,
     seed: SEED,
@@ -1168,6 +1184,12 @@ export class MnistCnn extends LitElement {
   @state()
   private filterCounts: MnistCnnFilters = DEFAULT_FILTER_COUNTS;
 
+  @state()
+  private convLayers = DEFAULT_CONV_LAYERS;
+
+  @state()
+  private denseLayers = DEFAULT_DENSE_LAYERS;
+
   /** Fonction d'activation des convolutions et de la couche dense cachée. */
   @state()
   private activation: MnistCnnActivation = DEFAULT_MNIST_CNN_ACTIVATION;
@@ -1378,19 +1400,36 @@ export class MnistCnn extends LitElement {
       metricsStarted: this.metricsStarted,
       trainExampleCount: this.trainExampleCount,
       validationExampleCount: this.validationExampleCount,
-      parameters: mnistCnnParameterCount(this.filterCounts),
+      parameters: mnistCnnParameterCount(this.architectureConfig),
       predictedClass: this.predictedClass,
       inputSource: this.inputSource,
     };
   }
 
-  /** Vrai si le manifeste chargé correspond à l'architecture courante. */
-  private get manifestMatches(): boolean {
+  /** Architecture courante, partagée par l'inférence, l'éditeur et les requêtes. */
+  private get architectureConfig(): MnistCnnConfig {
+    return {
+      filters: this.filterCounts,
+      convLayers: this.convLayers,
+      denseLayers: this.denseLayers,
+      activation: this.activation,
+    };
+  }
+
+  /** Vrai si l'architecture courante peut utiliser le manifeste de référence. */
+  private get usesPretrainedArchitecture(): boolean {
     return (
-      this.pretrainedAssets !== null &&
       this.activation === 'sigmoid' &&
+      this.convLayers === DEFAULT_CONV_LAYERS &&
+      this.denseLayers === DEFAULT_DENSE_LAYERS &&
+      this.pretrainedAssets !== null &&
       sameFilters(this.pretrainedAssets.config.filters, this.filterCounts)
     );
+  }
+
+  /** Vrai si le manifeste chargé correspond à l'architecture courante. */
+  private get manifestMatches(): boolean {
+    return this.usesPretrainedArchitecture;
   }
 
   private get inputHint(): string {
@@ -1599,19 +1638,14 @@ export class MnistCnn extends LitElement {
    * manifeste ne doit jamais écraser des poids modifiés à la main.
    */
   private applyPretrainedWeights(): void {
-    if (this.activation !== 'sigmoid') {
+    if (!this.usesPretrainedArchitecture || this.weightsEdited) {
       return;
     }
-    if (this.weightsEdited) {
+    const assets = this.pretrainedAssets;
+    if (assets === null) {
       return;
     }
-    if (this.pretrainedAssets === null) {
-      return;
-    }
-    if (!sameFilters(this.pretrainedAssets.config.filters, this.filterCounts)) {
-      return;
-    }
-    this.weights = this.pretrainedAssets.weights;
+    this.weights = assets.weights;
     this.clearSelection();
     this.runInference();
   }
@@ -1682,6 +1716,8 @@ export class MnistCnn extends LitElement {
     this.lastEmittedEpoch = 0;
     const request = trainingRunRequest({
       filters: this.filterCounts,
+      convLayers: this.convLayers,
+      denseLayers: this.denseLayers,
       learningRate: this.learningRate,
       batchSize: this.batchSize,
       trainPercent: this.trainPercent,
@@ -1726,7 +1762,7 @@ export class MnistCnn extends LitElement {
    */
   private readonly handleRandomResetWeights = (): void => {
     const seed = Math.floor(Math.random() * 0xffffffff);
-    const weights = initializeMnistCnnWeights({ filters: this.filterCounts }, seed);
+    const weights = initializeMnistCnnWeights(this.architectureConfig, seed);
     this.resetMetrics();
     this.clearSelection();
     void this.controller.resetWeights(weights, 'random');
@@ -1734,14 +1770,11 @@ export class MnistCnn extends LitElement {
 
   /** Poids à afficher pour l'architecture courante : pré-entraînés si possible. */
   private weightsForCurrentFilters(): MnistCnnWeights {
-    if (
-      this.activation === 'sigmoid' &&
-      this.pretrainedAssets !== null &&
-      sameFilters(this.pretrainedAssets.config.filters, this.filterCounts)
-    ) {
-      return this.pretrainedAssets.weights;
+    const assets = this.pretrainedAssets;
+    if (this.usesPretrainedArchitecture && assets !== null) {
+      return assets.weights;
     }
-    return initializeMnistCnnWeights({ filters: this.filterCounts }, SEED);
+    return initializeMnistCnnWeights(this.architectureConfig, SEED);
   }
 
   private resetMetrics(): void {
@@ -1983,7 +2016,7 @@ export class MnistCnn extends LitElement {
     this.weightError = null;
     const view =
       this.selection !== null && this.selection.kind === 'weight'
-        ? weightEditorView(this.selection, this.weights, this.filterCounts)
+        ? weightEditorView(this.selection, this.weights, this.architectureConfig)
         : null;
     if (view !== null) {
       this.weightDraft = view.text;
@@ -2123,7 +2156,7 @@ export class MnistCnn extends LitElement {
       this.weightDraft,
       this.selection,
       this.weights,
-      this.filterCounts,
+      this.architectureConfig,
     );
     if (result.kind === 'error') {
       this.weightError = result.message;
@@ -2247,13 +2280,7 @@ export class MnistCnn extends LitElement {
 
   /** Biais d'un canal de sortie de la couche de convolution donnée. */
   private filterBias(layer: number, channel: number): number {
-    const convWeights: readonly MnistCnnLayerWeights[] = [
-      this.weights.conv1,
-      this.weights.conv2,
-      this.weights.conv3,
-      this.weights.conv4,
-    ];
-    return convWeights[layer].bias[channel];
+    return this.weights.conv[layer].bias[channel];
   }
 
   private drawFilterCanvas(canvas: HTMLCanvasElement, layer: number, channel: number): void {
@@ -2262,12 +2289,7 @@ export class MnistCnn extends LitElement {
       return;
     }
     const inputChannels = layer === 0 ? 1 : this.filterCounts[layer - 1];
-    const convWeights: readonly MnistCnnLayerWeights[] = [
-      this.weights.conv1,
-      this.weights.conv2,
-      this.weights.conv3,
-      this.weights.conv4,
-    ];
+    const convWeights = this.weights.conv;
     const view = filterViewMode(this.selection, layer, channel);
     const values = filterKernelValues(view, convWeights[layer].kernel, inputChannels, channel);
     let maxAbs = 0;
@@ -2685,7 +2707,7 @@ export class MnistCnn extends LitElement {
           <div class="drl-stats">
             <div class="drl-stat">
               <p class="drl-stat-label">Paramètres</p>
-              <p class="drl-stat-value">${mnistCnnParameterCount(this.filterCounts)}</p>
+              <p class="drl-stat-value">${mnistCnnParameterCount(this.architectureConfig)}</p>
             </div>
             <div class="drl-stat">
               <p class="drl-stat-label">Classe prédite</p>
@@ -2763,11 +2785,11 @@ export class MnistCnn extends LitElement {
             aria-label="Nombre de filtres de chacune des quatre couches de convolution"
           >
             ${repeat(
-              CONV_LAYER_NAMES,
+              Array.from({ length: this.convLayers }, (_, layer) => layer),
               (name) => name,
-              (name, layer) => html`
+              (_name, layer) => html`
                 <drl-slider
-                  label="Filtres ${name}"
+                  label="Filtres ${convLayerName(layer)}"
                   min=${MIN_FILTER_COUNT}
                   max=${MAX_FILTER_COUNT}
                   step="1"
@@ -2789,11 +2811,11 @@ export class MnistCnn extends LitElement {
           ${
             result
               ? repeat(
-                  CONV_LAYER_NAMES,
+                  Array.from({ length: this.convLayers }, (_, layer) => layer),
                   (name) => name,
-                  (name, layer) => html`
+                  (_name, layer) => html`
                   <div class="drl-layer-block">
-                    <h5 class="drl-layer-title">${name} — ${this.filterCounts[layer]} canal(aux)</h5>
+                    <h5 class="drl-layer-title">${convLayerName(layer)} — ${this.filterCounts[layer]} canal(aux)</h5>
                     <div class="drl-cells-grid">
                       ${repeat(
                         Array.from({ length: this.filterCounts[layer] }, (_, channel) => channel),
@@ -2807,7 +2829,7 @@ export class MnistCnn extends LitElement {
                               width=${FILTER_CANVAS_SIZE}
                               height=${FILTER_CANVAS_SIZE}
                               role="img"
-                              aria-label=${`Filtre ${name}, canal de sortie ${channel + 1}, biais ${formatValue(this.filterBias(layer, channel), 3)}`}
+                              aria-label=${`Filtre ${convLayerName(layer)}, canal de sortie ${channel + 1}, biais ${formatValue(this.filterBias(layer, channel), 3)}`}
                               @pointerdown=${this.handleFilterCellClick}
                             ></canvas>
                             <figcaption>
@@ -2894,7 +2916,7 @@ export class MnistCnn extends LitElement {
     if (selection === null) {
       return nothing;
     }
-    const view = weightEditorView(selection, this.weights, this.filterCounts);
+    const view = weightEditorView(selection, this.weights, this.architectureConfig);
     if (view === null) {
       return nothing;
     }

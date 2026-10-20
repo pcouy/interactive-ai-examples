@@ -95,6 +95,10 @@ export interface MnistRunRequest {
   readonly batchSize: number;
   /** Fonction d'activation des convolutions et de la couche dense cachée. */
   readonly activation: MnistCnnActivation;
+  /** Nombre de couches de convolution, de 0 à 4. */
+  readonly convLayers: number;
+  /** Nombre de couches denses, sortie comprise, de 1 à 3. */
+  readonly denseLayers: number;
   /** Graine d'entraînement. */
   readonly seed: number;
   /** Nombre d'époques. */
@@ -188,6 +192,8 @@ export class MnistTrainingController {
         learningRate: request.learningRate,
         batchSize: request.batchSize,
         activation: request.activation,
+        convLayers: request.convLayers,
+        denseLayers: request.denseLayers,
         seed: request.seed,
       });
       createdTrainer = trainer;

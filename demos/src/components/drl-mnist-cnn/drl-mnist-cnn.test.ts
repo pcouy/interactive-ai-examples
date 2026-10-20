@@ -72,12 +72,13 @@ function convLayer(kernel: Float32Array, outputChannels: number): MnistCnnLayerW
 /** Poids minimaux dont seule `conv2` porte un noyau rempli, pour `selectedWeightValue`. */
 function weightsWithConv2(kernel: Float32Array, outputChannels: number): MnistCnnWeights {
   return {
-    conv1: convLayer(new Float32Array(9), 1),
-    conv2: convLayer(kernel, outputChannels),
-    conv3: convLayer(new Float32Array(9), 1),
-    conv4: convLayer(new Float32Array(9), 1),
-    dense1: convLayer(new Float32Array(9), 1),
-    dense2: convLayer(new Float32Array(9), 1),
+    conv: [
+      convLayer(new Float32Array(9), 1),
+      convLayer(kernel, outputChannels),
+      convLayer(new Float32Array(9), 1),
+      convLayer(new Float32Array(9), 1),
+    ],
+    dense: [convLayer(new Float32Array(9), 1), convLayer(new Float32Array(9), 1)],
   };
 }
 
@@ -92,12 +93,8 @@ function minimalWeights(): MnistCnnWeights {
     bias: new Float32Array(biasLength),
   });
   return {
-    conv1: layer(9, 1),
-    conv2: layer(9, 1),
-    conv3: layer(9, 1),
-    conv4: layer(9, 1),
-    dense1: layer(200, 8),
-    dense2: layer(80, 10),
+    conv: [layer(9, 1), layer(9, 1), layer(9, 1), layer(9, 1)],
+    dense: [layer(200, 8), layer(80, 10)],
   };
 }
 
@@ -712,7 +709,7 @@ describe('describeWeightSelection', () => {
     expect(
       describeWeightSelection(
         { kind: 'weight', boundary: 1, inputChannel: 0, outputChannel: 2, ky: 2, kx: 1 },
-        filters,
+        { filters },
       ),
     ).toBe('conv2 — entrée 1, sortie 3, position (3, 2)');
   });
@@ -721,20 +718,20 @@ describe('describeWeightSelection', () => {
     expect(
       describeWeightSelection(
         { kind: 'link', boundary: 0, inputChannel: 0, outputChannel: 1 },
-        filters,
+        { filters },
       ),
     ).toBe('conv1 — entrée 1, sortie 2');
   });
 
   it('returns null for no selection', () => {
-    expect(describeWeightSelection(null, filters)).toBeNull();
+    expect(describeWeightSelection(null, { filters })).toBeNull();
   });
 
   it('returns null for a selection outside the architecture', () => {
     expect(
       describeWeightSelection(
         { kind: 'link', boundary: 0, inputChannel: 0, outputChannel: 5 },
-        filters,
+        { filters },
       ),
     ).toBeNull();
   });
@@ -773,6 +770,8 @@ describe('describeLinkLabel', () => {
 });
 
 describe('selectedWeightValue', () => {
+  const filters = [3, 3, 3, 3] as MnistCnnFilters;
+
   it('reads the value of the selected weight', () => {
     // conv2 with 2 input channels and 3 output channels: 9 × 2 × 3 = 54 weights.
     const kernel = new Float32Array(54);
@@ -780,51 +779,67 @@ describe('selectedWeightValue', () => {
     kernel[index] = 0.5;
     const weights = weightsWithConv2(kernel, 3);
     expect(
-      selectedWeightValue(weights, {
-        kind: 'weight',
-        boundary: 1,
-        inputChannel: 1,
-        outputChannel: 2,
-        ky: 2,
-        kx: 0,
-      }),
+      selectedWeightValue(
+        {
+          kind: 'weight',
+          boundary: 1,
+          inputChannel: 1,
+          outputChannel: 2,
+          ky: 2,
+          kx: 0,
+        },
+        weights,
+        { filters },
+      ),
     ).toBe(0.5);
   });
 
   it('returns null for a non-weight selection', () => {
     const weights = weightsWithConv2(new Float32Array(54), 3);
-    expect(selectedWeightValue(weights, null)).toBeNull();
+    expect(selectedWeightValue(null, weights, { filters })).toBeNull();
     expect(
-      selectedWeightValue(weights, {
-        kind: 'link',
-        boundary: 1,
-        inputChannel: 0,
-        outputChannel: 0,
-      }),
+      selectedWeightValue(
+        {
+          kind: 'link',
+          boundary: 1,
+          inputChannel: 0,
+          outputChannel: 0,
+        },
+        weights,
+        { filters },
+      ),
     ).toBeNull();
   });
 
   it('returns null for out-of-range indices', () => {
     const weights = weightsWithConv2(new Float32Array(54), 3);
     expect(
-      selectedWeightValue(weights, {
-        kind: 'weight',
-        boundary: 1,
-        inputChannel: 5,
-        outputChannel: 0,
-        ky: 0,
-        kx: 0,
-      }),
+      selectedWeightValue(
+        {
+          kind: 'weight',
+          boundary: 1,
+          inputChannel: 5,
+          outputChannel: 0,
+          ky: 0,
+          kx: 0,
+        },
+        weights,
+        { filters },
+      ),
     ).toBeNull();
     expect(
-      selectedWeightValue(weights, {
-        kind: 'weight',
-        boundary: 9,
-        inputChannel: 0,
-        outputChannel: 0,
-        ky: 0,
-        kx: 0,
-      }),
+      selectedWeightValue(
+        {
+          kind: 'weight',
+          boundary: 9,
+          inputChannel: 0,
+          outputChannel: 0,
+          ky: 0,
+          kx: 0,
+        },
+        weights,
+        { filters },
+      ),
     ).toBeNull();
   });
 });
@@ -863,6 +878,8 @@ describe('trainingRunRequest', () => {
   function input(overrides: Partial<TrainingRunInput> = {}): TrainingRunInput {
     return {
       filters,
+      convLayers: 4,
+      denseLayers: 2,
       learningRate: 0.01,
       batchSize: 64,
       trainPercent: 25,
@@ -900,6 +917,12 @@ describe('trainingRunRequest', () => {
   it('pins the seed', () => {
     const request = trainingRunRequest(input());
     expect(request.seed).toBe(42);
+  });
+
+  it('forwards the architecture depth from the input', () => {
+    const request = trainingRunRequest(input({ convLayers: 2, denseLayers: 3 }));
+    expect(request.convLayers).toBe(2);
+    expect(request.denseLayers).toBe(3);
   });
 
   it('forwards the batch size from the input', () => {

@@ -58,15 +58,20 @@ describe('parseMnistCnnManifest', () => {
   it('parses the exported manifest into config and weights', () => {
     const { config, weights } = parseMnistCnnManifestJson(MANIFEST_TEXT);
     expect(config.filters).toEqual(DEFAULT_FILTER_COUNTS);
-    expect(weights.conv1.kernel).toBeInstanceOf(Float32Array);
-    expect(weights.conv1.kernel).toHaveLength(27);
-    expect(weights.conv2.kernel).toHaveLength(81);
-    expect(weights.conv3.kernel).toHaveLength(81);
-    expect(weights.conv4.kernel).toHaveLength(81);
-    expect(weights.dense1.kernel).toHaveLength(600);
-    expect(weights.dense1.bias).toHaveLength(8);
-    expect(weights.dense2.kernel).toHaveLength(80);
-    expect(weights.dense2.bias).toHaveLength(10);
+    expect(config.convLayers).toBe(4);
+    expect(config.denseLayers).toBe(2);
+    expect(config.activation).toBe('sigmoid');
+    expect(weights.conv).toHaveLength(4);
+    expect(weights.dense).toHaveLength(2);
+    expect(weights.conv[0].kernel).toBeInstanceOf(Float32Array);
+    expect(weights.conv[0].kernel).toHaveLength(27);
+    expect(weights.conv[1].kernel).toHaveLength(81);
+    expect(weights.conv[2].kernel).toHaveLength(81);
+    expect(weights.conv[3].kernel).toHaveLength(81);
+    expect(weights.dense[0].kernel).toHaveLength(600);
+    expect(weights.dense[0].bias).toHaveLength(8);
+    expect(weights.dense[1].kernel).toHaveLength(80);
+    expect(weights.dense[1].bias).toHaveLength(10);
   });
 
   it('rejects a wrong schema version', () => {
@@ -95,6 +100,24 @@ describe('parseMnistCnnManifest', () => {
     const wrongShape = manifestClone();
     (wrongShape.architecture as Record<string, unknown>).filters = [3, 3, 3];
     expect(() => parseMnistCnnManifest(wrongShape)).toThrow(/unsupported architecture filters/);
+  });
+
+  it('rejects a filter tuple that is not the reference architecture', () => {
+    const wrongFilters = manifestClone();
+    (wrongFilters.architecture as Record<string, unknown>).filters = [1, 2, 3, 4];
+    expect(() => parseMnistCnnManifest(wrongFilters)).toThrow(/unsupported architecture filters/);
+  });
+
+  it('rejects an extra dense layer', () => {
+    const extra = manifestClone();
+    layersOf(extra).dense3 = { kernel: [], bias: [] };
+    expect(() => parseMnistCnnManifest(extra)).toThrow(/unsupported layers/);
+  });
+
+  it('rejects a missing conv layer', () => {
+    const missing = manifestClone();
+    delete layersOf(missing).conv4;
+    expect(() => parseMnistCnnManifest(missing)).toThrow(/layers\.conv4 must be a JSON object/);
   });
 
   it('rejects a parameter count that disagrees with the architecture', () => {

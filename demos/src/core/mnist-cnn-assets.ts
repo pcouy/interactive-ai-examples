@@ -8,6 +8,9 @@
  * core d'inférence ne reçoive jamais de données douteuses. Il n'importe rien
  * du DOM : il accepte un objet déjà désérialisé ou une chaîne JSON.
  *
+ * Seule l'architecture de référence est acceptée : quatre convolutions avec
+ * trois filtres, deux couches denses et une activation sigmoïde.
+ *
  * Disposition des poids attendue dans le manifeste (voir `mnist-cnn.ts`) :
  * - convolutions en HWIO [kernelY][kernelX][entrée][sortie] ;
  * - denses en [entrée][sortie] ;
@@ -16,9 +19,12 @@
 
 import {
   CONV_KERNEL_SIZE,
-  CONV_PADDINGS,
-  CONV_STRIDES,
+  CONV_SCHEDULES,
   convOutputLength,
+  DEFAULT_CONV_LAYERS,
+  DEFAULT_DENSE_LAYERS,
+  DEFAULT_FILTER_COUNTS,
+  DEFAULT_MNIST_CNN_ACTIVATION,
   HIDDEN_DENSE_SIZE,
   LOGIT_COUNT,
   MNIST_INPUT_SIZE,
@@ -27,7 +33,6 @@ import {
   type MnistCnnLayerWeights,
   type MnistCnnWeights,
   mnistCnnParameterCount,
-  validateFilterCounts,
 } from './mnist-cnn.js';
 
 /** Version de schéma acceptée par ce lecteur. */
@@ -39,8 +44,13 @@ export interface MnistCnnAssets {
   readonly weights: MnistCnnWeights;
 }
 
-const LAYER_NAMES = ['conv1', 'conv2', 'conv3', 'conv4', 'dense1', 'dense2'] as const;
-type LayerName = (typeof LAYER_NAMES)[number];
+/** Clés des couches de convolution du manifeste, dans l'ordre. */
+const CONV_LAYER_NAMES = ['conv1', 'conv2', 'conv3', 'conv4'] as const;
+/** Clés des couches denses du manifeste, sortie comprise, dans l'ordre. */
+const DENSE_LAYER_NAMES = ['dense1', 'dense2'] as const;
+
+/** Clés de couches acceptées par le manifeste versionné. */
+const LAYER_NAMES: readonly string[] = [...CONV_LAYER_NAMES, ...DENSE_LAYER_NAMES];
 
 /** Clés racine acceptées par le manifeste versionné. */
 const MANIFEST_ROOT_KEYS = ['schemaVersion', 'architecture', 'parameterCount', 'layers'] as const;
@@ -79,15 +89,20 @@ function readNumberArray(value: unknown, context: string, expectedLength: number
   return result;
 }
 
-/** Longueurs attendues de chaque noyau et biais pour un tuple de filtres. */
-function layerShapes(filters: MnistCnnFilters): Record<LayerName, LayerShape> {
-  const convShapes: LayerShape[] = [];
+/** Longueurs attendues de chaque noyau et biais pour l'architecture de référence. */
+function layerShapes(): {
+  readonly conv: readonly LayerShape[];
+  readonly dense: readonly LayerShape[];
+} {
+  const schedule = CONV_SCHEDULES[DEFAULT_CONV_LAYERS];
+  const conv: LayerShape[] = [];
   let inputSize = MNIST_INPUT_SIZE;
   let inputChannels = 1;
-  for (let layer = 0; layer < filters.length; layer += 1) {
-    const outputSize = convOutputLength(inputSize, CONV_STRIDES[layer], CONV_PADDINGS[layer]);
-    const outputChannels = filters[layer];
-    convShapes.push({
+  for (let layer = 0; layer < schedule.length; layer += 1) {
+    const spec = schedule[layer];
+    const outputSize = convOutputLength(inputSize, spec.stride, spec.padding);
+    const outputChannels = DEFAULT_FILTER_COUNTS[layer];
+    conv.push({
       kernel: CONV_KERNEL_SIZE * CONV_KERNEL_SIZE * inputChannels * outputChannels,
       bias: outputChannels,
     });
@@ -96,15 +111,18 @@ function layerShapes(filters: MnistCnnFilters): Record<LayerName, LayerShape> {
   }
   const denseInputLength = inputSize * inputSize * inputChannels;
   return {
-    conv1: convShapes[0],
-    conv2: convShapes[1],
-    conv3: convShapes[2],
-    conv4: convShapes[3],
-    dense1: { kernel: denseInputLength * HIDDEN_DENSE_SIZE, bias: HIDDEN_DENSE_SIZE },
-    dense2: { kernel: HIDDEN_DENSE_SIZE * LOGIT_COUNT, bias: LOGIT_COUNT },
+    conv,
+    dense: [
+      { kernel: denseInputLength * HIDDEN_DENSE_SIZE, bias: HIDDEN_DENSE_SIZE },
+      { kernel: HIDDEN_DENSE_SIZE * LOGIT_COUNT, bias: LOGIT_COUNT },
+    ],
   };
 }
 
+/**
+ * Lit `architecture.filters` et exige l'architecture de référence : un tuple
+ * de quatre filtres égal à `DEFAULT_FILTER_COUNTS`, comparé entrée par entrée.
+ */
 function readFilters(architecture: Record<string, unknown>): MnistCnnFilters {
   const extraKeys = Object.keys(architecture).filter((key) => key !== 'filters');
   if (extraKeys.length > 0) {
@@ -116,22 +134,27 @@ function readFilters(architecture: Record<string, unknown>): MnistCnnFilters {
   if (!Array.isArray(filters)) {
     throw new TypeError('mnist-cnn-assets: architecture.filters must be an array of four counts.');
   }
-  try {
-    validateFilterCounts(filters as unknown as MnistCnnFilters);
-  } catch (error) {
+  if (filters.length !== DEFAULT_FILTER_COUNTS.length) {
     throw new RangeError(
-      `mnist-cnn-assets: unsupported architecture filters, ${(error as Error).message}`,
+      `mnist-cnn-assets: unsupported architecture filters ${JSON.stringify(filters)}, expected ${JSON.stringify(DEFAULT_FILTER_COUNTS)}.`,
     );
   }
-  return filters as unknown as MnistCnnFilters;
+  for (let index = 0; index < filters.length; index += 1) {
+    if (filters[index] !== DEFAULT_FILTER_COUNTS[index]) {
+      throw new RangeError(
+        `mnist-cnn-assets: unsupported architecture filters ${JSON.stringify(filters)}, expected ${JSON.stringify(DEFAULT_FILTER_COUNTS)}.`,
+      );
+    }
+  }
+  return DEFAULT_FILTER_COUNTS;
 }
 
 /**
  * Valide un manifeste déjà désérialisé et le convertit en configuration et
  * poids exploitables par `forwardMnistCnn`. Rejette une version de schéma
  * inconnue, des clés racine inconnues, une architecture non prise en charge,
- * des longueurs de noyau ou de biais incorrectes, un nombre de paramètres
- * incohérent et toute valeur non finie.
+ * des couches manquantes ou en trop, des longueurs de noyau ou de biais
+ * incorrectes, un nombre de paramètres incohérent et toute valeur non finie.
  */
 export function parseMnistCnnManifest(raw: unknown): MnistCnnAssets {
   const root = requireObject(raw, 'manifest');
@@ -151,7 +174,14 @@ export function parseMnistCnnManifest(raw: unknown): MnistCnnAssets {
   }
   const filters = readFilters(requireObject(root.architecture, 'architecture'));
 
-  const expectedParameters = mnistCnnParameterCount(filters);
+  const config: MnistCnnConfig = {
+    filters,
+    convLayers: DEFAULT_CONV_LAYERS,
+    denseLayers: DEFAULT_DENSE_LAYERS,
+    activation: DEFAULT_MNIST_CNN_ACTIVATION,
+  };
+
+  const expectedParameters = mnistCnnParameterCount(config);
   if (root.parameterCount !== expectedParameters) {
     throw new RangeError(
       `mnist-cnn-assets: parameterCount ${String(root.parameterCount)} does not match the ${expectedParameters} parameters implied by the architecture.`,
@@ -159,34 +189,32 @@ export function parseMnistCnnManifest(raw: unknown): MnistCnnAssets {
   }
 
   const layers = requireObject(root.layers, 'layers');
-  const extraLayers = Object.keys(layers).filter(
-    (key) => !(LAYER_NAMES as readonly string[]).includes(key),
-  );
+  const extraLayers = Object.keys(layers).filter((key) => !LAYER_NAMES.includes(key));
   if (extraLayers.length > 0) {
     throw new RangeError(`mnist-cnn-assets: unsupported layers ${JSON.stringify(extraLayers)}.`);
   }
 
-  const shapes = layerShapes(filters);
-  const weights = {} as Record<LayerName, MnistCnnLayerWeights>;
-  for (const name of LAYER_NAMES) {
-    const layer = requireObject(layers[name], `layers.${name}`);
-    weights[name] = {
-      kernel: readNumberArray(layer.kernel, `${name} kernel`, shapes[name].kernel),
-      bias: readNumberArray(layer.bias, `${name} bias`, shapes[name].bias),
-    };
+  const shapes = layerShapes();
+  const conv: MnistCnnLayerWeights[] = [];
+  for (let layer = 0; layer < CONV_LAYER_NAMES.length; layer += 1) {
+    const name = CONV_LAYER_NAMES[layer];
+    const layerData = requireObject(layers[name], `layers.${name}`);
+    conv.push({
+      kernel: readNumberArray(layerData.kernel, `${name} kernel`, shapes.conv[layer].kernel),
+      bias: readNumberArray(layerData.bias, `${name} bias`, shapes.conv[layer].bias),
+    });
+  }
+  const dense: MnistCnnLayerWeights[] = [];
+  for (let layer = 0; layer < DENSE_LAYER_NAMES.length; layer += 1) {
+    const name = DENSE_LAYER_NAMES[layer];
+    const layerData = requireObject(layers[name], `layers.${name}`);
+    dense.push({
+      kernel: readNumberArray(layerData.kernel, `${name} kernel`, shapes.dense[layer].kernel),
+      bias: readNumberArray(layerData.bias, `${name} bias`, shapes.dense[layer].bias),
+    });
   }
 
-  return {
-    config: { filters },
-    weights: {
-      conv1: weights.conv1,
-      conv2: weights.conv2,
-      conv3: weights.conv3,
-      conv4: weights.conv4,
-      dense1: weights.dense1,
-      dense2: weights.dense2,
-    },
-  };
+  return { config, weights: { conv, dense } };
 }
 
 /** Variante de `parseMnistCnnManifest` qui accepte une chaîne JSON. */

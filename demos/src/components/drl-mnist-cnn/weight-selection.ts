@@ -10,29 +10,28 @@
 
 import {
   CONV_KERNEL_SIZE,
-  CONV_PADDINGS,
-  CONV_STRIDES,
+  CONV_SCHEDULES,
   convKernelIndex,
   convOutputLength,
+  DEFAULT_CONV_LAYERS,
   MNIST_INPUT_SIZE,
-  type MnistCnnFilters,
+  type MnistCnnConfig,
   type MnistCnnWeights,
 } from '../../core/mnist-cnn.js';
 
-/**
- * Tailles des cartes de caractéristiques après chaque convolution, dérivées du
- * noyau (26, 13, 11 et 5 avec l'architecture de référence). Servent à
- * `convLayerGeometry` et aux toiles de cartes du composant.
- */
-export const FEATURE_MAP_SIZES: readonly number[] = (() => {
+/** Tailles des cartes après chaque convolution pour un nombre de couches donné. */
+export function featureMapSizes(convLayers: number = DEFAULT_CONV_LAYERS): readonly number[] {
   const sizes: number[] = [];
   let size = MNIST_INPUT_SIZE;
-  for (let layer = 0; layer < CONV_STRIDES.length; layer += 1) {
-    size = convOutputLength(size, CONV_STRIDES[layer], CONV_PADDINGS[layer]);
+  for (const spec of CONV_SCHEDULES[convLayers] ?? []) {
+    size = convOutputLength(size, spec.stride, spec.padding);
     sizes.push(size);
   }
   return sizes;
-})();
+}
+
+/** Tailles de référence (quatre convolutions), pour les appelants existants. */
+export const FEATURE_MAP_SIZES: readonly number[] = featureMapSizes(DEFAULT_CONV_LAYERS);
 
 /**
  * Moyenne des canaux d'entrée d'un noyau de convolution pour un canal de sortie
@@ -217,20 +216,24 @@ export function filterViewMode(
  * carte de la couche précédente. C'est cette géométrie qui permet de calculer
  * les taps d'une cellule de carte.
  */
-export function convLayerGeometry(layer: number): {
+export function convLayerGeometry(
+  layer: number,
+  convLayers: number = DEFAULT_CONV_LAYERS,
+): {
   stride: number;
   padding: number;
   inputSize: number;
 } {
-  if (!Number.isInteger(layer) || layer < 0 || layer >= CONV_STRIDES.length) {
+  const schedule = CONV_SCHEDULES[convLayers] ?? [];
+  if (!Number.isInteger(layer) || layer < 0 || layer >= schedule.length) {
     throw new RangeError(
-      `convLayerGeometry: layer must be an integer from 0 to ${String(CONV_STRIDES.length - 1)}, received ${String(layer)}.`,
+      `convLayerGeometry: layer must be an integer from 0 to ${String(schedule.length - 1)} for ${String(convLayers)} convolution layer(s), received ${String(layer)}.`,
     );
   }
   return {
-    stride: CONV_STRIDES[layer],
-    padding: CONV_PADDINGS[layer],
-    inputSize: layer === 0 ? MNIST_INPUT_SIZE : FEATURE_MAP_SIZES[layer - 1],
+    stride: schedule[layer].stride,
+    padding: schedule[layer].padding,
+    inputSize: layer === 0 ? MNIST_INPUT_SIZE : featureMapSizes(convLayers)[layer - 1],
   };
 }
 
@@ -263,19 +266,21 @@ function lineInArchitecture(
   boundary: number,
   inputChannel: number,
   outputChannel: number,
-  filters: MnistCnnFilters,
+  config: MnistCnnConfig,
 ): boolean {
+  const convLayers = config.convLayers ?? DEFAULT_CONV_LAYERS;
   if (
     !Number.isInteger(boundary) ||
     boundary < 0 ||
-    boundary >= filters.length ||
+    boundary >= convLayers ||
+    boundary >= config.filters.length ||
     !Number.isInteger(outputChannel) ||
     outputChannel < 0 ||
-    outputChannel >= filters[boundary]
+    outputChannel >= config.filters[boundary]
   ) {
     return false;
   }
-  const inputChannels = boundary === 0 ? 1 : filters[boundary - 1];
+  const inputChannels = boundary === 0 ? 1 : config.filters[boundary - 1];
   return Number.isInteger(inputChannel) && inputChannel >= 0 && inputChannel < inputChannels;
 }
 
@@ -285,7 +290,7 @@ function lineInArchitecture(
  */
 function selectionIsInArchitecture(
   selection: WeightSelection,
-  filters: MnistCnnFilters,
+  config: MnistCnnConfig,
 ): selection is Exclude<WeightSelection, null> {
   if (selection === null) {
     return false;
@@ -295,7 +300,7 @@ function selectionIsInArchitecture(
       selection.boundary,
       selection.inputChannel,
       selection.outputChannel,
-      filters,
+      config,
     ) &&
     (selection.kind === 'link' ||
       (Number.isInteger(selection.ky) &&
@@ -314,9 +319,9 @@ function selectionIsInArchitecture(
  */
 export function describeWeightSelection(
   selection: WeightSelection,
-  filters: MnistCnnFilters,
+  config: MnistCnnConfig,
 ): string | null {
-  if (!selectionIsInArchitecture(selection, filters)) {
+  if (!selectionIsInArchitecture(selection, config)) {
     return null;
   }
   const link = `conv${selection.boundary + 1} — entrée ${selection.inputChannel + 1}, sortie ${selection.outputChannel + 1}`;
@@ -328,22 +333,29 @@ export function describeWeightSelection(
 
 /**
  * Valeur courante d'un poids sélectionné, ou null si la sélection n'est pas un
- * poids ou si ses indices sont hors bornes. Le nombre de canaux d'entrée est
- * déduit de la longueur du noyau et du biais (nombre de canaux de sortie).
+ * poids ou si ses indices sont hors bornes. Le noyau est lu dans `weights.conv`,
+ * à l'indice de la couche active ; le nombre de canaux d'entrée est déduit de la
+ * longueur du noyau et du biais (nombre de canaux de sortie).
  *
  * Tout indice fractionnaire ou `NaN` donne null plutôt qu'une lecture hors
  * bornes : les indices non entiers sont refusés avant tout accès au noyau.
  */
 export function selectedWeightValue(
-  weights: MnistCnnWeights,
   selection: WeightSelection,
+  weights: MnistCnnWeights,
+  config: MnistCnnConfig,
 ): number | null {
   if (selection === null || selection.kind !== 'weight') {
     return null;
   }
-  const layers = [weights.conv1, weights.conv2, weights.conv3, weights.conv4] as const;
-  const layer = layers[selection.boundary];
-  if (!layer || !Number.isInteger(selection.boundary)) {
+  const convLayers = config.convLayers ?? DEFAULT_CONV_LAYERS;
+  const layer = weights.conv[selection.boundary];
+  if (
+    !layer ||
+    !Number.isInteger(selection.boundary) ||
+    selection.boundary < 0 ||
+    selection.boundary >= convLayers
+  ) {
     return null;
   }
   const outputChannels = layer.bias.length;
