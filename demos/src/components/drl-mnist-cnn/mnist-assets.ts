@@ -200,10 +200,21 @@ export async function fetchGzip(
 }
 
 /**
+ * Message d'erreur du manifeste de poids pré-entraîné. Le manifeste est
+ * optionnel : la démo retombe sur des poids déterministes, donc aucune commande
+ * de téléchargement n'est proposée. `npm run datasets:data` ne télécharge que
+ * les archives IDX et ne crée pas ce fichier.
+ */
+export function mnistManifestErrorMessage(url: string, detail: string): string {
+  return `mnist-assets: could not load "${mnistFileName(url)}". The pre-trained manifest is optional; the demo falls back to deterministic weights. See public/datasets/mnist/README.md. (${detail})`;
+}
+
+/**
  * Télécharge le manifeste de poids pré-entraîné `datasets/mnist/model-v1.json`
  * et retourne son texte JSON brut. L'analyse et la validation sont déléguées à
  * `parseMnistCnnManifestJson` (core) : ce chargeur ne fait que réseau et
- * décodage, avec les mêmes erreurs explicites que `fetchGzip`.
+ * décodage, avec ses propres erreurs explicites (voir
+ * `mnistManifestErrorMessage`).
  */
 export async function fetchMnistCnnManifest(): Promise<string> {
   const url = `${assetBaseUrl()}${DATASET_ASSET_DIRECTORY}/mnist/${MNIST_MODEL_MANIFEST_FILE}`;
@@ -211,10 +222,12 @@ export async function fetchMnistCnnManifest(): Promise<string> {
   try {
     response = await fetch(url);
   } catch (error) {
-    throw new Error(mnistFetchErrorMessage(url, `network error: ${(error as Error).message}`));
+    throw new Error(mnistManifestErrorMessage(url, `network error: ${(error as Error).message}`));
   }
   if (!response.ok) {
-    throw new Error(mnistFetchErrorMessage(url, `HTTP ${response.status} ${response.statusText}`));
+    throw new Error(
+      mnistManifestErrorMessage(url, `HTTP ${response.status} ${response.statusText}`),
+    );
   }
   return response.text();
 }

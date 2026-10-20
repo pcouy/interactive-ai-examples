@@ -495,7 +495,7 @@ describe('fetchMnistCnnManifest', () => {
     expect(parseMnistCnnManifestJson(text).config.filters).toEqual([3, 3, 3, 3]);
   });
 
-  it('reports a missing manifest clearly', async () => {
+  it('reports a missing manifest without a download command', async () => {
     const fetchMock = vi.fn(
       async (): Promise<Response> =>
         new Response('missing', { status: 404, statusText: 'Not Found' }),
@@ -508,9 +508,12 @@ describe('fetchMnistCnnManifest', () => {
       },
       (reason: Error) => reason,
     );
-    expect(error.message).toContain('model-v1.json');
-    expect(error.message).toContain('npm run datasets:data');
-    expect(error.message).toContain('HTTP 404');
+    expect(error.message).toBe(
+      'mnist-assets: could not load "model-v1.json". The pre-trained manifest is optional; the demo falls back to deterministic weights. See public/datasets/mnist/README.md. (HTTP 404 Not Found)',
+    );
+    // `npm run datasets:data` télécharge les archives IDX, pas le manifeste :
+    // le message ne doit pas la recommander.
+    expect(error.message).not.toContain('npm run datasets:data');
   });
 
   it('reports a network failure clearly', async () => {
@@ -526,6 +529,7 @@ describe('fetchMnistCnnManifest', () => {
       (reason: Error) => reason,
     );
     expect(error.message).toContain('model-v1.json');
-    expect(error.message).toContain('offline');
+    expect(error.message).toContain('network error: offline');
+    expect(error.message).not.toContain('npm run datasets:data');
   });
 });
