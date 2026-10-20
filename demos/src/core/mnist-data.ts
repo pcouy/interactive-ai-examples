@@ -62,7 +62,7 @@ export interface BalancedSampleOptions {
   perClass: number;
   /** Graine entière non négative : la même graine donne toujours le même tirage. */
   seed: number;
-  /** Nombre de classes, de 2 à 20. Défaut : `MNIST_CLASS_COUNT` (10). */
+  /** Nombre de classes du jeu, au moins 2 (défaut : `MNIST_CLASS_COUNT`). */
   readonly classCount?: number;
 }
 
@@ -97,7 +97,7 @@ export interface StratifiedSampleOptions {
   readonly fraction: number;
   /** Graine entière non négative : la même graine donne toujours le même tirage. */
   readonly seed: number;
-  /** Nombre de classes, de 2 à 20. Défaut : `MNIST_CLASS_COUNT` (10). */
+  /** Nombre de classes du jeu, au moins 2 (défaut : `MNIST_CLASS_COUNT`). */
   readonly classCount?: number;
 }
 
