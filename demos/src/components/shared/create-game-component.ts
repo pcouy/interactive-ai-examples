@@ -168,6 +168,7 @@ export interface GameComponentApi<S, M> extends LitElement {
   cellSize: number;
   running: boolean;
   autoRestart: boolean;
+  showSearchFields: boolean;
   readonly transpositionTable: TranspositionTable;
   reset(): void;
   clearTranspositionTable(): void;
@@ -592,6 +593,9 @@ export function createGameComponent<S, M>(
     @property({ type: Boolean, attribute: 'auto-restart' })
     autoRestart = false;
 
+    @property({ type: Boolean, attribute: 'show-search-fields' })
+    showSearchFields = true;
+
     @property({ attribute: false })
     recorder: TreeRecorder<S> | null = null;
 
@@ -771,6 +775,29 @@ export function createGameComponent<S, M>(
       this.requestUpdate();
     }
 
+    /**
+     * Relance une partie terminée dès qu'un humain est en jeu. On ne passe pas
+     * par reset() : il couperait la boucle et effacerait la série. Le premier
+     * joueur humain arrête la boucle ; un agent la relance sur la nouvelle
+     * partie.
+     */
+    protected override onPlay(): void {
+      if (this.outcome === null) {
+        return;
+      }
+      const kinds = this.playerKinds;
+      if (kinds[0] !== 'human' && kinds[1] !== 'human') {
+        return;
+      }
+      this.pending = null;
+      this.resetGameState();
+      this.emitEvent<DrlGameResetDetail<S>>('drl-game-reset', {
+        state: this.currentState as S,
+      });
+      this.requestUpdate();
+      this.running = kinds[0] !== 'human';
+    }
+
     private resetSeries(): void {
       this.seriesWins = [0, 0];
       this.seriesDraws = 0;
@@ -857,9 +884,15 @@ export function createGameComponent<S, M>(
           }
           ${this.renderStepTurnButton()}
           ${this.renderAutoRestartField()}
-          ${this.renderSamplesField()}
-          ${this.renderDiscountField()}
-          ${this.renderStrictPruningField()}
+          ${
+            this.showSearchFields
+              ? html`
+                  ${this.renderSamplesField()}
+                  ${this.renderDiscountField()}
+                  ${this.renderStrictPruningField()}
+                `
+              : nothing
+          }
         </div>
         <drl-game-board
           .view=${this.boardView()}
