@@ -62,10 +62,16 @@ function makeCore(
     seed?: number;
     loss?: LossKind;
     bias?: boolean;
+    inputDomain?: number;
   } = {},
 ): NeuronCore {
   const core = new NeuronCore();
-  core.setDataset({ expression: opts.expression, count: opts.count, seed: opts.seed });
+  core.setDataset({
+    expression: opts.expression,
+    count: opts.count,
+    seed: opts.seed,
+    inputDomain: opts.inputDomain,
+  });
   if (opts.loss !== undefined) {
     core.setLoss(opts.loss);
   }
@@ -554,6 +560,76 @@ describe('domain', () => {
   });
 });
 
+describe('input domain', () => {
+  it('defaults to 1', () => {
+    const core = makeCore();
+    expect(core.inputDomain).toBe(1);
+  });
+
+  it('draws both inputs in [-d, d] with matching targets', () => {
+    for (const d of [0.1, 2, 5, 20]) {
+      const core = makeCore({ expression: 'x1 + x2', count: 40, seed: 7, inputDomain: d });
+      expect(core.inputDomain).toBe(d);
+      expect(core.dataset).toHaveLength(40);
+      for (const example of core.dataset) {
+        expect(Math.abs(example.x1)).toBeLessThanOrEqual(d);
+        expect(Math.abs(example.x2)).toBeLessThanOrEqual(d);
+        expect(example.t).toBeCloseTo(example.x1 + example.x2, 12);
+      }
+    }
+  });
+
+  it('clamps the input domain and keeps the current value when not finite', () => {
+    const core = makeCore();
+    core.setDataset({ inputDomain: 0 });
+    expect(core.inputDomain).toBe(0.1);
+    core.setDataset({ inputDomain: -5 });
+    expect(core.inputDomain).toBe(0.1);
+    core.setDataset({ inputDomain: 100 });
+    expect(core.inputDomain).toBe(20);
+    core.setDataset({ inputDomain: NaN });
+    expect(core.inputDomain).toBe(20);
+    core.setDataset({ inputDomain: 2.5 });
+    expect(core.inputDomain).toBe(2.5);
+  });
+
+  it('rescales the dataset deterministically with the domain', () => {
+    const unit = makeCore({ expression: 'x1 + x2', count: 40, seed: 7, inputDomain: 1 });
+    const scaled = makeCore({ expression: 'x1 + x2', count: 40, seed: 7, inputDomain: 5 });
+    expect(scaled.dataset.length).toBe(unit.dataset.length);
+    for (let i = 0; i < unit.dataset.length; i += 1) {
+      const base = unit.dataset[i];
+      const big = scaled.dataset[i];
+      expect(big.x1).toBeCloseTo(base.x1 * 5, 12);
+      expect(big.x2).toBeCloseTo(base.x2 * 5, 12);
+      expect(big.t).toBeCloseTo(base.t * 5, 12);
+    }
+  });
+
+  it('resets training when the input domain changes', () => {
+    const core = makeCore({ expression: 'x1 + x2', count: 40, seed: 5 });
+    for (let i = 0; i < 5; i += 1) {
+      core.advanceBatch(0.1);
+    }
+    expect(core.epoch).toBe(5);
+
+    core.setDataset({ inputDomain: 5 });
+    expect(core.dataset.some((example) => Math.abs(example.x1) > 1)).toBe(true);
+    expect(core.epoch).toBe(0);
+    expect(core.phase).toBe('idle');
+    expect(core.diverged).toBe(false);
+    for (const example of core.dataset) {
+      expect(Math.abs(example.x1)).toBeLessThanOrEqual(5);
+      expect(Math.abs(example.x2)).toBeLessThanOrEqual(5);
+    }
+  });
+
+  it('derives the weight domain from the scaled dataset', () => {
+    const core = makeCore({ expression: '12*x1', count: 40, seed: 7, inputDomain: 5 });
+    expect(core.domain).toBeCloseTo(18, 10);
+  });
+});
+
 describe('divergence', () => {
   it('snaps back and reports divergence on a huge learning rate', () => {
     const core = makeCore({ expression: 'x1 + x2', count: 40, seed: 5 });
@@ -602,6 +678,117 @@ describe('divergence', () => {
   });
 });
 
+describe('setWeights', () => {
+  it('applies finite weights and uses them as the divergence reference', () => {
+    const core = makeCore({ expression: 'x1 + x2', count: 40, seed: 5, bias: true });
+    core.setWeights({ w1: 0.7, w2: -0.9, b: 0.3 });
+    expect(core.w1).toBe(0.7);
+    expect(core.w2).toBe(-0.9);
+    expect(core.b).toBe(0.3);
+    expect(core.phase).toBe('idle');
+    expect(core.epoch).toBe(0);
+
+    const move = core.advanceBatch(1e6);
+    expect(core.diverged).toBe(true);
+    expect(core.w1).toBe(0.7);
+    expect(core.w2).toBe(-0.9);
+    expect(core.b).toBe(0.3);
+    expect(move).not.toBeNull();
+    if (move === null) {
+      throw new Error('advanceBatch should report the snap-back move');
+    }
+    expect(move.toA).toBeCloseTo(0.7, 12);
+    expect(move.toB).toBeCloseTo(-0.9, 12);
+  });
+
+  it('ignores non-finite values', () => {
+    const core = makeCore({ bias: true });
+    core.setWeights({ w1: 0.4, w2: -0.6, b: 0.2 });
+    core.setWeights({ w1: NaN, w2: Infinity, b: -Infinity });
+    expect(core.w1).toBe(0.4);
+    expect(core.w2).toBe(-0.6);
+    expect(core.b).toBe(0.2);
+  });
+
+  it('ignores b and keeps it 0 when bias is off', () => {
+    const core = makeCore({ expression: 'x1 + x2', count: 40, seed: 7 });
+    expect(core.biasEnabled).toBe(false);
+    core.setWeights({ w1: 0.5, w2: -0.4, b: 0.9 });
+    expect(core.w1).toBe(0.5);
+    expect(core.w2).toBe(-0.4);
+    expect(core.b).toBe(0);
+  });
+
+  it('clears a prior divergence', () => {
+    const core = makeCore({ expression: 'x1 + x2', count: 40, seed: 5 });
+    core.advanceBatch(1e6);
+    expect(core.diverged).toBe(true);
+
+    core.setWeights({ w1: 0.2, w2: 0.3 });
+    expect(core.diverged).toBe(false);
+    expect(core.w1).toBe(0.2);
+    expect(core.w2).toBe(0.3);
+    expect(core.phase).toBe('idle');
+    expect(core.epoch).toBe(0);
+    expect(core.lastMove).toBeNull();
+  });
+
+  it('restarts the batch state and epoch', () => {
+    const core = makeCore({ expression: 'x1 + x2', count: 40, seed: 7, bias: true });
+    core.advanceBatch(0.1);
+    expect(core.epoch).toBe(1);
+    expect(core.phase).not.toBe('idle');
+
+    core.setWeights({ w1: 0.5 });
+    expect(core.w1).toBe(0.5);
+    expect(core.phase).toBe('idle');
+    expect(core.batch).toHaveLength(0);
+    expect(core.epoch).toBe(0);
+    expect(core.lastMove).toBeNull();
+    expect(core.diverged).toBe(false);
+  });
+
+  it('clamps manual weights against the current weight domain', () => {
+    const core = makeCore({ expression: 'x1*x2', count: 40, seed: 5, bias: true });
+    const defaultLimit = 10 * core.domain;
+
+    core.setDataset({ inputDomain: 20 });
+    const newLimit = 10 * core.domain;
+    expect(newLimit).not.toBe(defaultLimit);
+
+    core.setWeights({ w1: 1e6 });
+    expect(core.w1).toBe(newLimit);
+  });
+
+  it('clamps huge values to the divergence limit', () => {
+    const core = makeCore({ expression: 'x1 + x2', count: 40, seed: 5 });
+    core.setWeights({ w1: 1e6 });
+    expect(Math.abs(core.w1)).toBeLessThanOrEqual(10 * core.domain);
+    expect(core.w1).toBe(10 * core.domain);
+
+    core.setWeights({ w2: -1e6 });
+    expect(Math.abs(core.w2)).toBeLessThanOrEqual(10 * core.domain);
+    expect(core.w2).toBe(-10 * core.domain);
+  });
+
+  it('keeps the weights when no key is given', () => {
+    const core = makeCore({ expression: 'x1 + x2', count: 40, seed: 7, bias: true });
+    core.setWeights({ w1: 0.6, w2: -0.2, b: 0.15 });
+    core.advanceBatch(0.1);
+    const w1 = core.w1;
+    const w2 = core.w2;
+    const b = core.b;
+
+    core.setWeights({});
+    expect(core.w1).toBe(w1);
+    expect(core.w2).toBe(w2);
+    expect(core.b).toBe(b);
+    expect(core.phase).toBe('idle');
+    expect(core.epoch).toBe(0);
+    expect(core.batch).toHaveLength(0);
+  });
+});
+
 describe('readouts', () => {
   it('reports loss and gradient magnitude at the current weights', () => {
     const core = makeCore({ expression: 'x1 + x2', count: 24, seed: 7 });
@@ -609,5 +796,128 @@ describe('readouts', () => {
     expect(core.loss).toBeCloseTo(meanLoss(0.5, -0.3, 0, core.dataset, 'l2'), 12);
     const gradient = meanGradient(0.5, -0.3, 0, core.dataset, 'l2');
     expect(core.gradientMagnitude).toBeCloseTo(Math.hypot(gradient.dw1, gradient.dw2), 12);
+  });
+});
+
+describe('evaluate', () => {
+  it('matches the independent L2 formula', () => {
+    const core = makeCore({ expression: 'x1 * x2 + 1', count: 24, seed: 7 });
+    core.reset({ startW1: 0.5, startW2: -0.3 });
+
+    const result = core.evaluate(0.4, -0.6);
+
+    // Independent arithmetic, not read back from the core.
+    const expectedTarget = 0.4 * -0.6 + 1;
+    const expectedPredicted = 0.5 * 0.4 + -0.3 * -0.6;
+    const expectedLoss =
+      0.5 * (expectedPredicted - expectedTarget) * (expectedPredicted - expectedTarget);
+
+    expect(result.x1).toBe(0.4);
+    expect(result.x2).toBe(-0.6);
+    expect(result.target).toBeCloseTo(expectedTarget, 12);
+    expect(result.predicted).toBeCloseTo(expectedPredicted, 12);
+    expect(result.loss).toBeCloseTo(expectedLoss, 12);
+
+    expect(result.target).toBeCloseTo(0.76, 12);
+    expect(result.predicted).toBeCloseTo(0.38, 12);
+    expect(result.loss).toBeCloseTo(0.0722, 12);
+  });
+
+  it('uses the L1 loss after setLoss', () => {
+    const core = makeCore({ expression: 'x1 * x2 + 1', count: 24, seed: 7 });
+    core.reset({ startW1: 0.5, startW2: -0.3 });
+    core.setLoss('l1');
+
+    const result = core.evaluate(0.4, -0.6);
+
+    expect(result.loss).toBeCloseTo(Math.abs(result.predicted - result.target), 12);
+    expect(result.loss).toBeCloseTo(0.38, 12);
+  });
+
+  it('includes the bias only when bias is enabled', () => {
+    const core = makeCore({ expression: 'x1 * x2 + 1', count: 24, seed: 7 });
+    core.setWeights({ w1: 0.5, w2: -0.3, b: 0.9 });
+    expect(core.b).toBe(0);
+
+    const withoutBias = core.evaluate(0.4, -0.6);
+    expect(withoutBias.predicted).toBeCloseTo(0.5 * 0.4 + -0.3 * -0.6, 12);
+    expect(withoutBias.predicted).toBeCloseTo(0.38, 12);
+
+    core.setBiasEnabled(true);
+    core.reset({ startW1: 0.5, startW2: -0.3, startB: 0.9 });
+    expect(core.b).toBe(0.9);
+
+    const withBias = core.evaluate(0.4, -0.6);
+    expect(withBias.predicted).toBeCloseTo(0.5 * 0.4 + -0.3 * -0.6 + 0.9, 12);
+    expect(withBias.predicted).toBeCloseTo(1.28, 12);
+  });
+
+  it('reads the live weights after each batch', () => {
+    const core = makeCore({ expression: 'x1 + x2', count: 40, seed: 7 });
+    core.reset({ startW1: 0.5, startW2: -0.3 });
+
+    const before = core.evaluate(0.3, 0.2);
+    expect(before.predicted).toBeCloseTo(0.5 * 0.3 + -0.3 * 0.2, 12);
+
+    for (let i = 0; i < 5; i += 1) {
+      core.advanceBatch(0.1);
+    }
+
+    const after = core.evaluate(0.3, 0.2);
+    // Pins the deterministic trajectory (seed 7, count 40, lr 0.1, 5 batches
+    // from w1=0.5, w2=-0.3) instead of reading the live weights, so a
+    // regression in the update rule cannot move the expectation with it.
+    expect(after.predicted).toBeCloseTo(0.1805728909330556, 12);
+    expect(after.predicted).not.toBe(before.predicted);
+  });
+
+  it('falls back to x1 + x2 after a bad expression', () => {
+    const core = makeCore({ expression: 'x1 + x2', count: 24, seed: 7 });
+    core.setDataset({ expression: 'x1 +' });
+
+    const result = core.evaluate(0.4, -0.6);
+
+    expect(core.expression).toBe('x1 + x2');
+    expect(result.target).toBeCloseTo(0.4 + -0.6, 12);
+    expect(result.target).toBeCloseTo(-0.2, 12);
+  });
+
+  it('returns an infinite target and loss at a singular point', () => {
+    const core = makeCore({ expression: '1/x1', count: 24, seed: 7 });
+
+    const result = core.evaluate(0, 0.5);
+
+    expect(result.target).toBe(Number.POSITIVE_INFINITY);
+    expect(result.loss).toBe(Number.POSITIVE_INFINITY);
+  });
+
+  it('returns NaN when the target is not a number', () => {
+    const core = makeCore({ expression: 'x1 > 1 ? "abc" : 1', count: 24, seed: 7 });
+
+    const result = core.evaluate(2, 0.5);
+
+    expect(result.target).toBeNaN();
+    expect(result.loss).toBeNaN();
+  });
+
+  it('propagates a non-finite input as NaN', () => {
+    const core = makeCore({ expression: 'x1 + x2', count: 24, seed: 7 });
+    core.reset({ startW1: 0.5, startW2: -0.3 });
+
+    const result = core.evaluate(Number.NaN, 0.5);
+
+    expect(result.predicted).toBeNaN();
+    expect(result.loss).toBeNaN();
+  });
+
+  it('evaluates a point outside the input domain without clamping', () => {
+    const core = makeCore({ expression: 'x1 + x2', count: 40, seed: 5, inputDomain: 1 });
+    core.reset({ startW1: 0.5, startW2: -0.3 });
+
+    const result = core.evaluate(50, -50);
+
+    expect(result.target).toBeCloseTo(0, 12);
+    expect(result.predicted).toBeCloseTo(0.5 * 50 + -0.3 * -50, 12);
+    expect(result.predicted).toBeCloseTo(40, 12);
   });
 });

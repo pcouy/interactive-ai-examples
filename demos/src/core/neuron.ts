@@ -17,6 +17,20 @@ export interface NeuronGradient {
   db: number;
 }
 
+export interface WeightUpdate {
+  w1?: number;
+  w2?: number;
+  b?: number;
+}
+
+export interface NeuronEvaluation {
+  x1: number;
+  x2: number;
+  predicted: number;
+  target: number;
+  loss: number;
+}
+
 const DEFAULT_SEED = 42;
 const DEFAULT_COUNT = 40;
 const MAX_COUNT = 500;
@@ -28,12 +42,19 @@ const DOMAIN_MAX = 20;
 const DOMAIN_FALLBACK = 5;
 const DOMAIN_FIT_SCALE = 1.5;
 const DIVERGENCE_FACTOR = 10;
+const INPUT_DOMAIN_DEFAULT = 1;
+const INPUT_DOMAIN_MIN = 0.1;
+const INPUT_DOMAIN_MAX = 20;
 const PROBE_X1 = -0.25;
 const PROBE_X2 = 0.25;
 const EPOCH_STRIDE = 0x9e3779b1;
 const RANK_EPS = 1e-12;
 
 const defaultTarget = (x1: number, x2: number): number => x1 + x2;
+
+function clampAbs(value: number, limit: number): number {
+  return Math.min(limit, Math.max(-limit, value));
+}
 
 export function compileTarget(
   expression: string,
@@ -67,6 +88,8 @@ export class NeuronCore {
   private seed = DEFAULT_SEED;
 
   private count = DEFAULT_COUNT;
+
+  private currentInputDomain = INPUT_DOMAIN_DEFAULT;
 
   private currentExpression = NeuronCore.DEFAULT_EXPRESSION;
 
@@ -205,6 +228,10 @@ export class NeuronCore {
     return this.currentDomain;
   }
 
+  get inputDomain(): number {
+    return this.currentInputDomain;
+  }
+
   get lastMove(): BallMove | null {
     return this.lastBallMove;
   }
@@ -213,7 +240,9 @@ export class NeuronCore {
     return this.isDiverged;
   }
 
-  setDataset(options: { expression?: string; count?: number; seed?: number } = {}): void {
+  setDataset(
+    options: { expression?: string; count?: number; seed?: number; inputDomain?: number } = {},
+  ): void {
     if (options.seed !== undefined) {
       this.seed = options.seed;
     }
@@ -233,6 +262,13 @@ export class NeuronCore {
       // A non-finite count keeps the current count; Math.round(NaN) would
       // produce a zero-iteration dataset.
       this.count = Math.min(MAX_COUNT, Math.max(1, Math.round(options.count)));
+    }
+    if (options.inputDomain !== undefined && Number.isFinite(options.inputDomain)) {
+      // A non-finite input domain keeps the current extent, mirroring count.
+      this.currentInputDomain = Math.min(
+        INPUT_DOMAIN_MAX,
+        Math.max(INPUT_DOMAIN_MIN, options.inputDomain),
+      );
     }
     this.buildDataset();
     this.computeDomain();
@@ -268,6 +304,44 @@ export class NeuronCore {
    */
   setBatchSize(size: number): void {
     this.currentBatchSize = Math.min(MAX_BATCH_SIZE, Math.max(MIN_BATCH_SIZE, Math.round(size)));
+  }
+
+  /**
+   * Places the weights and bias at the given values and restarts training
+   * there. Finite w1 and w2 are clamped to ±DIVERGENCE_FACTOR * domain; the
+   * bias is applied and clamped only when the bias is enabled, otherwise it
+   * is set to 0. Non-finite entries are ignored. The placed values become
+   * the start weights, so a later divergence snaps back to them. All
+   * training state resets: phase idle, epoch 0, empty batch, cleared
+   * gradients, last move, and divergence flag. Calling with no keys
+   * restarts training at the current weights.
+   */
+  setWeights(weights: WeightUpdate): void {
+    const limit = DIVERGENCE_FACTOR * this.currentDomain;
+    if (weights.w1 !== undefined && Number.isFinite(weights.w1)) {
+      this.weight1 = clampAbs(weights.w1, limit);
+    }
+    if (weights.w2 !== undefined && Number.isFinite(weights.w2)) {
+      this.weight2 = clampAbs(weights.w2, limit);
+    }
+    if (this.biasOn) {
+      if (weights.b !== undefined && Number.isFinite(weights.b)) {
+        this.biasValue = clampAbs(weights.b, limit);
+      }
+    } else {
+      this.biasValue = 0;
+    }
+    this.startWeight1 = this.weight1;
+    this.startWeight2 = this.weight2;
+    this.startBias = this.biasValue;
+    this.currentPhase = 'idle';
+    this.epochCount = 0;
+    this.batchItems = [];
+    this.index = 0;
+    this.gradients = [];
+    this.meanGradient = null;
+    this.lastBallMove = null;
+    this.isDiverged = false;
   }
 
   reset(options: { startW1?: number; startW2?: number; startB?: number } = {}): void {
@@ -395,6 +469,28 @@ export class NeuronCore {
     return sum / this.examples.length;
   }
 
+  /**
+   * Evaluates the neuron on one input point. Uses the compiled target
+   * function (the default `x1 + x2` after an invalid expression), the current
+   * weights, the bias only when it is enabled, and the current loss kind
+   * (L1 = |ŷ − t|, L2 = 0.5·(ŷ − t)²). Pure: never throws for finite number
+   * inputs, never clamps, so a point outside the input domain stays valid.
+   * Non-finite results are returned as-is: target is NaN when the target
+   * function throws or returns a non-number; loss is NaN when the target is
+   * NaN and +Infinity when the target or the prediction is infinite.
+   */
+  evaluate(x1: number, x2: number): NeuronEvaluation {
+    const predicted = this.weight1 * x1 + this.weight2 * x2 + (this.biasOn ? this.biasValue : 0);
+    let target: number;
+    try {
+      const raw = this.targetFn(x1, x2);
+      target = typeof raw === 'number' ? raw : Number.NaN;
+    } catch {
+      target = Number.NaN;
+    }
+    return { x1, x2, predicted, target, loss: this.lossOf(predicted - target) };
+  }
+
   private advanceCoarse(learningRate: number): void {
     switch (this.currentPhase) {
       case 'idle':
@@ -481,8 +577,8 @@ export class NeuronCore {
     const rng = mulberry32(this.seed);
     const dataset: NeuronExample[] = [];
     for (let i = 0; i < this.count; i += 1) {
-      const x1 = rng() * 2 - 1;
-      const x2 = rng() * 2 - 1;
+      const x1 = (rng() * 2 - 1) * this.currentInputDomain;
+      const x2 = (rng() * 2 - 1) * this.currentInputDomain;
       try {
         const t = this.targetFn(x1, x2);
         if (typeof t === 'number' && Number.isFinite(t)) {
