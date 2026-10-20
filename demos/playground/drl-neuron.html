@@ -197,6 +197,19 @@
           </span>
           <p id="probe-hint" class="drl-hint">Saisissez x₁ et x₂ pour évaluer le neurone en ce point.</p>
         </div>
+        <div class="drl-row" role="radiogroup" aria-label="Surface de loss affichée">
+          <label>
+            <input id="surface-global" type="radio" name="surface" value="global" checked />
+            Loss globale
+          </label>
+          <label>
+            <input id="surface-test" type="radio" name="surface" value="test" disabled />
+            Loss du point de test
+          </label>
+        </div>
+        <p class="drl-hint">
+          Cliquez sur la carte pour placer le point de test ; la surface 3D suit ce point.
+        </p>
         <div class="sliders">
           <drl-slider
             id="lr"
@@ -301,6 +314,23 @@
       const probeY = document.getElementById('probe-y');
       const probeLoss = document.getElementById('probe-loss');
       const probeHint = document.getElementById('probe-hint');
+      const surfaceGlobal = document.getElementById('surface-global');
+      const surfaceTest = document.getElementById('surface-test');
+      // True while a drl-test-point handler runs, so refreshProbe does not echo
+      // the event back into the component in a loop.
+      let applyingTestPoint = false;
+
+      // The radios mirror the component's `surface` property, the single source
+      // of truth for the displayed landscape.
+      function syncSurfaceRadios() {
+        const value = demo?.surface === 'test' ? 'test' : 'global';
+        if (surfaceGlobal !== null) {
+          surfaceGlobal.checked = value === 'global';
+        }
+        if (surfaceTest !== null) {
+          surfaceTest.checked = value === 'test';
+        }
+      }
 
       function bind(id, apply) {
         const slider = document.getElementById(id);
@@ -449,6 +479,37 @@
 
       demo?.addEventListener('drl-weights', refreshProbe);
 
+      // A click on the map sets the test point and activates the test surface.
+      // The component may dispatch drl-test-point synchronously; the flag keeps
+      // the nested refreshProbe from calling setTestPoint again and looping.
+      demo?.addEventListener('drl-test-point', (event) => {
+        const detail = event.detail;
+        applyingTestPoint = true;
+        try {
+          // Only rewrite a field when its text no longer represents the same
+          // number. Writing unconditionally turns "-0" into "0" and "1." into "1".
+          if (
+            probeX1Input !== null &&
+            (probeX1Input.value.trim() === '' || Number(probeX1Input.value) !== detail.x1)
+          ) {
+            probeX1Input.value = String(detail.x1);
+          }
+          if (
+            probeX2Input !== null &&
+            (probeX2Input.value.trim() === '' || Number(probeX2Input.value) !== detail.x2)
+          ) {
+            probeX2Input.value = String(detail.x2);
+          }
+          if (surfaceTest !== null) {
+            surfaceTest.disabled = false;
+          }
+          syncSurfaceRadios();
+          refreshProbe();
+        } finally {
+          applyingTestPoint = false;
+        }
+      });
+
       demo?.addEventListener('drl-diverged', (event) => {
         // A halt replaces any pending divergence notice.
         clearTimeout(divergenceTimer);
@@ -511,6 +572,12 @@
           }
           return;
         }
+        // The component keeps its test point in step with the probe inputs. It
+        // returns early for an unchanged point, so no event and no loop. The
+        // flag skips the call when the value came from a drl-test-point event.
+        if (!applyingTestPoint) {
+          demo.setTestPoint(x1, x2);
+        }
         const result = demo.evaluate(x1, x2);
         if (probeY !== null) {
           probeY.textContent = formatProbe(result.predicted);
@@ -542,6 +609,13 @@
       probeX1Input?.addEventListener('input', refreshProbe);
       probeX2Input?.addEventListener('input', refreshProbe);
 
+      surfaceGlobal?.addEventListener('change', () => {
+        demo?.setSurface('global');
+      });
+      surfaceTest?.addEventListener('change', () => {
+        demo?.setSurface('test');
+      });
+
       if (demo !== null) {
         if (expressionInput !== null) {
           expressionInput.value = demo.expression;
@@ -567,6 +641,12 @@
         if (weightDomainSliderStart !== null) {
           weightDomainSliderStart.value = demo.effectiveWeightDomain;
         }
+        // Global by default: enable the test radio only when the component
+        // already shows the test surface.
+        if (surfaceTest !== null) {
+          surfaceTest.disabled = demo.surface !== 'test';
+        }
+        syncSurfaceRadios();
       }
     </script>
   </body>

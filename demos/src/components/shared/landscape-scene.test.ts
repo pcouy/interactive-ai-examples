@@ -10,6 +10,7 @@ import {
   interpolateHeight,
   normalizeHeight,
   sampleGridHeights,
+  sampleHeightField,
   sampleHeightRange,
   sanitizeHeightScale,
 } from './landscape-scene.js';
@@ -224,6 +225,47 @@ describe('sampleGridHeights', () => {
   it('returns one sample per grid vertex', () => {
     const samples = sampleGridHeights(() => 0, 3, 2);
     expect(samples).toHaveLength(16);
+  });
+});
+
+describe('sampleHeightField', () => {
+  it('normalizes each field against its own range', () => {
+    const a = sampleHeightField((w1: number) => w1, 2, 1, 2);
+    const b = sampleHeightField((w1: number) => 2 * w1, 2, 1, 2);
+    expect(a.min).toBeCloseTo(-1, 12);
+    expect(a.span).toBeCloseTo(2, 12);
+    expect(b.min).toBeCloseTo(-2, 12);
+    expect(b.span).toBeCloseTo(4, 12);
+    // Different raw ranges, the same normalized scene values.
+    expect(Array.from(a.scene)).toEqual(Array.from(b.scene));
+    expect(a.scene[0]).toBeCloseTo(0, 12);
+    expect(a.scene[8]).toBeCloseTo(2, 12);
+  });
+
+  it('returns zeros for a flat field', () => {
+    const field = sampleHeightField(() => 7, 2, 1, 2);
+    expect(field.min).toBe(7);
+    expect(field.span).toBe(0);
+    expect(field.scene).toEqual([0, 0, 0, 0, 0, 0, 0, 0, 0]);
+  });
+
+  it('clamps non-finite samples to the finite range', () => {
+    const field = sampleHeightField(
+      (w1: number) => (w1 > 0 ? Number.POSITIVE_INFINITY : w1),
+      2,
+      1,
+      2,
+    );
+    // The finite range is [-1, 0]; the +Infinity corner clamps to the top.
+    expect(field.min).toBeCloseTo(-1, 12);
+    expect(field.span).toBeCloseTo(1, 12);
+    expect(field.scene[0]).toBeCloseTo(0, 12);
+    expect(field.scene[8]).toBeCloseTo(2, 12);
+  });
+
+  it('honours the explicit scale', () => {
+    const field = sampleHeightField((w1: number) => w1, 2, 1, 5);
+    expect(field.scene[8]).toBeCloseTo(5, 12);
   });
 });
 

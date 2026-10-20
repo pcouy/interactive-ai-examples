@@ -15,6 +15,23 @@ type ThreeLineBasicMaterial = InstanceType<ThreeModule['LineBasicMaterial']>;
 export const DEFAULT_HEIGHT_SCALE = 1.5;
 const LANDSCAPE_RES = 70;
 
+/** Which cached height field the mesh, the ball, and the trail follow. */
+export type HeightFieldKind = 'global' | 'test';
+
+/**
+ * One cached height field: the live function plus the sampled and normalized
+ * data the mesh and the ball read. `domain` is the extent the samples cover,
+ * so each field keeps its own extent when the active field switches.
+ */
+interface HeightField {
+  fn: (w1: number, w2: number) => number;
+  raw: Float64Array;
+  min: number;
+  span: number;
+  scene: number[];
+  domain: number;
+}
+
 /** Camera orbit radius floor so the ball stays in frame even for a flat scene. */
 const MIN_CAMERA_RADIUS = 10;
 /**
@@ -260,6 +277,24 @@ export function sampleHeightRange(
 }
 
 /**
+ * Samples `heightFn` over the (res+1)² grid covering [-domain, domain], reduces
+ * the samples to a { min, span } range, and normalizes them to scene units.
+ * Shared by setHeightField and setTestHeightField so both cached fields use
+ * the same sampling and normalization path. Exported for testing.
+ */
+export function sampleHeightField(
+  heightFn: (w1: number, w2: number) => number,
+  res: number,
+  domain: number,
+  scale: number = DEFAULT_HEIGHT_SCALE,
+): { raw: Float64Array; min: number; span: number; scene: number[] } {
+  const raw = sampleGridHeights(heightFn, res, domain);
+  const { min, span } = heightRangeFromSamples(raw);
+  const scene = applyHeightScale(raw, min, span, scale);
+  return { raw, min, span, scene };
+}
+
+/**
  * Camera orbit radius for a landscape of the given extent and height scale.
  * The domain floor keeps the whole grid in view; the scale floor keeps taller
  * terrain in view. Exported for testing.
@@ -287,6 +322,8 @@ export interface LandscapeScene {
   camera: import('three').Camera;
   renderer: import('three').WebGLRenderer;
   setHeightField(heightFn: (w1: number, w2: number) => number, domain: number): void;
+  setTestHeightField(heightFn: (w1: number, w2: number) => number, domain: number): void;
+  setActiveHeightField(field: HeightFieldKind): void;
   setHeightScale(scale: number): void;
   moveBall(w1: number, w2: number): void;
   tweenBall(to: { w1: number; w2: number }, onDone?: () => void): void;
@@ -325,17 +362,15 @@ export async function createLandscapeScene(canvas: HTMLCanvasElement): Promise<L
   const accent = readColor(three, canvas, '--drl-accent', drlTokenValues.accent);
   const target = new three.Vector3(0, DEFAULT_HEIGHT_SCALE / 2, 0);
 
-  let heightFn: (w1: number, w2: number) => number = () => 0;
-  let gridMin = 0;
-  let gridSpan = 1;
-  let domain = DEFAULT_DOMAIN;
+  // Two cached height fields. The mesh, the ball, and the trail follow the
+  // active one; the inactive one keeps its samples so switching back is cheap.
+  let globalField: HeightField | null = null;
+  let testField: HeightField | null = null;
+  let activeField: HeightFieldKind = 'global';
+  // The domain the camera was last fit to. refreshActive refits only when the
+  // active field's domain differs from this value.
+  let cameraDomain = DEFAULT_DOMAIN;
   let heightScale = DEFAULT_HEIGHT_SCALE;
-  // Raw samples of the current field, reused when only the scale changes.
-  let gridRawHeights: Float64Array | null = null;
-  // The same samples already normalized to scene units. heightAt and
-  // buildLandscape read this cache so the ball and the trail sit exactly on
-  // the displayed mesh, even when a sample is non-finite.
-  let gridSceneHeights: number[] | null = null;
   let radius = cameraRadius(DEFAULT_DOMAIN, heightScale);
   let theta = CAMERA_THETA;
   let phi = CAMERA_PHI;
@@ -360,16 +395,28 @@ export async function createLandscapeScene(canvas: HTMLCanvasElement): Promise<L
 
   let disposed = false;
 
+  function activeFieldObject(): HeightField | null {
+    return activeField === 'test' ? testField : globalField;
+  }
+
+  function activeDomain(): number {
+    return activeFieldObject()?.domain ?? DEFAULT_DOMAIN;
+  }
+
   function heightAt(w1: number, w2: number): number {
+    const field = activeFieldObject();
+    if (!field) {
+      return 0;
+    }
     // Prefer the cached normalized samples so the ball and the trail stay on
     // the mesh that is currently displayed. Between rebuilds the live field may
     // change (the core's bias moves) while the mesh stays cached, which would
     // otherwise leave the ball floating or sunk into the surface. The samples
     // are already normalized, so no second normalizeHeight call is needed.
-    if (gridSceneHeights && Math.abs(w1) <= domain && Math.abs(w2) <= domain) {
-      return interpolateHeight(gridSceneHeights, LANDSCAPE_RES, domain, w1, w2);
+    if (Math.abs(w1) <= field.domain && Math.abs(w2) <= field.domain) {
+      return interpolateHeight(field.scene, LANDSCAPE_RES, field.domain, w1, w2);
     }
-    return normalizeHeight(heightFn(w1, w2), gridMin, gridSpan, heightScale);
+    return normalizeHeight(field.fn(w1, w2), field.min, field.span, heightScale);
   }
 
   function buildLandscape(): void {
@@ -384,23 +431,22 @@ export async function createLandscapeScene(canvas: HTMLCanvasElement): Promise<L
     const positions = new Float32Array(count * 3);
     const colors = new Float32Array(count * 3);
 
-    // Scene heights reuse the cached normalized samples so a scale change never
-    // re-evaluates the loss function. Before the first setHeightField the cache
-    // is null and the live field is evaluated per vertex.
-    const heights = gridSceneHeights;
+    // Scene heights reuse the active field's cached normalized samples so a
+    // scale change never re-evaluates the loss function. With no field the mesh
+    // is a flat plane of zeros.
+    const field = activeFieldObject();
+    const heights = field ? field.scene : null;
+    const fieldDomain = field ? field.domain : DEFAULT_DOMAIN;
 
     const low = accent.clone().lerp(new three.Color(0xffffff), 0.85);
     const high = accent.clone().multiplyScalar(0.35);
 
     let index = 0;
     for (let j = 0; j <= res; j += 1) {
-      const b = -domain + (2 * domain * j) / res;
+      const b = -fieldDomain + (2 * fieldDomain * j) / res;
       for (let i = 0; i <= res; i += 1) {
-        const a = -domain + (2 * domain * i) / res;
-        const height =
-          heights === null
-            ? normalizeHeight(heightFn(a, b), gridMin, gridSpan, heightScale)
-            : heights[index];
+        const a = -fieldDomain + (2 * fieldDomain * i) / res;
+        const height = heights === null ? 0 : heights[index];
         positions[index * 3] = a;
         positions[index * 3 + 1] = height;
         positions[index * 3 + 2] = b;
@@ -477,8 +523,9 @@ export async function createLandscapeScene(canvas: HTMLCanvasElement): Promise<L
 
   /**
    * Rewrites the trail vertex positions from `trailPoints` using the current
-   * `heightAt`. Shared by pushTrail and setHeightField so a height-field change
-   * keeps the existing trail on the new surface.
+   * `heightAt`. Shared by every path that changes the surface (pushTrail,
+   * refreshActive, setHeightScale), so a height-field or scale change keeps the
+   * existing trail on the new surface.
    */
   function writeTrailPositions(): void {
     const positions = trailPositions;
@@ -565,24 +612,19 @@ export async function createLandscapeScene(canvas: HTMLCanvasElement): Promise<L
     renderer.render(scene, camera);
   }
 
-  function setHeightField(fn: (w1: number, w2: number) => number, newDomain: number): void {
-    const previousDomain = domain;
-    heightFn = fn;
-    domain = newDomain;
-    // Sample once and cache the raw values: buildLandscape and setHeightScale
-    // both read them, so the loss function is not evaluated per vertex.
-    const samples = sampleGridHeights(fn, LANDSCAPE_RES, domain);
-    gridRawHeights = samples;
-    const { min, span } = heightRangeFromSamples(samples);
-    gridMin = min;
-    gridSpan = span;
-    // Normalize once so heightAt and buildLandscape read the same scene heights.
-    gridSceneHeights = applyHeightScale(samples, gridMin, gridSpan, heightScale);
+  /**
+   * Rebuilds the mesh from the active field, refits the camera only when the
+   * domain changed, and keeps the ball and the trail on the new surface. Shared
+   * by every path that changes the displayed field.
+   */
+  function refreshActive(): void {
     buildLandscape();
     // Fit the camera to the domain only when it changes. Rebuilding the same
     // surface must keep the radius the user picked with the wheel.
-    if (newDomain !== previousDomain) {
-      radius = cameraRadius(domain, heightScale);
+    const currentDomain = activeDomain();
+    if (currentDomain !== cameraDomain) {
+      radius = cameraRadius(currentDomain, heightScale);
+      cameraDomain = currentDomain;
     }
     updateCamera();
     // The surface changed: keep the ball and the existing trail on the new one.
@@ -591,10 +633,46 @@ export async function createLandscapeScene(canvas: HTMLCanvasElement): Promise<L
     render();
   }
 
+  function setHeightField(fn: (w1: number, w2: number) => number, newDomain: number): void {
+    globalField = {
+      fn,
+      ...sampleHeightField(fn, LANDSCAPE_RES, newDomain, heightScale),
+      domain: newDomain,
+    };
+    if (activeField === 'global') {
+      refreshActive();
+    }
+  }
+
+  function setTestHeightField(fn: (w1: number, w2: number) => number, newDomain: number): void {
+    testField = {
+      fn,
+      ...sampleHeightField(fn, LANDSCAPE_RES, newDomain, heightScale),
+      domain: newDomain,
+    };
+    if (activeField === 'test') {
+      refreshActive();
+    }
+  }
+
+  function setActiveHeightField(field: HeightFieldKind): void {
+    if (field === activeField) {
+      return;
+    }
+    activeField = field;
+    const active = activeFieldObject();
+    if (active) {
+      // The newly active field was sampled at an earlier scale; re-normalize it
+      // at the current heightScale so the switch keeps the same exaggeration.
+      active.scene = applyHeightScale(active.raw, active.min, active.span, heightScale);
+    }
+    refreshActive();
+  }
+
   /**
    * Changes the vertical exaggeration without re-evaluating the loss function.
-   * The cached raw samples are re-normalized, so the geometry, the ball, and
-   * the trail all move to the new surface in one pass.
+   * The active field's cached raw samples are re-normalized, so the geometry,
+   * the ball, and the trail all move to the new surface in one pass.
    */
   function setHeightScale(scale: number): void {
     const previousScale = heightScale;
@@ -606,13 +684,15 @@ export async function createLandscapeScene(canvas: HTMLCanvasElement): Promise<L
     // Keep the pan offset relative to the surface: the target only moves by
     // the change in surface height, instead of snapping back to the centre.
     target.y += (heightScale - previousScale) / 2;
-    // Refresh the cached normalized samples so the rebuild uses the new scale.
-    if (gridRawHeights) {
-      gridSceneHeights = applyHeightScale(gridRawHeights, gridMin, gridSpan, heightScale);
+    // Re-normalize only the active field; the inactive field keeps its raw
+    // samples and is re-normalized when it becomes active.
+    const field = activeFieldObject();
+    if (field) {
+      field.scene = applyHeightScale(field.raw, field.min, field.span, heightScale);
     }
     buildLandscape();
     // Never zoom in: a taller surface needs at least as much room.
-    radius = Math.max(radius, cameraRadius(domain, heightScale));
+    radius = Math.max(radius, cameraRadius(activeDomain(), heightScale));
     updateCamera();
     moveBall(ballW1, ballW2);
     writeTrailPositions();
@@ -715,6 +795,8 @@ export async function createLandscapeScene(canvas: HTMLCanvasElement): Promise<L
     camera,
     renderer,
     setHeightField,
+    setTestHeightField,
+    setActiveHeightField,
     setHeightScale,
     moveBall,
     tweenBall,
