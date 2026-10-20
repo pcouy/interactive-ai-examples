@@ -105,6 +105,8 @@ export interface VisitEvent<S> {
   readonly kind: VisitKind;
   readonly window?: SearchWindow;
   readonly cut?: CutInfo;
+  /** Profondeur certifiée de l'entrée de table consommée (tt-hit seulement). */
+  readonly entryDepth?: number;
 }
 
 export interface ValueEvent {
@@ -114,6 +116,8 @@ export interface ValueEvent {
   readonly exact: boolean;
   readonly window?: SearchWindow;
   readonly cut?: CutInfo;
+  /** Profondeur certifiée de l'entrée de table consommée (tt-hit seulement). */
+  readonly entryDepth?: number;
 }
 
 export interface TreeRecorder<S> {

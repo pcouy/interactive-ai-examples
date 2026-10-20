@@ -1045,10 +1045,11 @@ export function createGameComponent<S, M>(
             ${this.tt.currentTurn()} · un nœud déjà développé plus profondément
             (profondeur certifiée stockée strictement supérieure à la profondeur
             requise) est réutilisé, y compris depuis un tour antérieur. À
-            profondeur égale, le nœud est redéveloppé ; seule exception, une
-            feuille rollout rencontrée à profondeur 0 voit sa moyenne stockée
-            étendue de nouveaux échantillons (samples). L'agent rejoué
-            (probeTurns previous) ignore les entrées du tour courant.
+            profondeur égale, le nœud n'est réutilisable que s'il porte le tour
+            courant, sinon il est redéveloppé ; seule exception, une feuille
+            rollout rencontrée à profondeur 0 voit sa moyenne stockée étendue de
+            nouveaux échantillons (samples). L'option probeTurns: 'previous'
+            existe pour refuser en plus les entrées du tour courant.
           </p>
           <label class="drl-tt-filter">
             <span>Filtrer par clé</span>

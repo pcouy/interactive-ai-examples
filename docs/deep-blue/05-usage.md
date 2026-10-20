@@ -269,8 +269,11 @@ qui augmente la profondeur effective. Seule exception : la feuille rollout à
 profondeur 0 (cache-feuille), qui étend la moyenne mémorisée et met à jour
 `samples`.
 `currentTurn` sert donc à la fois à cette clause de profondeur égale et à
-`probeTurns: 'previous'`, où l'agent rejoué refuse en plus les entrées du tour
-courant.
+l'option `probeTurns: 'previous'`, disponible pour un agent qui refuserait en
+plus les entrées du tour courant. Le rejoué Deep Blue n'utilise pas cette
+option : il applique la politique par défaut `'all'`, lit la table partagée en
+lecture seule (`createReadOnlyOverlay`) et écrit ses propres entrées dans une
+table temporaire privée, si bien que la table réelle n'est jamais polluée.
 
 ### 3.5 Instrumenter une recherche : `TreeModel` et `createStepper`
 

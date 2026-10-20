@@ -76,6 +76,68 @@ export function createTranspositionTable(): TranspositionTable {
   };
 }
 
+/**
+ * Table de transposition en lecture seule par-dessus une table réelle.
+ * WHY: le rejoué dans l'arbre doit montrer exactement la recherche qui a mené
+ * au dernier coup, sans jamais polluer la table partagée. Il écrit donc ses
+ * propres entrées dans une table temporaire privée ; la table réelle n'est lue
+ * qu'en lecture.
+ * - `store` n'écrit que dans la table temporaire ;
+ * - `probe` renvoie d'abord la table temporaire, sinon l'entrée réelle avec
+ *   `turn: -1`, si bien qu'une entrée réelle à profondeur égale n'est jamais
+ *   traitée comme du tour courant (seule une entrée strictement plus profonde
+ *   reste consommable) ;
+ * - `currentTurn` / `beginTurn` / `clear` ne pilotent que la table temporaire.
+ */
+export function createReadOnlyOverlay(real: TranspositionTable): TranspositionTable {
+  const temp = createTranspositionTable();
+  return {
+    store(key: string, entry: TranspositionEntry): void {
+      temp.store(key, entry);
+    },
+    probe(key: string): ProbedEntry | null {
+      const own = temp.probe(key);
+      if (own !== null) {
+        return own;
+      }
+      const fromReal = real.probe(key);
+      if (fromReal === null) {
+        return null;
+      }
+      return { ...fromReal, turn: -1 };
+    },
+    snapshot(): readonly TranspositionSnapshotEntry[] {
+      const merged = new Map<string, TranspositionSnapshotEntry>();
+      for (const entry of real.snapshot()) {
+        merged.set(entry.key, { ...entry, turn: -1 });
+      }
+      for (const entry of temp.snapshot()) {
+        merged.set(entry.key, entry);
+      }
+      return [...merged.values()].sort((a, b) => (a.key < b.key ? -1 : a.key > b.key ? 1 : 0));
+    },
+    beginTurn(): void {
+      temp.beginTurn();
+    },
+    currentTurn(): number {
+      return temp.currentTurn();
+    },
+    clear(): void {
+      temp.clear();
+    },
+    size(): number {
+      const keys = new Set<string>();
+      for (const entry of temp.snapshot()) {
+        keys.add(entry.key);
+      }
+      for (const entry of real.snapshot()) {
+        keys.add(entry.key);
+      }
+      return keys.size;
+    },
+  };
+}
+
 export function isEntryUsable(
   entry: ProbedEntry,
   remainingDepth: number,
