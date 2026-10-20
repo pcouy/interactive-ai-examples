@@ -1313,6 +1313,13 @@ describe('configuration validation', () => {
     );
   });
 
+  it('accepts the maximum hidden dense size', async () => {
+    const trainer = await makeTrainer(SMALL_FILTERS, { denseSizes: [128] });
+    const weights = await trainer.exportWeights();
+    expect(weights.dense[0].bias.length).toBe(128);
+    expect(weights.dense[1].bias.length).toBe(10);
+  });
+
   it('rejects invalid learning rate, batch size and seed', async () => {
     await expect(makeTrainer(SMALL_FILTERS, { learningRate: 0 })).rejects.toThrow(/learning rate/i);
     await expect(makeTrainer(SMALL_FILTERS, { batchSize: 0 })).rejects.toThrow(/batch size/i);

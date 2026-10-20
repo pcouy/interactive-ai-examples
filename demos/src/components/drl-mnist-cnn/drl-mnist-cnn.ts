@@ -442,6 +442,16 @@ export function denseSizeLabel(layer: number): string {
   return `Unités de la couche dense ${layer + 1}`;
 }
 
+/** Borne une largeur de couche dense cachée dans les limites du modèle. */
+export function clampDenseSize(value: number): number {
+  return clamp(Math.round(value), MIN_HIDDEN_DENSE_SIZE, MAX_HIDDEN_DENSE_SIZE);
+}
+
+/** Vrai si les largeurs correspondent à la couche cachée de référence (8 unités). */
+export function isReferenceDenseSizes(denseSizes: readonly number[]): boolean {
+  return denseSizes[0] === HIDDEN_DENSE_SIZE;
+}
+
 /** Libellé accessible d'une unité cachée. */
 export function denseCellLabel(unit: number, value: number): string {
   return `unité ${unit + 1} : ${formatValue(value, 3)}`;
@@ -1537,7 +1547,7 @@ export class MnistCnn extends LitElement {
       this.activation === 'sigmoid' &&
       this.convLayers === DEFAULT_CONV_LAYERS &&
       this.denseLayers === DEFAULT_DENSE_LAYERS &&
-      this.denseSizes[0] === HIDDEN_DENSE_SIZE &&
+      isReferenceDenseSizes(this.denseSizes) &&
       this.pretrainedAssets !== null &&
       sameFilters(this.pretrainedAssets.config.filters, this.filterCounts)
     );
@@ -1982,7 +1992,7 @@ export class MnistCnn extends LitElement {
     if (layer < 0 || layer >= this.denseLayers - 1) {
       return;
     }
-    const size = clamp(Math.round(value), MIN_HIDDEN_DENSE_SIZE, MAX_HIDDEN_DENSE_SIZE);
+    const size = clampDenseSize(value);
     if (size === this.denseSizes[layer]) {
       return;
     }

@@ -12,6 +12,7 @@ import {
   applyWeightEditorEvent,
   argmaxIndex,
   brushStrength,
+  clampDenseSize,
   convLayerGeometry,
   denseCellLabel,
   denseLayerTitle,
@@ -27,6 +28,7 @@ import {
   filterLinkGeometry,
   filterViewMode,
   hexToRgb,
+  isReferenceDenseSizes,
   linkCanvasSelectors,
   linkGroupIndices,
   linkLineState,
@@ -299,6 +301,21 @@ describe('dense size labels', () => {
   it('shows the chosen width in the layer title', () => {
     expect(denseLayerTitle(0, 3, 7)).toBe('Dense 1 — 7 unités');
     expect(denseLayerTitle(2, 3, 10)).toBe('Sortie — 10 classes');
+  });
+});
+
+describe('dense size bounds', () => {
+  it('clamps and rounds a hidden width', () => {
+    expect(clampDenseSize(0)).toBe(1);
+    expect(clampDenseSize(129)).toBe(128);
+    expect(clampDenseSize(7.6)).toBe(8);
+    expect(clampDenseSize(32)).toBe(32);
+  });
+
+  it('recognises the reference hidden width only', () => {
+    expect(isReferenceDenseSizes([8, 7])).toBe(true);
+    expect(isReferenceDenseSizes([9, 8])).toBe(false);
+    expect(isReferenceDenseSizes([128])).toBe(false);
   });
 });
 

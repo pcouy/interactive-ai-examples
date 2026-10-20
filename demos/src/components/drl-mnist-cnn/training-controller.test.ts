@@ -54,7 +54,6 @@ function makeRequest(overrides: Partial<MnistRunRequest> = {}): MnistRunRequest 
     trainPercent: 10,
     validationPercent: 10,
     initialWeights: makeWeights(1),
-    denseSizes: overrides.denseSizes,
     ...overrides,
   };
 }
