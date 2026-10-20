@@ -35,12 +35,8 @@ function makeWeights(tag: number): MnistCnnWeights {
     bias: new Float32Array(biasLength).fill(tag),
   });
   return {
-    conv1: layer(9, 1),
-    conv2: layer(9, 1),
-    conv3: layer(9, 1),
-    conv4: layer(9, 1),
-    dense1: layer(200, 8),
-    dense2: layer(80, 10),
+    conv: [layer(9, 1), layer(9, 1), layer(9, 1), layer(9, 1)],
+    dense: [layer(200, 8), layer(80, 10)],
   };
 }
 
@@ -51,6 +47,8 @@ function makeRequest(overrides: Partial<MnistRunRequest> = {}): MnistRunRequest 
     learningRate: 0.003,
     batchSize: 64,
     activation: 'sigmoid',
+    convLayers: 4,
+    denseLayers: 2,
     seed: 42,
     epochs: 1,
     trainPercent: 10,
@@ -327,6 +325,14 @@ describe('MnistTrainingController.startRun', () => {
     const controller = new MnistTrainingController(ports);
     await controller.startRun(makeRequest());
     expect(ports.lastTrainerConfig?.activation).toBe('sigmoid');
+  });
+
+  it('forwards the architecture depth to the trainer', async () => {
+    const ports = new FakePorts();
+    const controller = new MnistTrainingController(ports);
+    await controller.startRun(makeRequest({ convLayers: 2, denseLayers: 3 }));
+    expect(ports.lastTrainerConfig?.convLayers).toBe(2);
+    expect(ports.lastTrainerConfig?.denseLayers).toBe(3);
   });
 
   it('reports counts after selection with the requested fractions', async () => {

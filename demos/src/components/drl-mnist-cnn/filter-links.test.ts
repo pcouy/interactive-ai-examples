@@ -40,10 +40,34 @@ describe('enumerateLinks', () => {
     expect(links[19]).toEqual({ boundary: 3, inputChannel: 2, outputChannel: 3 });
   });
 
+  it('enumerates no link without an active convolution layer', () => {
+    expect(enumerateLinks([3, 3, 3, 3], 0)).toEqual([]);
+  });
+
+  it('enumerates no link with a single active convolution layer', () => {
+    expect(enumerateLinks([3, 3, 3, 3], 1)).toEqual([]);
+  });
+
+  it('stops at the active layer count', () => {
+    const links = enumerateLinks([1, 2, 3, 4], 3);
+    expect(links).toHaveLength(8);
+    expect(links.filter((link) => link.boundary === 1)).toHaveLength(2);
+    expect(links.filter((link) => link.boundary === 2)).toHaveLength(6);
+    expect(links.some((link) => link.boundary === 3)).toBe(false);
+    expect(links[0]).toEqual({ boundary: 1, inputChannel: 0, outputChannel: 0 });
+    expect(links[7]).toEqual({ boundary: 2, inputChannel: 1, outputChannel: 2 });
+  });
+
   it('rejects an invalid filter tuple', () => {
     expect(() => enumerateLinks([0, 3, 3, 3] as MnistCnnFilters)).toThrow(RangeError);
     expect(() => enumerateLinks([3, 3, 3, 5] as MnistCnnFilters)).toThrow(RangeError);
     expect(() => enumerateLinks([3, 3, 3] as unknown as MnistCnnFilters)).toThrow(RangeError);
+  });
+
+  it('rejects an invalid active layer count', () => {
+    expect(() => enumerateLinks([3, 3, 3, 3], 5)).toThrow(RangeError);
+    expect(() => enumerateLinks([3, 3, 3, 3], -1)).toThrow(RangeError);
+    expect(() => enumerateLinks([3, 3, 3, 3], 1.5)).toThrow(RangeError);
   });
 });
 

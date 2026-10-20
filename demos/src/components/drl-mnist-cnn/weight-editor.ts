@@ -10,7 +10,7 @@
  */
 
 import {
-  type MnistCnnFilters,
+  type MnistCnnConfig,
   type MnistCnnWeights,
   withKernelWeight,
 } from '../../core/mnist-cnn.js';
@@ -80,16 +80,16 @@ export function formatWeightValue(value: number): string {
 export function weightEditorView(
   selection: WeightSelection,
   weights: MnistCnnWeights,
-  filters: MnistCnnFilters,
+  config: MnistCnnConfig,
 ): WeightEditorView | null {
   if (selection === null || selection.kind !== 'weight') {
     return null;
   }
-  const label = describeWeightSelection(selection, filters);
+  const label = describeWeightSelection(selection, config);
   if (label === null) {
     return null;
   }
-  const value = selectedWeightValue(weights, selection);
+  const value = selectedWeightValue(selection, weights, config);
   if (value === null || !Number.isFinite(value)) {
     return null;
   }
@@ -113,12 +113,12 @@ export function applyWeightDraft(
   draft: string,
   selection: WeightSelection,
   weights: MnistCnnWeights,
-  filters: MnistCnnFilters,
+  config: MnistCnnConfig,
 ): WeightApplyResult {
   if (selection === null || selection.kind !== 'weight') {
     return { kind: 'error', message: "La sélection courante n'est pas un poids." };
   }
-  if (describeWeightSelection(selection, filters) === null) {
+  if (describeWeightSelection(selection, config) === null) {
     return { kind: 'error', message: "Ce poids n'existe pas dans l'architecture courante." };
   }
   const text = draft.trim();
@@ -139,7 +139,7 @@ export function applyWeightDraft(
   try {
     const applied = withKernelWeight(
       weights,
-      filters,
+      config,
       selection.boundary,
       selection.inputChannel,
       selection.outputChannel,

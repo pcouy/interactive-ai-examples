@@ -1,10 +1,13 @@
 /**
  * Adaptateur d'entraînement TensorFlow.js du CNN MNIST de référence décrit
- * dans `tf-playground/mnist/train.py` : quatre convolutions 3×3 suivies de la
- * fonction d'activation choisie (sigmoïde par défaut, `tanh` possible ; pas
- * 1, 2, 1, 2 ; remplissage zéro symétrique de 1 sur la deuxième seulement),
- * dropout 0.2, aplatissement, dense 8 + la même fonction, puis dix logits.
- * Perte d'entropie croisée softmax, optimiseur Adam au pas 3e-3.
+ * dans `tf-playground/mnist/train.py`. Le nombre de couches est paramétrable :
+ * 0 à 4 convolutions 3×3 suivies de la fonction d'activation choisie
+ * (sigmoïde par défaut, `tanh` possible ; pas et remplissage tirés de
+ * `CONV_SCHEDULES`), puis dropout 0.2, aplatissement, puis 1 à 3 couches
+ * denses (8 unités pour chaque couche cachée, la dernière donnant dix logits).
+ * L'architecture par défaut reste celle de référence : quatre convolutions et
+ * deux couches denses. Perte d'entropie croisée softmax, optimiseur Adam au
+ * pas 3e-3.
  *
  * Ce module n'importe ni TensorFlow.js ni le DOM au niveau statique : seul
  * `@tensorflow/tfjs` est importé dynamiquement, par `createMnistCnnTfjsTrainer`.
@@ -85,6 +88,10 @@ export interface MnistCnnTrainingConfig {
   readonly batchSize: number;
   /** Fonction d'activation des convolutions et de la couche dense cachée. */
   readonly activation: MnistCnnActivation;
+  /** Nombre de couches de convolution, de 0 à 4. */
+  readonly convLayers: number;
+  /** Nombre de couches denses, sortie comprise, de 1 à 3. */
+  readonly denseLayers: number;
   /** Graine optionnelle : même graine et même configuration donnent les mêmes poids. */
   readonly seed?: number;
 }
@@ -230,6 +237,24 @@ function assertConfig(config: MnistCnnTrainingConfig, core: CoreModule): void {
     throw new TypeError('MNIST TFJS training config is required.');
   }
   core.validateFilterCounts(config.filters);
+  if (
+    !Number.isInteger(config.convLayers) ||
+    config.convLayers < 0 ||
+    config.convLayers > core.MAX_CONV_LAYERS
+  ) {
+    throw new RangeError(
+      `MNIST TFJS convLayers must be an integer from 0 to ${core.MAX_CONV_LAYERS}, received ${String(config.convLayers)}.`,
+    );
+  }
+  if (
+    !Number.isInteger(config.denseLayers) ||
+    config.denseLayers < 1 ||
+    config.denseLayers > core.MAX_DENSE_LAYERS
+  ) {
+    throw new RangeError(
+      `MNIST TFJS denseLayers must be an integer from 1 to ${core.MAX_DENSE_LAYERS}, received ${String(config.denseLayers)}.`,
+    );
+  }
   if (!Number.isFinite(config.learningRate) || config.learningRate <= 0) {
     throw new RangeError(
       `MNIST TFJS learning rate must be a positive finite number, received ${String(config.learningRate)}.`,
@@ -354,10 +379,15 @@ function readSourceBatch(
 }
 
 /**
- * Construit le modèle séquentiel de référence. Le remplissage zéro de conv2 est
- * posé explicitement avant la convolution : le mode `same` de TensorFlow.js
- * ajoute un remplissage asymétrique (0 en haut, 1 en bas) qui décalerait les
- * cartes par rapport au remplissage symétrique de PyTorch.
+ * Construit le modèle séquentiel. Le remplissage zéro est posé explicitement
+ * avant la convolution quand le `CONV_SCHEDULES` le demande : le mode `same` de
+ * TensorFlow.js ajoute un remplissage asymétrique (0 en haut, 1 en bas) qui
+ * décalerait les cartes par rapport au remplissage symétrique de PyTorch.
+ *
+ * La forme d'entrée n'est portée que par la première couche ajoutée : le
+ * remplissage ou la convolution qui commence la pile, sinon le dropout quand il
+ * n'y a aucune convolution. Les couches suivantes l'héritent de leur
+ * prédécesseur.
  */
 function buildModel(tf: TfModule, core: CoreModule, config: MnistCnnTrainingConfig): Sequential {
   const seed = config.seed ?? DEFAULT_TRAINING_SEED;
@@ -365,15 +395,15 @@ function buildModel(tf: TfModule, core: CoreModule, config: MnistCnnTrainingConf
   const biasInitializer = tf.initializers.zeros();
   const model = tf.sequential();
   let inputShape: number[] | undefined = [core.MNIST_INPUT_SIZE, core.MNIST_INPUT_SIZE, 1];
-  for (let index = 0; index < config.filters.length; index += 1) {
-    const stride = core.CONV_STRIDES[index];
-    const padding = core.CONV_PADDINGS[index];
-    if (padding > 0) {
+  const schedule = core.CONV_SCHEDULES[config.convLayers];
+  for (let index = 0; index < config.convLayers; index += 1) {
+    const spec = schedule[index];
+    if (spec.padding > 0) {
       model.add(
         tf.layers.zeroPadding2d({
           padding: [
-            [padding, padding],
-            [padding, padding],
+            [spec.padding, spec.padding],
+            [spec.padding, spec.padding],
           ],
           inputShape,
         }),
@@ -384,7 +414,7 @@ function buildModel(tf: TfModule, core: CoreModule, config: MnistCnnTrainingConf
       tf.layers.conv2d({
         filters: config.filters[index],
         kernelSize: core.CONV_KERNEL_SIZE,
-        strides: stride,
+        strides: spec.stride,
         padding: 'valid',
         activation: config.activation,
         kernelInitializer,
@@ -394,16 +424,19 @@ function buildModel(tf: TfModule, core: CoreModule, config: MnistCnnTrainingConf
     );
     inputShape = undefined;
   }
-  model.add(tf.layers.dropout({ rate: MNIST_DROPOUT_RATE, seed }));
+  model.add(tf.layers.dropout({ rate: MNIST_DROPOUT_RATE, seed, inputShape }));
   model.add(tf.layers.flatten());
-  model.add(
-    tf.layers.dense({
-      units: core.HIDDEN_DENSE_SIZE,
-      activation: config.activation,
-      kernelInitializer,
-      biasInitializer,
-    }),
-  );
+  const widths = core.denseLayerWidths(config.denseLayers);
+  for (let index = 0; index < config.denseLayers - 1; index += 1) {
+    model.add(
+      tf.layers.dense({
+        units: widths[index],
+        activation: config.activation,
+        kernelInitializer,
+        biasInitializer,
+      }),
+    );
+  }
   model.add(tf.layers.dense({ units: core.LOGIT_COUNT, kernelInitializer, biasInitializer }));
   return model;
 }
@@ -417,7 +450,7 @@ function buildModel(tf: TfModule, core: CoreModule, config: MnistCnnTrainingConf
  * donne donc exactement la disposition de référence, sans transposition. De
  * plus, le `flatten` TensorFlow.js d'un tenseur NHWC (canal le plus rapide)
  * produit le même ordre que l'aplatissement de `mnist-cnn.ts`, donc la ligne
- * `i` du noyau dense1 correspond à la caractéristique NHWC `i`.
+ * `i` du noyau d'une couche dense correspond à la caractéristique NHWC `i`.
  */
 function readLayerWeights(layer: TfLayer): MnistCnnLayerWeights {
   const [kernel, bias] = layer.getWeights();
@@ -427,64 +460,90 @@ function readLayerWeights(layer: TfLayer): MnistCnnLayerWeights {
   };
 }
 
-const WEIGHT_LAYER_NAMES = ['conv1', 'conv2', 'conv3', 'conv4', 'dense1', 'dense2'] as const;
-type WeightLayerName = (typeof WEIGHT_LAYER_NAMES)[number];
-
 interface WeightLayerShape {
   readonly kernel: number;
   readonly bias: number;
 }
 
-/** Longueurs attendues de chaque noyau et biais pour un tuple de filtres. */
-function weightLayerShapes(filters: MnistCnnFilters): Record<WeightLayerName, WeightLayerShape> {
-  const convShapes: WeightLayerShape[] = [];
+/** Formes attendues des couches de convolution et des couches denses. */
+interface WeightLayerShapes {
+  readonly conv: readonly WeightLayerShape[];
+  readonly dense: readonly WeightLayerShape[];
+}
+
+/**
+ * Longueurs attendues de chaque noyau et biais pour la configuration donnée :
+ * les pas et remplissages viennent de `CONV_SCHEDULES`, les largeurs denses de
+ * `denseLayerWidths`.
+ */
+function weightLayerShapes(core: CoreModule, config: MnistCnnTrainingConfig): WeightLayerShapes {
+  const schedule = core.CONV_SCHEDULES[config.convLayers];
+  const conv: WeightLayerShape[] = [];
   let inputSize = core.MNIST_INPUT_SIZE;
   let inputChannels = 1;
-  for (let layer = 0; layer < filters.length; layer += 1) {
-    const outputSize = core.convOutputLength(
-      inputSize,
-      core.CONV_STRIDES[layer],
-      core.CONV_PADDINGS[layer],
-    );
-    const outputChannels = filters[layer];
-    convShapes.push({
+  for (let layer = 0; layer < config.convLayers; layer += 1) {
+    const spec = schedule[layer];
+    const outputSize = core.convOutputLength(inputSize, spec.stride, spec.padding);
+    const outputChannels = config.filters[layer];
+    conv.push({
       kernel: core.CONV_KERNEL_SIZE * core.CONV_KERNEL_SIZE * inputChannels * outputChannels,
       bias: outputChannels,
     });
     inputSize = outputSize;
     inputChannels = outputChannels;
   }
-  const denseInputLength = inputSize * inputSize * inputChannels;
-  return {
-    conv1: convShapes[0],
-    conv2: convShapes[1],
-    conv3: convShapes[2],
-    conv4: convShapes[3],
-    dense1: { kernel: denseInputLength * core.HIDDEN_DENSE_SIZE, bias: core.HIDDEN_DENSE_SIZE },
-    dense2: { kernel: core.HIDDEN_DENSE_SIZE * core.LOGIT_COUNT, bias: core.LOGIT_COUNT },
-  };
+  const widths = core.denseLayerWidths(config.denseLayers);
+  let inputLength =
+    conv.length === 0 ? core.MNIST_INPUT_LENGTH : inputSize * inputSize * inputChannels;
+  const dense: WeightLayerShape[] = [];
+  for (let layer = 0; layer < config.denseLayers; layer += 1) {
+    const width = widths[layer];
+    dense.push({ kernel: inputLength * width, bias: width });
+    inputLength = width;
+  }
+  return { conv, dense };
 }
 
 /**
- * Rejette un jeu de poids qui ne correspond pas au tuple de filtres de la
- * configuration : longueurs de noyau ou de biais incorrectes, ou valeur non
- * finie. Les formes sont celles de `weightLayerShapes`.
+ * Rejette un jeu de poids qui ne correspond pas aux nombres de couches de la
+ * configuration : nombre de couches, longueurs de noyau ou de biais
+ * incorrectes, ou valeur non finie. Les formes sont celles de
+ * `weightLayerShapes`.
  */
-function assertWeightsForFilters(weights: MnistCnnWeights, filters: MnistCnnFilters): void {
-  const shapes = weightLayerShapes(filters);
-  const layers: ReadonlyArray<readonly [WeightLayerName, MnistCnnLayerWeights, WeightLayerShape]> =
-    [
-      ['conv1', weights.conv1, shapes.conv1],
-      ['conv2', weights.conv2, shapes.conv2],
-      ['conv3', weights.conv3, shapes.conv3],
-      ['conv4', weights.conv4, shapes.conv4],
-      ['dense1', weights.dense1, shapes.dense1],
-      ['dense2', weights.dense2, shapes.dense2],
-    ];
+function assertWeightsForConfig(
+  weights: MnistCnnWeights,
+  core: CoreModule,
+  config: MnistCnnTrainingConfig,
+): void {
+  const shapes = weightLayerShapes(core, config);
+  if (!Array.isArray(weights.conv) || weights.conv.length !== shapes.conv.length) {
+    throw new RangeError(
+      `MNIST TFJS conv weights must hold ${shapes.conv.length} layer(s), received ${
+        Array.isArray(weights.conv) ? weights.conv.length : 'not an array'
+      }.`,
+    );
+  }
+  if (!Array.isArray(weights.dense) || weights.dense.length !== shapes.dense.length) {
+    throw new RangeError(
+      `MNIST TFJS dense weights must hold ${shapes.dense.length} layer(s), received ${
+        Array.isArray(weights.dense) ? weights.dense.length : 'not an array'
+      }.`,
+    );
+  }
+  const layers: Array<readonly [string, MnistCnnLayerWeights, WeightLayerShape]> = [];
+  for (let layer = 0; layer < shapes.conv.length; layer += 1) {
+    layers.push([core.convLayerName(layer), weights.conv[layer], shapes.conv[layer]]);
+  }
+  for (let layer = 0; layer < shapes.dense.length; layer += 1) {
+    layers.push([`dense${layer + 1}`, weights.dense[layer], shapes.dense[layer]]);
+  }
   for (const [name, layer, shape] of layers) {
+    if (!(layer.kernel instanceof Float32Array) || !(layer.bias instanceof Float32Array)) {
+      throw new TypeError(`MNIST TFJS ${name} weights must expose kernel and bias Float32Arrays.`);
+    }
     if (layer.kernel.length !== shape.kernel || layer.bias.length !== shape.bias) {
       throw new RangeError(
-        `MNIST TFJS ${name} weights do not match the ${JSON.stringify(filters)} filter tuple.`,
+        `MNIST TFJS ${name} weights do not match the ${JSON.stringify(config.filters)} filter tuple and layer counts.`,
       );
     }
     for (const value of layer.kernel) {
@@ -798,18 +857,17 @@ export class MnistCnnTfjsTrainer {
     const model = this.ensureModel();
     const convolutions = model.layers.filter((layer) => layer.getClassName() === 'Conv2D');
     const denses = model.layers.filter((layer) => layer.getClassName() === 'Dense');
-    if (convolutions.length !== 4 || denses.length !== 2) {
+    if (
+      convolutions.length !== this.config.convLayers ||
+      denses.length !== this.config.denseLayers
+    ) {
       throw new Error(
-        `MNIST TFJS model exposes ${convolutions.length} convolutions and ${denses.length} dense layers, expected 4 and 2.`,
+        `MNIST TFJS model exposes ${convolutions.length} convolutions and ${denses.length} dense layers, expected ${this.config.convLayers} and ${this.config.denseLayers}.`,
       );
     }
     return {
-      conv1: readLayerWeights(convolutions[0]),
-      conv2: readLayerWeights(convolutions[1]),
-      conv3: readLayerWeights(convolutions[2]),
-      conv4: readLayerWeights(convolutions[3]),
-      dense1: readLayerWeights(denses[0]),
-      dense2: readLayerWeights(denses[1]),
+      conv: convolutions.map(readLayerWeights),
+      dense: denses.map(readLayerWeights),
     };
   }
 
@@ -823,53 +881,36 @@ export class MnistCnnTfjsTrainer {
    * disposition n'est nécessaire. `setWeights` recopie les valeurs dans les
    * variables du modèle, donc les tenseurs temporaires sont disposés ici.
    *
-   * Rejette un entraîneur disposé et un jeu de poids dont le tuple de filtres
-   * ne correspond pas à la configuration.
+   * Les couches sont lues dans l'ordre du modèle, sans indice fixe : chaque
+   * `Conv2D` prend l'entrée suivante de `weights.conv` et chaque `Dense` celle
+   * de `weights.dense`, les formes venant des propres tenseurs de la couche.
+   *
+   * Rejette un entraîneur disposé et un jeu de poids dont les nombres de
+   * couches ou le tuple de filtres ne correspond pas à la configuration.
    */
   async applyWeights(weights: MnistCnnWeights): Promise<void> {
     this.assertUsable();
-    assertWeightsForFilters(weights, this.config.filters);
+    assertWeightsForConfig(weights, this.core, this.config);
     const model = this.ensureModel();
-    const shapes = weightLayerShapes(this.config.filters);
+    const convWeights = weights.conv;
+    const denseWeights = weights.dense;
+    let convIndex = 0;
+    let denseIndex = 0;
     const values: Tensor[] = [];
     try {
-      values.push(
-        this.tf.tensor(weights.conv1.kernel, [
-          core.CONV_KERNEL_SIZE,
-          core.CONV_KERNEL_SIZE,
-          1,
-          this.config.filters[0],
-        ]),
-        this.tf.tensor(weights.conv1.bias, [this.config.filters[0]]),
-        this.tf.tensor(weights.conv2.kernel, [
-          core.CONV_KERNEL_SIZE,
-          core.CONV_KERNEL_SIZE,
-          this.config.filters[0],
-          this.config.filters[1],
-        ]),
-        this.tf.tensor(weights.conv2.bias, [this.config.filters[1]]),
-        this.tf.tensor(weights.conv3.kernel, [
-          core.CONV_KERNEL_SIZE,
-          core.CONV_KERNEL_SIZE,
-          this.config.filters[1],
-          this.config.filters[2],
-        ]),
-        this.tf.tensor(weights.conv3.bias, [this.config.filters[2]]),
-        this.tf.tensor(weights.conv4.kernel, [
-          core.CONV_KERNEL_SIZE,
-          core.CONV_KERNEL_SIZE,
-          this.config.filters[2],
-          this.config.filters[3],
-        ]),
-        this.tf.tensor(weights.conv4.bias, [this.config.filters[3]]),
-        this.tf.tensor(weights.dense1.kernel, [
-          shapes.dense1.kernel / core.HIDDEN_DENSE_SIZE,
-          core.HIDDEN_DENSE_SIZE,
-        ]),
-        this.tf.tensor(weights.dense1.bias, [core.HIDDEN_DENSE_SIZE]),
-        this.tf.tensor(weights.dense2.kernel, [core.HIDDEN_DENSE_SIZE, core.LOGIT_COUNT]),
-        this.tf.tensor(weights.dense2.bias, [core.LOGIT_COUNT]),
-      );
+      for (const layer of model.layers) {
+        const className = layer.getClassName();
+        if (className !== 'Conv2D' && className !== 'Dense') {
+          continue;
+        }
+        const layerWeights =
+          className === 'Conv2D' ? convWeights[convIndex++] : denseWeights[denseIndex++];
+        const [kernel, bias] = layer.getWeights();
+        values.push(
+          this.tf.tensor(layerWeights.kernel, kernel.shape),
+          this.tf.tensor(layerWeights.bias, bias.shape),
+        );
+      }
       model.setWeights(values);
     } finally {
       for (const value of values) {

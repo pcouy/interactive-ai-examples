@@ -107,6 +107,8 @@ async function makeTrainer(
     batchSize: number;
     seed: number;
     activation: MnistCnnActivation;
+    convLayers: number;
+    denseLayers: number;
   }> = {},
 ): Promise<MnistCnnTfjsTrainer> {
   const trainer = await createMnistCnnTfjsTrainer({
@@ -114,6 +116,8 @@ async function makeTrainer(
     learningRate: overrides.learningRate ?? 3e-3,
     batchSize: overrides.batchSize ?? 2,
     activation: overrides.activation ?? 'sigmoid',
+    convLayers: overrides.convLayers ?? 4,
+    denseLayers: overrides.denseLayers ?? 2,
     seed: overrides.seed ?? DEFAULT_TRAINING_SEED,
   });
   disposables.push(trainer);
@@ -208,6 +212,32 @@ describe('model shape', () => {
     ]);
   });
 
+  it('builds a model for the requested depth', async () => {
+    const cases: ReadonlyArray<readonly [number, number, readonly number[]]> = [
+      [0, 1, [LOGIT_COUNT]],
+      [1, 3, [HIDDEN_DENSE_SIZE, HIDDEN_DENSE_SIZE, LOGIT_COUNT]],
+      [3, 2, [HIDDEN_DENSE_SIZE, LOGIT_COUNT]],
+    ];
+    for (const [convLayers, denseLayers, widths] of cases) {
+      const trainer = await makeTrainer(SMALL_FILTERS, { convLayers, denseLayers });
+      const weights = await trainer.exportWeights();
+      const graph = trainer.graph;
+      if (graph === null) {
+        throw new Error('The trainer did not build a model.');
+      }
+      expect(graph.layers.filter((layer) => layer.getClassName() === 'Conv2D')).toHaveLength(
+        convLayers,
+      );
+      expect(
+        graph.layers
+          .filter((layer) => layer.getClassName() === 'Dense')
+          .map((layer) => layer.getConfig().units),
+      ).toEqual(widths);
+      expect(weights.conv).toHaveLength(convLayers);
+      expect(weights.dense).toHaveLength(denseLayers);
+    }
+  });
+
   it('returns softmax probabilities on the simplex', async () => {
     const trainer = await makeTrainer(SMALL_FILTERS);
     const probabilities = await trainer.predict(makeSample(3));
@@ -229,30 +259,32 @@ describe('weight export', () => {
   it('exports the default architecture in the MnistCnnWeights layout', async () => {
     const trainer = await makeTrainer(DEFAULT_FILTER_COUNTS);
     const weights: MnistCnnWeights = await trainer.exportWeights();
-    expect(weights.conv1.kernel).toHaveLength(9 * 1 * 3);
-    expect(weights.conv2.kernel).toHaveLength(9 * 3 * 3);
-    expect(weights.conv3.kernel).toHaveLength(9 * 3 * 3);
-    expect(weights.conv4.kernel).toHaveLength(9 * 3 * 3);
-    expect(weights.conv1.bias).toHaveLength(3);
-    expect(weights.conv2.bias).toHaveLength(3);
-    expect(weights.conv3.bias).toHaveLength(3);
-    expect(weights.conv4.bias).toHaveLength(3);
-    expect(weights.dense1.kernel).toHaveLength(5 * 5 * 3 * HIDDEN_DENSE_SIZE);
-    expect(weights.dense1.bias).toHaveLength(HIDDEN_DENSE_SIZE);
-    expect(weights.dense2.kernel).toHaveLength(HIDDEN_DENSE_SIZE * LOGIT_COUNT);
-    expect(weights.dense2.bias).toHaveLength(LOGIT_COUNT);
+    expect(weights.conv).toHaveLength(4);
+    expect(weights.dense).toHaveLength(2);
+    expect(weights.conv[0].kernel).toHaveLength(9 * 1 * 3);
+    expect(weights.conv[1].kernel).toHaveLength(9 * 3 * 3);
+    expect(weights.conv[2].kernel).toHaveLength(9 * 3 * 3);
+    expect(weights.conv[3].kernel).toHaveLength(9 * 3 * 3);
+    expect(weights.conv[0].bias).toHaveLength(3);
+    expect(weights.conv[1].bias).toHaveLength(3);
+    expect(weights.conv[2].bias).toHaveLength(3);
+    expect(weights.conv[3].bias).toHaveLength(3);
+    expect(weights.dense[0].kernel).toHaveLength(5 * 5 * 3 * HIDDEN_DENSE_SIZE);
+    expect(weights.dense[0].bias).toHaveLength(HIDDEN_DENSE_SIZE);
+    expect(weights.dense[1].kernel).toHaveLength(HIDDEN_DENSE_SIZE * LOGIT_COUNT);
+    expect(weights.dense[1].bias).toHaveLength(LOGIT_COUNT);
   });
 
   it('exports the custom architecture in the MnistCnnWeights layout', async () => {
     const trainer = await makeTrainer(SMALL_FILTERS);
     const weights = await trainer.exportWeights();
-    expect(weights.conv1.kernel).toHaveLength(9);
-    expect(weights.conv4.kernel).toHaveLength(9);
-    expect(weights.dense1.kernel).toHaveLength(5 * 5 * 1 * HIDDEN_DENSE_SIZE);
-    expect(weights.dense2.kernel).toHaveLength(HIDDEN_DENSE_SIZE * LOGIT_COUNT);
+    expect(weights.conv[0].kernel).toHaveLength(9);
+    expect(weights.conv[3].kernel).toHaveLength(9);
+    expect(weights.dense[0].kernel).toHaveLength(5 * 5 * 1 * HIDDEN_DENSE_SIZE);
+    expect(weights.dense[1].kernel).toHaveLength(HIDDEN_DENSE_SIZE * LOGIT_COUNT);
   });
 
-  it('keeps the dense1 input ordering identical to the core NHWC flatten', async () => {
+  it('keeps the dense input ordering identical to the core NHWC flatten', async () => {
     const trainer = await makeTrainer(DEFAULT_FILTER_COUNTS);
     const weights = await trainer.exportWeights();
     const input = rampInput();
@@ -274,8 +306,8 @@ describe('weight export', () => {
     const a = await first.exportWeights();
     const b = await second.exportWeights();
     const c = await third.exportWeights();
-    expect(Array.from(a.conv1.kernel)).toEqual(Array.from(b.conv1.kernel));
-    expect(Array.from(a.dense2.kernel)).not.toEqual(Array.from(c.dense2.kernel));
+    expect(Array.from(a.conv[0].kernel)).toEqual(Array.from(b.conv[0].kernel));
+    expect(Array.from(a.dense[1].kernel)).not.toEqual(Array.from(c.dense[1].kernel));
   });
 });
 
@@ -335,7 +367,13 @@ describe('applyWeights', () => {
   it('rejects weights with non-finite values', async () => {
     const trainer = await makeTrainer(SMALL_FILTERS);
     const weights = initializeMnistCnnWeights({ filters: SMALL_FILTERS }, 7);
-    weights.conv1.kernel[0] = Number.NaN;
+    weights.conv[0].kernel[0] = Number.NaN;
+    await expect(trainer.applyWeights(weights)).rejects.toThrow(RangeError);
+  });
+
+  it('rejects a weight set whose layer counts do not match the config', async () => {
+    const trainer = await makeTrainer(SMALL_FILTERS, { convLayers: 2, denseLayers: 1 });
+    const weights = initializeMnistCnnWeights({ filters: SMALL_FILTERS }, 7);
     await expect(trainer.applyWeights(weights)).rejects.toThrow(RangeError);
   });
 
@@ -344,6 +382,22 @@ describe('applyWeights', () => {
     const weights = await trainer.exportWeights();
     await trainer.dispose();
     await expect(trainer.applyWeights(weights)).rejects.toThrow(/disposed/);
+  });
+
+  it('applies and exports weights for a shallow model', async () => {
+    const trainer = await makeTrainer(SMALL_FILTERS, { convLayers: 1, denseLayers: 1 });
+    const weights = initializeMnistCnnWeights(
+      { filters: SMALL_FILTERS, convLayers: 1, denseLayers: 1 },
+      99,
+    );
+    await trainer.applyWeights(weights);
+    const exported = await trainer.exportWeights();
+    expect(exported.conv).toHaveLength(1);
+    expect(exported.dense).toHaveLength(1);
+    expect(Array.from(exported.conv[0].kernel)).toEqual(Array.from(weights.conv[0].kernel));
+    expect(Array.from(exported.conv[0].bias)).toEqual(Array.from(weights.conv[0].bias));
+    expect(Array.from(exported.dense[0].kernel)).toEqual(Array.from(weights.dense[0].kernel));
+    expect(Array.from(exported.dense[0].bias)).toEqual(Array.from(weights.dense[0].bias));
   });
 
   it('resets Adam moments so a later run resumes from the applied weights', async () => {
@@ -362,9 +416,10 @@ describe('applyWeights', () => {
     await second.applyWeights(applied);
     await second.train({ train: source, epochs: 1, lossSampleEvery: 1, progressIntervalMs: 0 });
     const afterSecond = await second.exportWeights();
-    for (const layer of ['conv1', 'dense2'] as const) {
-      for (let index = 0; index < afterFirst[layer].kernel.length; index += 1) {
-        expect(afterFirst[layer].kernel[index]).toBeCloseTo(afterSecond[layer].kernel[index], 5);
+    for (const layer of [afterFirst.conv[0], afterFirst.dense[1]] as const) {
+      const other = layer === afterFirst.conv[0] ? afterSecond.conv[0] : afterSecond.dense[1];
+      for (let index = 0; index < layer.kernel.length; index += 1) {
+        expect(layer.kernel[index]).toBeCloseTo(other.kernel[index], 5);
       }
     }
   });
@@ -391,7 +446,7 @@ describe('bounded training', () => {
     expect(events.filter((event) => event.status === 'running')).toHaveLength(3);
     expect(events.at(-1)?.status).toBe('completed');
     const updated = await trainer.exportWeights();
-    expect(Array.from(updated.dense1.kernel)).not.toEqual(Array.from(initial.dense1.kernel));
+    expect(Array.from(updated.dense[0].kernel)).not.toEqual(Array.from(initial.dense[0].kernel));
   });
 
   it('reports validation loss and accuracy at the end of each epoch', async () => {
@@ -474,6 +529,8 @@ describe('bounded training', () => {
       learningRate: 3e-3,
       batchSize: 2,
       activation: 'sigmoid',
+      convLayers: 4,
+      denseLayers: 2,
       seed: DEFAULT_TRAINING_SEED,
     });
     disposables.push(trainer);
@@ -741,7 +798,7 @@ describe('reset and disposal', () => {
     trainer.reset();
     const rebuilt = await trainer.exportWeights();
     expect(trainer.graph).not.toBeNull();
-    expect(Array.from(rebuilt.conv1.kernel)).toEqual(Array.from(initial.conv1.kernel));
+    expect(Array.from(rebuilt.conv[0].kernel)).toEqual(Array.from(initial.conv[0].kernel));
   });
 
   it('refuses to run after dispose and is idempotent', async () => {
@@ -947,7 +1004,7 @@ describe('prefetch', () => {
     expect(result.status).toBe('completed');
     expect(result.batchesProcessed).toBe(2);
     const updated = await trainer.exportWeights();
-    expect(Array.from(updated.dense1.kernel)).not.toEqual(Array.from(initial.dense1.kernel));
+    expect(Array.from(updated.dense[0].kernel)).not.toEqual(Array.from(initial.dense[0].kernel));
   });
 });
 
@@ -1027,6 +1084,8 @@ describe('loss sampling', () => {
       learningRate: 3e-3,
       batchSize: 2,
       activation: 'sigmoid',
+      convLayers: 4,
+      denseLayers: 2,
       seed: DEFAULT_TRAINING_SEED,
     });
     disposables.push(trainer);

@@ -374,7 +374,7 @@ describe('loadMnistGallery', () => {
   });
 });
 
-/** Manifeste minimal valide : filtres [1, 1, 1, 1], 338 paramètres. */
+/** Manifeste minimal valide : filtres [3, 3, 3, 3], 980 paramètres. */
 function minimalManifestJson(): string {
   const layer = (
     kernelLength: number,
@@ -385,14 +385,14 @@ function minimalManifestJson(): string {
   });
   return JSON.stringify({
     schemaVersion: 1,
-    architecture: { filters: [1, 1, 1, 1] },
-    parameterCount: 338,
+    architecture: { filters: [3, 3, 3, 3] },
+    parameterCount: 980,
     layers: {
-      conv1: layer(9, 1),
-      conv2: layer(9, 1),
-      conv3: layer(9, 1),
-      conv4: layer(9, 1),
-      dense1: layer(200, 8),
+      conv1: layer(27, 3),
+      conv2: layer(81, 3),
+      conv3: layer(81, 3),
+      conv4: layer(81, 3),
+      dense1: layer(600, 8),
       dense2: layer(80, 10),
     },
   });
@@ -412,7 +412,7 @@ describe('fetchMnistCnnManifest', () => {
     const text = await fetchMnistCnnManifest();
     expect(text).toBe(manifest);
     expect(String(fetchMock.mock.calls[0][0])).toContain('/mnist/model-v1.json');
-    expect(parseMnistCnnManifestJson(text).config.filters).toEqual([1, 1, 1, 1]);
+    expect(parseMnistCnnManifestJson(text).config.filters).toEqual([3, 3, 3, 3]);
   });
 
   it('reports a missing manifest clearly', async () => {

@@ -6,20 +6,24 @@ import '../../ui/drl-slider.js';
 import {
   activationDomain,
   CONV_KERNEL_SIZE,
-  CONV_LAYER_NAMES,
+  convLayerName,
+  DEFAULT_CONV_LAYERS,
+  DEFAULT_DENSE_LAYERS,
   DEFAULT_FILTER_COUNTS,
   DEFAULT_MNIST_CNN_ACTIVATION,
   forwardMnistCnn,
   initializeMnistCnnWeights,
+  MAX_CONV_LAYERS,
+  MAX_DENSE_LAYERS,
   MAX_FILTER_COUNT,
   MIN_FILTER_COUNT,
   MNIST_INPUT_LENGTH,
   MNIST_INPUT_SIZE,
   type MnistCnnActivation,
+  type MnistCnnConfig,
   type MnistCnnFeatureMap,
   type MnistCnnFilters,
   type MnistCnnForwardResult,
-  type MnistCnnLayerWeights,
   type MnistCnnWeights,
   mnistCnnParameterCount,
 } from '../../core/mnist-cnn.js';
@@ -74,8 +78,8 @@ import { isTrainingActive, type TrainingState } from './training-state.js';
 import { applyWeightDraft, weightEditorHint, weightEditorView } from './weight-editor.js';
 import {
   applyWeightEditorEvent,
-  FEATURE_MAP_SIZES,
   type FilterView,
+  featureMapSizes,
   filterCanvasInputChannel,
   filterKernelMean,
   filterKernelSlice,
@@ -100,6 +104,9 @@ export {
 /**
  * Démonstration interactive du CNN MNIST de référence (`tf-playground/mnist/train.py`) :
  * quatre convolutions 3×3 + sigmoïde, aplatissement, dense 8 + sigmoïde, dix logits.
+ * La profondeur est réglable : 0 à 4 couches de convolution et 1 à 3 couches denses,
+ * couche de sortie comprise. À zéro convolution, l'entrée 28×28 est aplatie vers les
+ * couches denses et aucun filtre n'est affiché.
  *
  * L'inférence est le passage avant pur TypeScript de `core/mnist-cnn.ts` ; le rendu
  * est un assemblage de canvas 2D stylés avec les jetons `drlTokens`.
@@ -126,9 +133,9 @@ export {
  *
  * Mise en page : la colonne de gauche réunit le dessin, la galerie et le panneau
  * d'entraînement ; la colonne de droite réunit les probabilités par classe et les
- * deux courbes. Les curseurs de nombre de filtres vivent dans une section
- * repliable au-dessus des panneaux de filtres et de cartes de caractéristiques,
- * qui passent côte à côte au-delà de 920 px.
+ * deux courbes. Les curseurs de nombre de filtres et de profondeur vivent dans
+ * une section repliable au-dessus des panneaux de filtres et de cartes de
+ * caractéristiques, qui passent côte à côte au-delà de 920 px.
  *
  * La machine à états de l'entraînement vit dans `training-state.ts` : toute
  * transition qui met fin à une run fait retomber le badge sur un état inactif.
@@ -169,6 +176,13 @@ const FILTER_CANVAS_SIZE = CONV_KERNEL_SIZE * FILTER_CELL_SIZE;
 /** Largeur maximale d'une toile de carte de caractéristiques (les tailles
  * réelles 26, 13, 11 et 5 sont dérivées du noyau). */
 const MAP_CANVAS_MAX = 192;
+
+/** Taille minimale d'une cellule de carte, pour rester lisible. */
+const MIN_MAP_CELL_SIZE = 4;
+
+/** Bornes des curseurs de profondeur : 0 à 4 convolutions, 1 à 3 couches denses. */
+const MIN_CONV_LAYERS = 0;
+const MIN_DENSE_LAYERS = 1;
 
 /** Rayon du pinceau de dessin, en cellules 28×28. */
 const BRUSH_RADIUS = 1.6;
@@ -211,14 +225,15 @@ const MIN_LEARNING_RATE = 0.0005;
 const MAX_LEARNING_RATE = 0.02;
 const DEFAULT_LEARNING_RATE = 0.003;
 
-const MAP_CELL_SIZES: readonly number[] = FEATURE_MAP_SIZES.map((size) =>
-  Math.max(4, Math.floor(MAP_CANVAS_MAX / size)),
-);
+/** Taille d'une cellule de carte pour que la toile tienne dans MAP_CANVAS_MAX. */
+export function mapCellSize(width: number): number {
+  return Math.max(MIN_MAP_CELL_SIZE, Math.floor(MAP_CANVAS_MAX / width));
+}
 
-/** Dimensions des toiles de cartes de caractéristiques, par couche. */
-const MAP_CANVAS_SIZES: readonly number[] = FEATURE_MAP_SIZES.map(
-  (size, layer) => size * MAP_CELL_SIZES[layer],
-);
+/** Côté de la toile d'une carte de largeur donnée. */
+export function mapCanvasSize(width: number): number {
+  return width * mapCellSize(width);
+}
 
 export function clamp(value: number, min: number, max: number): number {
   return Math.min(max, Math.max(min, value));
@@ -342,11 +357,12 @@ function lineInArchitecture(
   inputChannel: number,
   outputChannel: number,
   filters: MnistCnnFilters,
+  convLayers: number,
 ): boolean {
   if (
     !Number.isInteger(boundary) ||
     boundary < 0 ||
-    boundary >= filters.length ||
+    boundary >= convLayers ||
     !Number.isInteger(outputChannel) ||
     outputChannel < 0 ||
     outputChannel >= filters[boundary]
@@ -369,9 +385,13 @@ export function describeLinkLabel(
   inputChannel: number,
   outputChannel: number,
   filters: MnistCnnFilters,
+  convLayers: number,
 ): string {
   const name = `conv${boundary + 1} — entrée ${inputChannel + 1}, sortie ${outputChannel + 1}`;
-  if (selection === null || !lineInArchitecture(boundary, inputChannel, outputChannel, filters)) {
+  if (
+    selection === null ||
+    !lineInArchitecture(boundary, inputChannel, outputChannel, filters, convLayers)
+  ) {
     return name;
   }
   if (
@@ -401,6 +421,22 @@ export function filterPanelSubtitle(selection: WeightSelection): string {
 /** Légende d'un canal de sortie : numéro et biais à trois décimales. */
 export function filterBiasCaption(channel: number, bias: number): string {
   return `sortie ${channel + 1} · b = ${formatValue(bias, 3)}`;
+}
+
+/** Titre d'une couche dense dans le panneau d'activations. */
+export function denseLayerTitle(index: number, total: number, units: number): string {
+  return index === total - 1 ? `Sortie — ${units} classes` : `Dense ${index + 1} — ${units} unités`;
+}
+
+/** Libellé accessible d'une unité cachée. */
+export function denseCellLabel(unit: number, value: number): string {
+  return `unité ${unit + 1} : ${formatValue(value, 3)}`;
+}
+
+/** Libellé accessible d'une classe de sortie, avec la mention du maximum. */
+export function outputCellLabel(digit: number, probability: number, isMax: boolean): string {
+  const base = `chiffre ${digit} : ${formatValue(probability * 100, 1)} %`;
+  return isMax ? `${base}, maximum` : base;
 }
 
 /**
@@ -560,6 +596,10 @@ function sameFilters(a: MnistCnnFilters, b: MnistCnnFilters): boolean {
 /** Données d'entrée d'une requête de run d'entraînement. */
 export interface TrainingRunInput {
   readonly filters: MnistCnnFilters;
+  /** Nombre de couches de convolution, de 0 à 4. */
+  readonly convLayers: number;
+  /** Nombre de couches denses, couche de sortie comprise, de 1 à 3. */
+  readonly denseLayers: number;
   readonly learningRate: number;
   readonly batchSize: number;
   readonly trainPercent: number;
@@ -579,6 +619,8 @@ export interface TrainingRunInput {
 export function trainingRunRequest(input: TrainingRunInput): MnistRunRequest {
   return {
     filters: input.filters,
+    convLayers: input.convLayers,
+    denseLayers: input.denseLayers,
     learningRate: input.learningRate,
     batchSize: input.batchSize,
     seed: SEED,
@@ -1084,6 +1126,74 @@ export class MnistCnn extends LitElement {
         gap: var(--drl-space-1);
       }
 
+      .drl-dense-layer {
+        display: flex;
+        flex-direction: column;
+        gap: var(--drl-space-1);
+        margin-top: var(--drl-space-2);
+      }
+
+      .drl-dense-title {
+        margin: 0;
+        color: var(--drl-muted);
+        font-size: 0.85em;
+      }
+
+      .drl-dense-pack {
+        display: grid;
+        grid-template-columns: repeat(4, 1fr);
+        gap: 2px;
+        width: 8rem;
+        margin: 0;
+        padding: 0;
+        list-style: none;
+      }
+
+      .drl-dense-cell {
+        aspect-ratio: 1;
+        border: 1px solid var(--drl-border);
+        border-radius: 2px;
+      }
+
+      .drl-dense-output {
+        display: flex;
+        flex-wrap: wrap;
+        gap: var(--drl-space-1);
+        margin: 0;
+        padding: 0;
+        list-style: none;
+      }
+
+      .drl-dense-output-cell {
+        display: flex;
+        flex-direction: column;
+        align-items: center;
+        gap: 2px;
+      }
+
+      .drl-dense-square {
+        width: 1.4rem;
+        height: 1.4rem;
+        border: 1px solid var(--drl-border);
+        border-radius: 2px;
+      }
+
+      .drl-dense-digit {
+        color: var(--drl-muted);
+        font-size: 0.7em;
+        font-variant-numeric: tabular-nums;
+      }
+
+      .drl-dense-output-cell--max .drl-dense-square {
+        outline: 2px solid var(--drl-fg);
+        outline-offset: 1px;
+      }
+
+      .drl-dense-output-cell--max .drl-dense-digit {
+        color: var(--drl-fg);
+        font-weight: 700;
+      }
+
       .drl-cell {
         display: grid;
         gap: 2px;
@@ -1169,6 +1279,12 @@ export class MnistCnn extends LitElement {
 
   @state()
   private filterCounts: MnistCnnFilters = DEFAULT_FILTER_COUNTS;
+
+  @state()
+  private convLayers = DEFAULT_CONV_LAYERS;
+
+  @state()
+  private denseLayers = DEFAULT_DENSE_LAYERS;
 
   /** Fonction d'activation des convolutions et de la couche dense cachée. */
   @state()
@@ -1380,19 +1496,36 @@ export class MnistCnn extends LitElement {
       metricsStarted: this.metricsStarted,
       trainExampleCount: this.trainExampleCount,
       validationExampleCount: this.validationExampleCount,
-      parameters: mnistCnnParameterCount(this.filterCounts),
+      parameters: mnistCnnParameterCount(this.architectureConfig),
       predictedClass: this.predictedClass,
       inputSource: this.inputSource,
     };
   }
 
-  /** Vrai si le manifeste chargé correspond à l'architecture courante. */
-  private get manifestMatches(): boolean {
+  /** Architecture courante, partagée par l'inférence, l'éditeur et les requêtes. */
+  private get architectureConfig(): MnistCnnConfig {
+    return {
+      filters: this.filterCounts,
+      convLayers: this.convLayers,
+      denseLayers: this.denseLayers,
+      activation: this.activation,
+    };
+  }
+
+  /** Vrai si l'architecture courante peut utiliser le manifeste de référence. */
+  private get usesPretrainedArchitecture(): boolean {
     return (
-      this.pretrainedAssets !== null &&
       this.activation === 'sigmoid' &&
+      this.convLayers === DEFAULT_CONV_LAYERS &&
+      this.denseLayers === DEFAULT_DENSE_LAYERS &&
+      this.pretrainedAssets !== null &&
       sameFilters(this.pretrainedAssets.config.filters, this.filterCounts)
     );
+  }
+
+  /** Vrai si le manifeste chargé correspond à l'architecture courante. */
+  private get manifestMatches(): boolean {
+    return this.usesPretrainedArchitecture;
   }
 
   private get inputHint(): string {
@@ -1601,19 +1734,14 @@ export class MnistCnn extends LitElement {
    * manifeste ne doit jamais écraser des poids modifiés à la main.
    */
   private applyPretrainedWeights(): void {
-    if (this.activation !== 'sigmoid') {
+    if (!this.usesPretrainedArchitecture || this.weightsEdited) {
       return;
     }
-    if (this.weightsEdited) {
+    const assets = this.pretrainedAssets;
+    if (assets === null) {
       return;
     }
-    if (this.pretrainedAssets === null) {
-      return;
-    }
-    if (!sameFilters(this.pretrainedAssets.config.filters, this.filterCounts)) {
-      return;
-    }
-    this.weights = this.pretrainedAssets.weights;
+    this.weights = assets.weights;
     this.clearSelection();
     this.runInference();
   }
@@ -1684,6 +1812,8 @@ export class MnistCnn extends LitElement {
     this.lastEmittedEpoch = 0;
     const request = trainingRunRequest({
       filters: this.filterCounts,
+      convLayers: this.convLayers,
+      denseLayers: this.denseLayers,
       learningRate: this.learningRate,
       batchSize: this.batchSize,
       trainPercent: this.trainPercent,
@@ -1728,7 +1858,7 @@ export class MnistCnn extends LitElement {
    */
   private readonly handleRandomResetWeights = (): void => {
     const seed = Math.floor(Math.random() * 0xffffffff);
-    const weights = initializeMnistCnnWeights({ filters: this.filterCounts }, seed);
+    const weights = initializeMnistCnnWeights(this.architectureConfig, seed);
     this.resetMetrics();
     this.clearSelection();
     void this.controller.resetWeights(weights, 'random');
@@ -1736,14 +1866,11 @@ export class MnistCnn extends LitElement {
 
   /** Poids à afficher pour l'architecture courante : pré-entraînés si possible. */
   private weightsForCurrentFilters(): MnistCnnWeights {
-    if (
-      this.activation === 'sigmoid' &&
-      this.pretrainedAssets !== null &&
-      sameFilters(this.pretrainedAssets.config.filters, this.filterCounts)
-    ) {
-      return this.pretrainedAssets.weights;
+    const assets = this.pretrainedAssets;
+    if (this.usesPretrainedArchitecture && assets !== null) {
+      return assets.weights;
     }
-    return initializeMnistCnnWeights({ filters: this.filterCounts }, SEED);
+    return initializeMnistCnnWeights(this.architectureConfig, SEED);
   }
 
   private resetMetrics(): void {
@@ -1789,6 +1916,39 @@ export class MnistCnn extends LitElement {
       return;
     }
     this.filterCounts = next;
+    this.weights = this.weightsForCurrentFilters();
+    this.clearSelection();
+    this.runInference();
+    this.resetMetrics();
+    void this.controller.notifySliderChanged(this.manifestMatches, true);
+  }
+
+  /**
+   * Change le nombre de couches de convolution : l'entraînement s'arrête et le
+   * modèle est reconstruit. `0` retire toute convolution — l'entrée 28×28 est
+   * alors aplatie vers les couches denses — et n'affiche plus de panneau de
+   * filtres ni de liaison.
+   */
+  private setConvLayers(count: number): void {
+    const layers = clamp(Math.round(count), MIN_CONV_LAYERS, MAX_CONV_LAYERS);
+    if (layers === this.convLayers) {
+      return;
+    }
+    this.convLayers = layers;
+    this.weights = this.weightsForCurrentFilters();
+    this.clearSelection();
+    this.runInference();
+    this.resetMetrics();
+    void this.controller.notifySliderChanged(this.manifestMatches, true);
+  }
+
+  /** Change le nombre de couches denses : arrête la run et reconstruit le modèle. */
+  private setDenseLayers(count: number): void {
+    const layers = clamp(Math.round(count), MIN_DENSE_LAYERS, MAX_DENSE_LAYERS);
+    if (layers === this.denseLayers) {
+      return;
+    }
+    this.denseLayers = layers;
     this.weights = this.weightsForCurrentFilters();
     this.clearSelection();
     this.runInference();
@@ -1917,10 +2077,7 @@ export class MnistCnn extends LitElement {
   }
 
   private runInference(): void {
-    this.result = forwardMnistCnn(this.inputPixels, this.weights, {
-      filters: this.filterCounts,
-      activation: this.activation,
-    });
+    this.result = forwardMnistCnn(this.inputPixels, this.weights, this.architectureConfig);
     this.canvasesDirty = true;
   }
 
@@ -1985,7 +2142,7 @@ export class MnistCnn extends LitElement {
     this.weightError = null;
     const view =
       this.selection !== null && this.selection.kind === 'weight'
-        ? weightEditorView(this.selection, this.weights, this.filterCounts)
+        ? weightEditorView(this.selection, this.weights, this.architectureConfig)
         : null;
     if (view !== null) {
       this.weightDraft = view.text;
@@ -2125,7 +2282,7 @@ export class MnistCnn extends LitElement {
       this.weightDraft,
       this.selection,
       this.weights,
-      this.filterCounts,
+      this.architectureConfig,
     );
     if (result.kind === 'error') {
       this.weightError = result.message;
@@ -2249,13 +2406,7 @@ export class MnistCnn extends LitElement {
 
   /** Biais d'un canal de sortie de la couche de convolution donnée. */
   private filterBias(layer: number, channel: number): number {
-    const convWeights: readonly MnistCnnLayerWeights[] = [
-      this.weights.conv1,
-      this.weights.conv2,
-      this.weights.conv3,
-      this.weights.conv4,
-    ];
-    return convWeights[layer].bias[channel];
+    return this.weights.conv[layer].bias[channel];
   }
 
   private drawFilterCanvas(canvas: HTMLCanvasElement, layer: number, channel: number): void {
@@ -2264,12 +2415,7 @@ export class MnistCnn extends LitElement {
       return;
     }
     const inputChannels = layer === 0 ? 1 : this.filterCounts[layer - 1];
-    const convWeights: readonly MnistCnnLayerWeights[] = [
-      this.weights.conv1,
-      this.weights.conv2,
-      this.weights.conv3,
-      this.weights.conv4,
-    ];
+    const convWeights = this.weights.conv;
     const view = filterViewMode(this.selection, layer, channel);
     const values = filterKernelValues(view, convWeights[layer].kernel, inputChannels, channel);
     let maxAbs = 0;
@@ -2514,6 +2660,74 @@ export class MnistCnn extends LitElement {
     `;
   }
 
+  /**
+   * Panneau des couches denses : une compacité de carrés par couche cachée,
+   * colorée sur l'échelle de l'activation choisie, puis la rangée de dix cases
+   * de sortie, colorée sur l'échelle 0–1, avec le maximum souligné.
+   */
+  private renderDenseActivations(result: MnistCnnForwardResult): TemplateResult {
+    return html`
+      <div class="drl-layer-block">
+        <h5 class="drl-layer-title">Couches denses</h5>
+        ${result.denseActivations.slice(0, -1).map((values, layer) => {
+          const rgbOf = (value: number) => activationRgb(value, this.activation);
+          const title = denseLayerTitle(layer, result.denseActivations.length, values.length);
+          return html`
+            <div class="drl-dense-layer">
+              <p class="drl-dense-title">${title}</p>
+              <ul class="drl-dense-pack" role="list" aria-label=${`Activations de ${title}`}>
+                ${Array.from(values, (value, unit) => {
+                  const rgb = rgbOf(value);
+                  return html`
+                    <li
+                      class="drl-dense-cell"
+                      role="listitem"
+                      style=${`background: rgb(${rgb[0]}, ${rgb[1]}, ${rgb[2]})`}
+                      aria-label=${denseCellLabel(unit, value)}
+                    ></li>
+                  `;
+                })}
+              </ul>
+            </div>
+          `;
+        })}
+        ${(() => {
+          const probabilities = result.denseActivations[result.denseActivations.length - 1];
+          const maximum = argmaxIndex(probabilities);
+          return html`
+            <div class="drl-dense-layer">
+              <p class="drl-dense-title">
+                ${denseLayerTitle(
+                  result.denseActivations.length - 1,
+                  result.denseActivations.length,
+                  probabilities.length,
+                )}
+              </p>
+              <ol class="drl-dense-output" aria-label="Probabilités par classe, maximum surligné">
+                ${Array.from(probabilities, (probability, digit) => {
+                  const rgb = activationRgb(probability, 'sigmoid');
+                  const isMax = digit === maximum;
+                  return html`
+                    <li
+                      class=${`drl-dense-output-cell${isMax ? ' drl-dense-output-cell--max' : ''}`}
+                      aria-label=${outputCellLabel(digit, probability, isMax)}
+                    >
+                      <span
+                        class="drl-dense-square"
+                        style=${`background: rgb(${rgb[0]}, ${rgb[1]}, ${rgb[2]})`}
+                      ></span>
+                      <span class="drl-dense-digit">${digit}</span>
+                    </li>
+                  `;
+                })}
+              </ol>
+            </div>
+          `;
+        })()}
+      </div>
+    `;
+  }
+
   protected renderContent(): TemplateResult {
     const result = this.result;
     return html`
@@ -2687,7 +2901,7 @@ export class MnistCnn extends LitElement {
           <div class="drl-stats">
             <div class="drl-stat">
               <p class="drl-stat-label">Paramètres</p>
-              <p class="drl-stat-value">${mnistCnnParameterCount(this.filterCounts)}</p>
+              <p class="drl-stat-value">${mnistCnnParameterCount(this.architectureConfig)}</p>
             </div>
             <div class="drl-stat">
               <p class="drl-stat-label">Classe prédite</p>
@@ -2740,11 +2954,31 @@ export class MnistCnn extends LitElement {
         <div class="drl-filter-counts-body">
           <p class="drl-panel-subtitle">
             Chaque curseur arrête l'entraînement et reconstruit le modèle : poids pré-entraînés
-            (manifeste) si le tuple correspond, poids déterministes (graine ${SEED}) sinon. Le
-            choix de la fonction d'activation arrête aussi la run et reconstruit le modèle ; le
-            manifeste pré-entraîné ne s'applique qu'avec la sigmoïde, toute autre activation
-            repart des poids déterministes.
+            (manifeste) si l'architecture correspond, poids déterministes (graine ${SEED}) sinon. Les
+            curseurs de profondeur changent le nombre de couches de convolution (0 à 4) et de couches
+            denses (1 à 3) ; le choix de la fonction d'activation arrête aussi la run et reconstruit le
+            modèle ; le manifeste pré-entraîné ne s'applique qu'à la profondeur de référence (quatre
+            convolutions, deux couches denses) et avec la sigmoïde, toute autre configuration repart
+            des poids déterministes.
           </p>
+          <div class="drl-sliders" role="group" aria-label="Profondeur du réseau">
+            <drl-slider
+              label="Couches de convolution"
+              min=${MIN_CONV_LAYERS}
+              max=${MAX_CONV_LAYERS}
+              step="1"
+              .value=${this.convLayers}
+              @drl-input=${(event: CustomEvent<number>) => this.setConvLayers(event.detail)}
+            ></drl-slider>
+            <drl-slider
+              label="Couches denses"
+              min=${MIN_DENSE_LAYERS}
+              max=${MAX_DENSE_LAYERS}
+              step="1"
+              .value=${this.denseLayers}
+              @drl-input=${(event: CustomEvent<number>) => this.setDenseLayers(event.detail)}
+            ></drl-slider>
+          </div>
           <div class="drl-activation-field">
             <label class="drl-field-label" for="drl-mnist-cnn-activation">
               Fonction d'activation
@@ -2762,14 +2996,14 @@ export class MnistCnn extends LitElement {
           <div
             class="drl-sliders"
             role="group"
-            aria-label="Nombre de filtres de chacune des quatre couches de convolution"
+            aria-label="Nombre de filtres de chaque couche de convolution"
           >
             ${repeat(
-              CONV_LAYER_NAMES,
+              Array.from({ length: this.convLayers }, (_, layer) => layer),
               (name) => name,
-              (name, layer) => html`
+              (_name, layer) => html`
                 <drl-slider
-                  label="Filtres ${name}"
+                  label="Filtres ${convLayerName(layer)}"
                   min=${MIN_FILTER_COUNT}
                   max=${MAX_FILTER_COUNT}
                   step="1"
@@ -2789,40 +3023,42 @@ export class MnistCnn extends LitElement {
           <p class="drl-panel-subtitle">${filterPanelSubtitle(this.selection)}</p>
           ${this.renderWeightEditor()}
           ${
-            result
-              ? repeat(
-                  CONV_LAYER_NAMES,
-                  (name) => name,
-                  (name, layer) => html`
-                  <div class="drl-layer-block">
-                    <h5 class="drl-layer-title">${name} — ${this.filterCounts[layer]} canal(aux)</h5>
-                    <div class="drl-cells-grid">
-                      ${repeat(
-                        Array.from({ length: this.filterCounts[layer] }, (_, channel) => channel),
-                        (channel) => channel,
-                        (channel) => html`
-                          <figure class="drl-cell">
-                            <canvas
-                              class="drl-canvas drl-canvas--filter"
-                              data-layer=${layer}
-                              data-channel=${channel}
-                              width=${FILTER_CANVAS_SIZE}
-                              height=${FILTER_CANVAS_SIZE}
-                              role="img"
-                              aria-label=${`Filtre ${name}, canal de sortie ${channel + 1}, biais ${formatValue(this.filterBias(layer, channel), 3)}`}
-                              @pointerdown=${this.handleFilterCellClick}
-                            ></canvas>
-                            <figcaption>
-                              ${filterBiasCaption(channel, this.filterBias(layer, channel))}
-                            </figcaption>
-                          </figure>
-                        `,
-                      )}
+            this.convLayers === 0
+              ? html`<p class="drl-hint">Aucune couche de convolution : l'entrée 28×28 est aplatie vers les couches denses.</p>`
+              : result
+                ? repeat(
+                    Array.from({ length: this.convLayers }, (_, layer) => layer),
+                    (name) => name,
+                    (_name, layer) => html`
+                    <div class="drl-layer-block">
+                      <h5 class="drl-layer-title">${convLayerName(layer)} — ${this.filterCounts[layer]} canal(aux)</h5>
+                      <div class="drl-cells-grid">
+                        ${repeat(
+                          Array.from({ length: this.filterCounts[layer] }, (_, channel) => channel),
+                          (channel) => channel,
+                          (channel) => html`
+                            <figure class="drl-cell">
+                              <canvas
+                                class="drl-canvas drl-canvas--filter"
+                                data-layer=${layer}
+                                data-channel=${channel}
+                                width=${FILTER_CANVAS_SIZE}
+                                height=${FILTER_CANVAS_SIZE}
+                                role="img"
+                                aria-label=${`Filtre ${convLayerName(layer)}, canal de sortie ${channel + 1}, biais ${formatValue(this.filterBias(layer, channel), 3)}`}
+                                @pointerdown=${this.handleFilterCellClick}
+                              ></canvas>
+                              <figcaption>
+                                ${filterBiasCaption(channel, this.filterBias(layer, channel))}
+                              </figcaption>
+                            </figure>
+                          `,
+                        )}
+                      </div>
                     </div>
-                  </div>
-                `,
-                )
-              : html`<p class="drl-hint">En attente du premier passage avant.</p>`
+                  `,
+                  )
+                : html`<p class="drl-hint">En attente du premier passage avant.</p>`
           }
           ${this.renderFilterLinks()}
         </section>
@@ -2830,7 +3066,11 @@ export class MnistCnn extends LitElement {
         <section class="drl-panel" aria-label="Cartes de caractéristiques">
           <h4 class="drl-panel-title">Cartes de caractéristiques</h4>
           <p class="drl-panel-subtitle">
-            Activations après ${this.activation === 'tanh' ? 'tanh' : 'sigmoïde'} ; rouge = ${activationScaleLabels(this.activation)[0]}, gris = ${activationScaleLabels(this.activation)[1]}, bleu = ${activationScaleLabels(this.activation)[2]}. Tailles : 26, 13, 11 puis 5.
+            Activations après ${this.activation === 'tanh' ? 'tanh' : 'sigmoïde'} ; rouge = ${activationScaleLabels(this.activation)[0]}, gris = ${activationScaleLabels(this.activation)[1]}, bleu = ${activationScaleLabels(this.activation)[2]}. ${
+              featureMapSizes(this.convLayers).length > 0
+                ? `Tailles : ${featureMapSizes(this.convLayers).join(', ')}.`
+                : 'Aucune carte de convolution.'
+            }
           </p>
           <div
             class="drl-activation-scale"
@@ -2843,40 +3083,46 @@ export class MnistCnn extends LitElement {
             </span>
           </div>
           ${
-            result
-              ? repeat(
-                  result.featureMaps,
-                  (featureMap) => featureMap.name,
-                  (featureMap, layer) => html`
-                  <div class="drl-layer-block">
-                    <h5 class="drl-layer-title">
-                      ${featureMap.name} — ${featureMap.width}×${featureMap.height}×${featureMap.channels}
-                    </h5>
-                    <div class="drl-cells-grid">
-                      ${repeat(
-                        Array.from({ length: featureMap.channels }, (_, channel) => channel),
-                        (channel) => channel,
-                        (channel) => html`
-                          <figure class="drl-cell">
-                            <canvas
-                              class="drl-canvas drl-canvas--map"
-                              data-layer=${layer}
-                              data-channel=${channel}
-                              width=${MAP_CANVAS_SIZES[layer]}
-                              height=${MAP_CANVAS_SIZES[layer]}
-                              role="img"
-                              aria-label="Carte de caractéristiques ${featureMap.name}, canal ${channel + 1}"
-                            ></canvas>
-                            <figcaption>canal ${channel + 1}</figcaption>
-                          </figure>
-                        `,
-                      )}
-                    </div>
-                  </div>
-                `,
-                )
-              : html`<p class="drl-hint">En attente du premier passage avant.</p>`
+            this.convLayers === 0
+              ? html`<p class="drl-hint">Aucune couche de convolution : l'entrée 28×28 est aplatie vers les couches denses.</p>`
+              : result
+                ? repeat(
+                    result.featureMaps,
+                    (featureMap) => featureMap.name,
+                    (featureMap, layer) => {
+                      const size = mapCanvasSize(featureMap.width);
+                      return html`
+                        <div class="drl-layer-block">
+                          <h5 class="drl-layer-title">
+                            ${featureMap.name} — ${featureMap.width}×${featureMap.height}×${featureMap.channels}
+                          </h5>
+                          <div class="drl-cells-grid">
+                            ${repeat(
+                              Array.from({ length: featureMap.channels }, (_, channel) => channel),
+                              (channel) => channel,
+                              (channel) => html`
+                                <figure class="drl-cell">
+                                  <canvas
+                                    class="drl-canvas drl-canvas--map"
+                                    data-layer=${layer}
+                                    data-channel=${channel}
+                                    width=${size}
+                                    height=${size}
+                                    role="img"
+                                    aria-label="Carte de caractéristiques ${featureMap.name}, canal ${channel + 1}"
+                                  ></canvas>
+                                  <figcaption>canal ${channel + 1}</figcaption>
+                                </figure>
+                              `,
+                            )}
+                          </div>
+                        </div>
+                      `;
+                    },
+                  )
+                : html`<p class="drl-hint">En attente du premier passage avant.</p>`
           }
+          ${result ? this.renderDenseActivations(result) : nothing}
         </section>
       </div>
     `;
@@ -2889,6 +3135,11 @@ export class MnistCnn extends LitElement {
    * le conseil de geste de `weight-editor.ts` à la place du formulaire.
    */
   private renderWeightEditor(): TemplateResult | typeof nothing {
+    // Sans couche de convolution, aucune toile de filtres n'existe : il n'y a
+    // rien à sélectionner, donc pas de formulaire ni de conseil de geste.
+    if (this.convLayers === 0) {
+      return nothing;
+    }
     const selection = this.selection;
     if (selection !== null && selection.kind === 'link') {
       return html`<p class="drl-hint">${weightEditorHint()}</p>`;
@@ -2896,7 +3147,7 @@ export class MnistCnn extends LitElement {
     if (selection === null) {
       return nothing;
     }
-    const view = weightEditorView(selection, this.weights, this.filterCounts);
+    const view = weightEditorView(selection, this.weights, this.architectureConfig);
     if (view === null) {
       return nothing;
     }
@@ -2936,10 +3187,15 @@ export class MnistCnn extends LitElement {
    * panneau même sans passage avant, pour que le `ResizeObserver` la trouve.
    */
   private renderFilterLinks(): TemplateResult {
+    // Sans couche de convolution, aucune frontière n'existe : le SVG reste
+    // présent (vide) pour que le `ResizeObserver` et la requête DOM le trouvent.
+    if (this.convLayers === 0) {
+      return html`<svg class="drl-filter-links"></svg>`;
+    }
     return html`
       <svg class="drl-filter-links">
         ${repeat(
-          enumerateLinks(this.filterCounts),
+          enumerateLinks(this.filterCounts, this.convLayers),
           (link) => `${link.boundary}:${link.inputChannel}:${link.outputChannel}`,
           (link) => this.renderFilterLink(link),
         )}
@@ -2964,6 +3220,7 @@ export class MnistCnn extends LitElement {
       link.inputChannel,
       link.outputChannel,
       this.filterCounts,
+      this.convLayers,
     );
     return html`
       <g
