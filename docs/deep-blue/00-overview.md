@@ -49,6 +49,11 @@ bibliothèque, pas comme des détails internes de la démo.
   step-chunkés et des évaluateurs interchangeables.
 - La couche **visualisation** (`04-arbre.md`) consomme les enregistrements
   d'exploration produits par n'importe quel agent instrumenté.
+- La page Deep Blue peut **compiler un évaluateur JavaScript écrit par
+  l'utilisateur** : le corps d'une fonction `evaluate(state, ctx)` est compilé
+  une fois, borné à ±0.9499, et sert à la recherche en direct comme à celle de
+  l'arbre rejoué. Détail et avertissement de sécurité : `05-usage.md` (sections
+  3.3.1 et 4.4).
 - `01-contrats.md` fixe les interfaces entre ces couches.
 
 ## Documents

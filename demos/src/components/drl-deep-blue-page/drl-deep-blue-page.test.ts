@@ -1,8 +1,9 @@
 import { describe, expect, it, vi } from 'vitest';
 import type { VisitEvent } from '../../core/contracts.js';
+import { defaultCustomSource } from '../../core/search/evaluators/custom.js';
 import { TreeModel } from '../../core/search/tree-model.js';
 import { TIC_TAC_TOE_GAME_CONFIG } from '../shared/create-game-component.js';
-import { DrlDeepBluePage, firstMoveOnPath } from './drl-deep-blue-page.js';
+import { type DeepBlueGameId, DrlDeepBluePage, firstMoveOnPath } from './drl-deep-blue-page.js';
 
 interface PageState {
   readonly id: number;
@@ -471,5 +472,194 @@ describe('DrlDeepBluePage render order', () => {
     expect(searchStart).toBeGreaterThan(text.indexOf('Agent vs Agent'));
     // La rangée de recherche précède la mise en page et n'est pas imbriquée dedans.
     expect(layoutStart).toBeGreaterThan(text.indexOf('Profondeur'));
+  });
+});
+
+describe('DrlDeepBluePage custom evaluator', () => {
+  interface Internals {
+    renderSearchFields(): unknown;
+    renderCustomBlock(): unknown;
+    renderGame(): unknown;
+    render(): unknown;
+    onEvaluatorChange(event: Event): void;
+    onCustomInput(event: Event): void;
+    onCustomApply(): void;
+    onCustomReset(): void;
+    onGamePick(event: Event): void;
+  }
+
+  interface PrivateState {
+    customSources: Record<DeepBlueGameId, string>;
+    customEvaluators: Partial<Record<DeepBlueGameId, unknown>>;
+    customError: string | null;
+  }
+
+  function internals(page: DrlDeepBluePage): Internals {
+    return page as unknown as Internals;
+  }
+
+  function priv(page: DrlDeepBluePage): PrivateState {
+    return page as unknown as PrivateState;
+  }
+
+  /** Faux arbre minimal, installé sans DOM comme dans les tests de pas. */
+  function stubTree(page: DrlDeepBluePage): { clearTree: () => void } {
+    const tree = { clearTree: vi.fn() };
+    Object.defineProperty(page, 'treeElement', { configurable: true, value: tree });
+    return tree;
+  }
+
+  function change(value: string): Event {
+    return { target: { value } } as unknown as Event;
+  }
+
+  it('offers the custom option in the evaluator select', () => {
+    const page = createPage();
+    expect(collectStrings(internals(page).renderSearchFields())).toContain('custom');
+  });
+
+  it('renders the custom block only for the custom evaluator', () => {
+    const page = createPage();
+    const block = (): string => collectStrings(internals(page).renderCustomBlock());
+    page.evaluator = 'windows';
+    expect(block()).not.toContain('Évaluateur personnalisé');
+    page.evaluator = 'custom';
+    expect(block()).toContain('Évaluateur personnalisé');
+  });
+
+  it('renders the custom block between the search row and the layout', () => {
+    const page = createPage();
+    page.evaluator = 'custom';
+    const text = collectStrings(internals(page).render());
+    const searchStart = text.indexOf('drl-page-search');
+    const customStart = text.indexOf('drl-page-custom');
+    const layoutStart = text.indexOf('drl-page-layout');
+    expect(customStart).toBeGreaterThan(searchStart);
+    expect(layoutStart).toBeGreaterThan(customStart);
+  });
+
+  it('warns that the custom code runs in the page without isolation', () => {
+    const page = createPage();
+    page.evaluator = 'custom';
+    // Le texte du modèle est replié sur plusieurs lignes : on normalise les
+    // espaces, comme le rendu HTML le ferait.
+    const text = collectStrings(internals(page).renderCustomBlock()).replace(/\s+/g, ' ');
+    expect(text).toContain(
+      'Code exécuté dans la page, sans isolation. À utiliser uniquement en local avec du code de confiance.',
+    );
+  });
+
+  it('links the textarea to the warning through aria-describedby', () => {
+    const page = createPage();
+    page.evaluator = 'custom';
+    const text = collectStrings(internals(page).renderCustomBlock());
+    expect(text).toContain('id="drl-custom-warning"');
+    expect(text).toContain('aria-describedby="drl-custom-warning"');
+  });
+
+  it('shows the game default source in the textarea', () => {
+    const page = createPage();
+    page.evaluator = 'custom';
+    expect(boundProperty(internals(page).renderCustomBlock(), 'value')).toBe(
+      defaultCustomSource('tic-tac-toe'),
+    );
+    page.gameKey = 'connect4';
+    expect(boundProperty(internals(page).renderCustomBlock(), 'value')).toBe(
+      defaultCustomSource('connect4'),
+    );
+  });
+
+  it('stores the draft for the active game without touching the other game', () => {
+    const page = createPage();
+    internals(page).onCustomInput(change('return 1;'));
+    expect(priv(page).customSources['tic-tac-toe']).toBe('return 1;');
+    expect(priv(page).customSources.connect4).toBe(defaultCustomSource('connect4'));
+  });
+
+  it('compiles a valid body on apply and clears the error', () => {
+    const page = createPage();
+    page.evaluator = 'custom';
+    const tree = stubTree(page);
+    internals(page).onCustomInput(change('return 0.5;'));
+    internals(page).onCustomApply();
+    expect(priv(page).customEvaluators['tic-tac-toe']).toBeDefined();
+    expect(priv(page).customError).toBeNull();
+    expect(tree.clearTree).toHaveBeenCalledTimes(1);
+  });
+
+  it('compiles the default evaluator when created already in custom mode', () => {
+    const page = createPage();
+    // Sans DOM, `syncTreeGame` doit pouvoir sortir tôt : arbre et jeu absents.
+    Object.defineProperty(page, 'treeElement', { configurable: true, value: null });
+    Object.defineProperty(page, 'gameElement', { configurable: true, value: null });
+    page.evaluator = 'custom';
+    (page as unknown as { updated(changed: Map<string, unknown>): void }).updated(new Map());
+    expect(priv(page).customEvaluators['tic-tac-toe']).toBeDefined();
+  });
+
+  it('reports an error on apply and keeps the previous evaluator', () => {
+    const page = createPage();
+    page.evaluator = 'custom';
+    stubTree(page);
+    internals(page).onCustomApply();
+    const previous = priv(page).customEvaluators['tic-tac-toe'];
+    expect(previous).toBeDefined();
+    internals(page).onCustomInput(change('return 0 +;'));
+    internals(page).onCustomApply();
+    expect(priv(page).customError).not.toBeNull();
+    expect(priv(page).customEvaluators['tic-tac-toe']).toBe(previous);
+  });
+
+  it('restores and compiles the default source on reset', () => {
+    const page = createPage();
+    page.evaluator = 'custom';
+    const tree = stubTree(page);
+    internals(page).onCustomInput(change('return 0.25;'));
+    internals(page).onCustomApply();
+    internals(page).onCustomReset();
+    expect(priv(page).customSources['tic-tac-toe']).toBe(defaultCustomSource('tic-tac-toe'));
+    expect(priv(page).customEvaluators['tic-tac-toe']).toBeDefined();
+    expect(priv(page).customError).toBeNull();
+    expect(tree.clearTree).toHaveBeenCalledTimes(2);
+  });
+
+  it('switches to the new game draft and compiles it when custom is selected', () => {
+    const page = createPage();
+    internals(page).onEvaluatorChange(change('custom'));
+    expect(page.evaluator).toBe('custom');
+    expect(priv(page).customEvaluators['tic-tac-toe']).toBeDefined();
+    internals(page).onGamePick(change('connect4'));
+    expect(page.gameKey).toBe('connect4');
+    expect(priv(page).customEvaluators.connect4).toBeDefined();
+    expect(boundProperty(internals(page).renderCustomBlock(), 'value')).toBe(
+      defaultCustomSource('connect4'),
+    );
+  });
+
+  it('keeps drafts and evaluators when leaving custom', () => {
+    const page = createPage();
+    internals(page).onEvaluatorChange(change('custom'));
+    const compiled = priv(page).customEvaluators['tic-tac-toe'];
+    internals(page).onCustomInput(change('return 0.75;'));
+    internals(page).onEvaluatorChange(change('windows'));
+    expect(page.evaluator).toBe('windows');
+    expect(priv(page).customSources['tic-tac-toe']).toBe('return 0.75;');
+    expect(priv(page).customEvaluators['tic-tac-toe']).toBe(compiled);
+    internals(page).onEvaluatorChange(change('custom'));
+    expect(priv(page).customEvaluators['tic-tac-toe']).toBe(compiled);
+  });
+
+  it('binds customEvaluator to the active compiled evaluator and null otherwise', () => {
+    const page = createPage();
+    expect(boundProperty(internals(page).renderGame(), 'customEvaluator')).toBeNull();
+    page.evaluator = 'custom';
+    internals(page).onEvaluatorChange(change('custom'));
+    const active = priv(page).customEvaluators['tic-tac-toe'];
+    expect(active).toBeDefined();
+    expect(boundProperty(internals(page).renderGame(), 'customEvaluator')).toBe(active);
+    internals(page).onGamePick(change('connect4'));
+    expect(boundProperty(internals(page).renderGame(), 'customEvaluator')).toBe(
+      priv(page).customEvaluators.connect4,
+    );
   });
 });
