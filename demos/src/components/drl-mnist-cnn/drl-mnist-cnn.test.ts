@@ -371,6 +371,19 @@ describe('stratifiedExampleCountEstimate', () => {
     expect(() => stratifiedExampleCountEstimate(60000, 1.5)).toThrow(RangeError);
     expect(() => stratifiedExampleCountEstimate(60000, Number.NaN)).toThrow(RangeError);
   });
+
+  it('uses the class count of the selected dataset', () => {
+    // 5 classes : 60000 ÷ 5 × 0,1 = 1200 par classe, soit 6000 exemples.
+    expect(stratifiedExampleCountEstimate(60000, 0.1, 5)).toBe(6000);
+    // Le même total avec 10 classes donne un autre résultat sur 50 exemples.
+    expect(stratifiedExampleCountEstimate(50, 0.1, 5)).toBe(5);
+    expect(stratifiedExampleCountEstimate(50, 0.1)).toBe(10);
+  });
+
+  it('rejects a class count below two', () => {
+    expect(() => stratifiedExampleCountEstimate(60000, 0.1, 1)).toThrow(RangeError);
+    expect(() => stratifiedExampleCountEstimate(60000, 0.1, 2.5)).toThrow(RangeError);
+  });
 });
 
 describe('pointerToGrid', () => {
@@ -953,6 +966,7 @@ describe('trainingRunRequest', () => {
       convLayers: 4,
       denseLayers: 2,
       denseSizes: [8, 8],
+      outputClasses: 10,
       learningRate: 0.01,
       batchSize: 64,
       trainPercent: 25,
@@ -1001,6 +1015,11 @@ describe('trainingRunRequest', () => {
   it('forwards the dense sizes from the input', () => {
     const request = trainingRunRequest(input({ denseSizes: [3, 7] }));
     expect(request.denseSizes).toEqual([3, 7]);
+  });
+
+  it('forwards the output class count from the input', () => {
+    expect(trainingRunRequest(input()).outputClasses).toBe(10);
+    expect(trainingRunRequest(input({ outputClasses: 20 })).outputClasses).toBe(20);
   });
 
   it('forwards the batch size from the input', () => {

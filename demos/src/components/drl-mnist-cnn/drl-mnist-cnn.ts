@@ -4,6 +4,11 @@ import { customElement, state } from 'lit/decorators.js';
 import { repeat } from 'lit/directives/repeat.js';
 import '../../ui/drl-slider.js';
 import {
+  type DatasetDefinition,
+  datasetClassCount,
+  getDataset,
+} from '../../core/dataset-registry.js';
+import {
   activationDomain,
   CONV_KERNEL_SIZE,
   convLayerName,
@@ -60,7 +65,20 @@ import {
   linkGeometry,
   type RectLike,
 } from './filter-links.js';
-import { fetchMnistCnnManifest, loadMnistGallery, loadMnistSplits } from './mnist-assets.js';
+import {
+  fetchMnistCnnManifest,
+  loadDatasetGallery,
+  loadDatasetSplits,
+  type MnistSplits,
+} from './mnist-assets.js';
+import {
+  loadShardedGallery,
+  loadShardedIndex,
+  loadShardedSplits,
+  type ShardedIndex,
+  type ShardedSplitIndex,
+  selectShardEntries,
+} from './sharded-assets.js';
 import {
   accuracyPoints,
   appendHistory,
@@ -593,14 +611,25 @@ export function activationScaleAriaLabel(activation: MnistCnnActivation): string
 
 /**
  * Estimation déterministe du nombre d'exemples d'une sélection stratifiée (voir
- * `selectStratifiedIndices`) pour un jeu de `total` exemples répartis en dix
- * classes équilibrées : chaque classe fournit `max(1, round(total ÷ 10 × fraction))`
- * exemples. Sert à afficher les effectifs avant le téléchargement des jeux IDX.
+ * `selectStratifiedIndices`) pour un jeu de `total` exemples répartis en
+ * `classCount` classes équilibrées : chaque classe fournit
+ * `max(1, round(total ÷ classCount × fraction))` exemples. Sert à afficher les
+ * effectifs avant le téléchargement des jeux IDX. `classCount` vaut le nombre de
+ * classes de MNIST (10) par défaut.
  */
-export function stratifiedExampleCountEstimate(total: number, fraction: number): number {
-  if (!Number.isInteger(total) || total < MNIST_CLASS_COUNT) {
+export function stratifiedExampleCountEstimate(
+  total: number,
+  fraction: number,
+  classCount: number = MNIST_CLASS_COUNT,
+): number {
+  if (!Number.isInteger(classCount) || classCount < 2) {
     throw new RangeError(
-      `stratifiedExampleCountEstimate: total must be an integer of at least ${MNIST_CLASS_COUNT}, received ${String(total)}.`,
+      `stratifiedExampleCountEstimate: classCount must be an integer of at least 2, received ${String(classCount)}.`,
+    );
+  }
+  if (!Number.isInteger(total) || total < classCount) {
+    throw new RangeError(
+      `stratifiedExampleCountEstimate: total must be an integer of at least ${classCount}, received ${String(total)}.`,
     );
   }
   if (typeof fraction !== 'number' || !Number.isFinite(fraction) || fraction <= 0 || fraction > 1) {
@@ -608,8 +637,23 @@ export function stratifiedExampleCountEstimate(total: number, fraction: number):
       `stratifiedExampleCountEstimate: fraction must be a finite number in (0, 1], received ${String(fraction)}.`,
     );
   }
-  const perClass = total / MNIST_CLASS_COUNT;
-  return MNIST_CLASS_COUNT * Math.max(1, Math.round(perClass * fraction));
+  const perClass = total / classCount;
+  return classCount * Math.max(1, Math.round(perClass * fraction));
+}
+
+/**
+ * Effectif exact des exemples retenus pour `percent` pourcent dans une fraction
+ * d'un jeu segmenté : la somme des effectifs des fragments que `selectShardEntries`
+ * garde (les premiers fragments de chaque classe). Le dernier fragment d'une
+ * classe peut être partiel, donc seul le `count` de chaque fragment retenu est
+ * exact.
+ */
+function shardedSplitExampleCount(split: ShardedSplitIndex, percent: number): number {
+  let total = 0;
+  for (const entry of selectShardEntries(split, percent)) {
+    total += entry.count;
+  }
+  return total;
 }
 
 /** Vrai si deux tuples de filtres décrivent la même architecture. */
@@ -626,6 +670,8 @@ export interface TrainingRunInput {
   readonly denseLayers: number;
   /** Largeurs des couches denses cachées, dans l'ordre, couche de sortie exclue. */
   readonly denseSizes: readonly number[];
+  /** Nombre de classes de sortie du jeu sélectionné. */
+  readonly outputClasses: number;
   readonly learningRate: number;
   readonly batchSize: number;
   readonly trainPercent: number;
@@ -648,6 +694,7 @@ export function trainingRunRequest(input: TrainingRunInput): MnistRunRequest {
     convLayers: input.convLayers,
     denseLayers: input.denseLayers,
     denseSizes: input.denseSizes,
+    outputClasses: input.outputClasses,
     learningRate: input.learningRate,
     batchSize: input.batchSize,
     seed: SEED,
@@ -1314,6 +1361,14 @@ export class MnistCnn extends LitElement {
   @state()
   private denseSizes: readonly [number, number] = DEFAULT_DENSE_SIZES;
 
+  /** Jeu de données sélectionné ; MNIST par défaut. */
+  @state()
+  private selectedDatasetId = 'mnist';
+
+  /** Index des shards QuickDraw, une fois chargé (null pour les jeux IDX). */
+  @state()
+  private shardedIndex: ShardedIndex | null = null;
+
   /** Fonction d'activation des convolutions et de la couche dense cachée. */
   @state()
   private activation: MnistCnnActivation = DEFAULT_MNIST_CNN_ACTIVATION;
@@ -1409,10 +1464,18 @@ export class MnistCnn extends LitElement {
   private batchSize = DEFAULT_BATCH_SIZE;
 
   @state()
-  private trainExampleCount = stratifiedExampleCountEstimate(MNIST_TRAIN_SPLIT_SIZE, 10 / 100);
+  private trainExampleCount = stratifiedExampleCountEstimate(
+    MNIST_TRAIN_SPLIT_SIZE,
+    10 / 100,
+    MNIST_CLASS_COUNT,
+  );
 
   @state()
-  private validationExampleCount = stratifiedExampleCountEstimate(MNIST_TEST_SPLIT_SIZE, 10 / 100);
+  private validationExampleCount = stratifiedExampleCountEstimate(
+    MNIST_TEST_SPLIT_SIZE,
+    10 / 100,
+    MNIST_CLASS_COUNT,
+  );
 
   /** Dessin des toiles reporté après la prochaine mise à jour du DOM Lit. */
   private canvasesDirty = true;
@@ -1461,14 +1524,27 @@ export class MnistCnn extends LitElement {
   /** Contrôleur du cycle de vie de l'entraînement (pur, sans DOM ni TFJS). */
   private readonly controller = new MnistTrainingController({
     loadSplits: async () => {
-      const splits = await loadMnistSplits();
+      const dataset = this.currentDataset;
+      const splits =
+        dataset.kind === 'sharded'
+          ? await loadShardedSplits(dataset, this.trainPercent, this.validationPercent)
+          : await loadDatasetSplits(dataset);
       this.splits = splits;
       return splits;
     },
     createTrainer: (config) => createMnistCnnTfjsTrainer(config),
     createSource: (dataset, indices) => createIdxTrainSource(dataset, indices),
-    selectIndices: (dataset, fraction, seed) =>
-      selectStratifiedIndices(dataset, { fraction, seed }),
+    selectIndices: (dataset, fraction, seed) => {
+      if (this.currentDataset.kind === 'sharded') {
+        // Les shards sélectionnés forment déjà la fraction demandée.
+        return Uint32Array.from({ length: dataset.count }, (_unused, index) => index);
+      }
+      return selectStratifiedIndices(dataset, {
+        fraction,
+        seed,
+        classCount: this.outputClasses,
+      });
+    },
     onStateChanged: (state) => {
       this.trainingState = state;
     },
@@ -1500,11 +1576,21 @@ export class MnistCnn extends LitElement {
     },
   });
 
-  /** Jeux IDX chargés (mis en cache par le port `loadSplits`), ou null. */
-  private splits: Awaited<ReturnType<typeof loadMnistSplits>> | null = null;
+  /** Jeux chargés (mis en cache par le port `loadSplits`), ou null. */
+  private splits: MnistSplits | null = null;
 
   private get predictedClass(): number | null {
     return this.result ? argmaxIndex(this.result.probabilities) : null;
+  }
+
+  /** Jeu de données sélectionné, lu dans le registre. */
+  private get currentDataset(): DatasetDefinition {
+    return getDataset(this.selectedDatasetId);
+  }
+
+  /** Nombre de classes de sortie du jeu sélectionné. */
+  private get outputClasses(): number {
+    return datasetClassCount(this.currentDataset);
   }
 
   /**
@@ -1538,12 +1624,14 @@ export class MnistCnn extends LitElement {
       denseLayers: this.denseLayers,
       denseSizes: this.denseSizes,
       activation: this.activation,
+      outputClasses: this.outputClasses,
     };
   }
 
   /** Vrai si l'architecture courante peut utiliser le manifeste de référence. */
   private get usesPretrainedArchitecture(): boolean {
     return (
+      this.selectedDatasetId === 'mnist' &&
       this.activation === 'sigmoid' &&
       this.convLayers === DEFAULT_CONV_LAYERS &&
       this.denseLayers === DEFAULT_DENSE_LAYERS &&
@@ -1777,10 +1865,11 @@ export class MnistCnn extends LitElement {
   }
 
   /**
-   * Charge la galerie de dix exemples par chiffre et les jeux IDX, qui servent
-   * aussi à afficher les effectifs exacts des sélections. Le premier exemple du
-   * premier chiffre est appliqué à l'entrée. Tout échec laisse le sélecteur avec
-   * l'option de recharger et un message : l'inférence reste utilisable.
+   * Charge la galerie de dix exemples par chiffre et les jeux du jeu sélectionné,
+   * qui servent aussi à afficher les effectifs exacts des sélections. Le premier
+   * exemple du premier chiffre est appliqué à l'entrée. Tout échec laisse le
+   * sélecteur avec l'option de recharger et un message : l'inférence reste
+   * utilisable.
    */
   private async loadGallery(): Promise<void> {
     if (this.galleryLoading) {
@@ -1788,8 +1877,18 @@ export class MnistCnn extends LitElement {
     }
     this.galleryLoading = true;
     try {
-      this.splits = await loadMnistSplits();
-      this.gallerySample = await loadMnistGallery();
+      const dataset = this.currentDataset;
+      this.splits =
+        dataset.kind === 'sharded'
+          ? await loadShardedSplits(dataset, this.trainPercent, this.validationPercent)
+          : await loadDatasetSplits(dataset);
+      if (dataset.kind === 'sharded') {
+        this.shardedIndex = await loadShardedIndex(dataset);
+      }
+      this.gallerySample =
+        dataset.kind === 'sharded'
+          ? await loadShardedGallery(dataset)
+          : await loadDatasetGallery(dataset);
       this.galleryClass = 0;
       this.galleryIndex = 0;
       this.galleryError = null;
@@ -1805,29 +1904,56 @@ export class MnistCnn extends LitElement {
   }
 
   /**
-   * Recalcule les effectifs affichés : exactement depuis les jeux IDX quand ils
-   * sont chargés, par estimation sur les effectifs officiels sinon.
+   * Recalcule les effectifs affichés : exactement depuis les jeux chargés quand
+   * ils le sont, par estimation sur les effectifs officiels sinon. Un jeu
+   * segmenté garde déjà la fraction demandée ; un jeu IDX est échantillonné
+   * stratifié selon le nombre de classes du jeu.
    */
   private updateExampleCounts(): void {
     const trainFraction = this.trainPercent / 100;
     const validationFraction = this.validationPercent / 100;
+    const dataset = this.currentDataset;
     if (this.splits !== null) {
-      this.trainExampleCount = selectStratifiedIndices(this.splits.train, {
-        fraction: trainFraction,
-        seed: SEED,
-      }).length;
-      this.validationExampleCount = selectStratifiedIndices(this.splits.test, {
-        fraction: validationFraction,
-        seed: SEED,
-      }).length;
+      if (dataset.kind === 'sharded') {
+        // Les shards chargés forment déjà la fraction demandée.
+        this.trainExampleCount = this.splits.train.count;
+        this.validationExampleCount = this.splits.test.count;
+      } else {
+        this.trainExampleCount = selectStratifiedIndices(this.splits.train, {
+          fraction: trainFraction,
+          seed: SEED,
+          classCount: this.outputClasses,
+        }).length;
+        this.validationExampleCount = selectStratifiedIndices(this.splits.test, {
+          fraction: validationFraction,
+          seed: SEED,
+          classCount: this.outputClasses,
+        }).length;
+      }
+    } else if (dataset.kind === 'sharded') {
+      if (this.shardedIndex !== null) {
+        this.trainExampleCount = shardedSplitExampleCount(
+          this.shardedIndex.splits.train,
+          this.trainPercent,
+        );
+        this.validationExampleCount = shardedSplitExampleCount(
+          this.shardedIndex.splits.test,
+          this.validationPercent,
+        );
+      } else {
+        this.trainExampleCount = Math.round(dataset.trainCount * trainFraction);
+        this.validationExampleCount = Math.round(dataset.testCount * validationFraction);
+      }
     } else {
       this.trainExampleCount = stratifiedExampleCountEstimate(
-        MNIST_TRAIN_SPLIT_SIZE,
+        dataset.trainCount,
         trainFraction,
+        this.outputClasses,
       );
       this.validationExampleCount = stratifiedExampleCountEstimate(
-        MNIST_TEST_SPLIT_SIZE,
+        dataset.testCount,
         validationFraction,
+        this.outputClasses,
       );
     }
   }
@@ -1845,6 +1971,7 @@ export class MnistCnn extends LitElement {
       convLayers: this.convLayers,
       denseLayers: this.denseLayers,
       denseSizes: this.denseSizes,
+      outputClasses: this.outputClasses,
       learningRate: this.learningRate,
       batchSize: this.batchSize,
       trainPercent: this.trainPercent,
