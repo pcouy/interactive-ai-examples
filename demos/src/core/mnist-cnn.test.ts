@@ -1,5 +1,7 @@
 import { describe, expect, it } from 'vitest';
 import {
+  contributingTaps,
+  convKernelIndex,
   convOutputLength,
   DEFAULT_FILTER_COUNTS,
   forwardMnistCnn,
@@ -14,6 +16,7 @@ import {
   type MnistCnnWeights,
   mnistCnnParameterCount,
   softmax,
+  withKernelWeight,
 } from './mnist-cnn.js';
 
 function sigmoidOf(value: number): number {
@@ -361,6 +364,233 @@ describe('convolution semantics', () => {
     for (const index of [1, 3, 4, 5, 6, 7]) {
       expect(output.hidden[index]).toBe(0.5); // sigmoid(0)
     }
+  });
+});
+
+describe('convKernelIndex', () => {
+  it('returns the expected HWIO flat offset', () => {
+    expect(convKernelIndex(1, 3, 0, 0, 0, 0)).toBe(0);
+    expect(convKernelIndex(1, 3, 1, 1, 0, 2)).toBe(14);
+    expect(convKernelIndex(3, 3, 1, 1, 2, 1)).toBe(43);
+    expect(convKernelIndex(2, 4, 2, 2, 1, 3)).toBe(71);
+  });
+
+  it('rejects out-of-range indices and non-integer channel counts', () => {
+    expect(() => convKernelIndex(1, 3, 3, 0, 0, 0)).toThrow(RangeError);
+    expect(() => convKernelIndex(1, 3, 3, 0, 0, 0)).toThrow(/ky/);
+    expect(() => convKernelIndex(1, 3, -1, 0, 0, 0)).toThrow(/ky/);
+    expect(() => convKernelIndex(1, 3, 1.5, 0, 0, 0)).toThrow(/integer/i);
+    expect(() => convKernelIndex(1, 3, 0, 3, 0, 0)).toThrow(/kx/);
+    expect(() => convKernelIndex(1, 3, 0, 0, 1, 0)).toThrow(/ic/);
+    expect(() => convKernelIndex(1, 3, 0, 0, 0, 3)).toThrow(/oc/);
+    expect(() => convKernelIndex(0, 3, 0, 0, 0, 0)).toThrow(/inputChannels/);
+    expect(() => convKernelIndex(-1, 3, 0, 0, 0, 0)).toThrow(/inputChannels/);
+    expect(() => convKernelIndex(1, 0, 0, 0, 0, 0)).toThrow(/outputChannels/);
+    expect(() => convKernelIndex(2.5, 3, 0, 0, 0, 0)).toThrow(/integer/i);
+    expect(() => convKernelIndex(undefined as unknown as number, 3, 0, 0, 0, 0)).toThrow(TypeError);
+  });
+});
+
+describe('withKernelWeight', () => {
+  it('writes the value at the right flat index and leaves the input untouched', () => {
+    const weights = initializeMnistCnnWeights(configWith(DEFAULT_FILTER_COUNTS), 5);
+    const before = Float32Array.from(weights.conv2.kernel);
+    const result = withKernelWeight(weights, DEFAULT_FILTER_COUNTS, 1, 2, 1, 2, 0, 0.25);
+    // ((2·3+0)·3 + 2)·3 + 1 -> 61
+    expect(convKernelIndex(3, 3, 2, 0, 2, 1)).toBe(61);
+    expect(result.conv2.kernel[61]).toBe(0.25);
+    expect(result.conv2.kernel).toHaveLength(weights.conv2.kernel.length);
+    for (let index = 0; index < before.length; index += 1) {
+      if (index === 61) {
+        continue;
+      }
+      expect(result.conv2.kernel[index]).toBe(before[index]);
+    }
+    expect(weights.conv2.kernel[61]).toBe(before[61]);
+    expect(weights.conv2.kernel).not.toBe(result.conv2.kernel);
+  });
+
+  it('returns a new object and a new kernel only for the touched layer', () => {
+    const weights = initializeMnistCnnWeights(configWith(DEFAULT_FILTER_COUNTS), 5);
+    const result = withKernelWeight(weights, DEFAULT_FILTER_COUNTS, 0, 0, 0, 0, 0, 1);
+    expect(result).not.toBe(weights);
+    expect(result.conv1).not.toBe(weights.conv1);
+    expect(result.conv1.kernel).not.toBe(weights.conv1.kernel);
+    expect(result.conv1.bias).toBe(weights.conv1.bias);
+    expect(result.conv2).toBe(weights.conv2);
+    expect(result.conv2.kernel).toBe(weights.conv2.kernel);
+    expect(result.conv2.bias).toBe(weights.conv2.bias);
+    expect(result.conv3).toBe(weights.conv3);
+    expect(result.conv3.bias).toBe(weights.conv3.bias);
+    expect(result.conv4).toBe(weights.conv4);
+    expect(result.conv4.bias).toBe(weights.conv4.bias);
+    expect(result.dense1).toBe(weights.dense1);
+    expect(result.dense2).toBe(weights.dense2);
+    expect(result.dense2.bias).toBe(weights.dense2.bias);
+  });
+
+  it('rejects a bad layer, bad indices and a non-finite value', () => {
+    const weights = initializeMnistCnnWeights(configWith(DEFAULT_FILTER_COUNTS), 5);
+    expect(() => withKernelWeight(weights, DEFAULT_FILTER_COUNTS, 4, 0, 0, 0, 0, 1)).toThrow(
+      /layer/,
+    );
+    expect(() => withKernelWeight(weights, DEFAULT_FILTER_COUNTS, -1, 0, 0, 0, 0, 1)).toThrow(
+      /layer/,
+    );
+    expect(() =>
+      withKernelWeight(
+        weights,
+        DEFAULT_FILTER_COUNTS,
+        undefined as unknown as number,
+        0,
+        0,
+        0,
+        0,
+        1,
+      ),
+    ).toThrow(TypeError);
+    expect(() => withKernelWeight(weights, DEFAULT_FILTER_COUNTS, 1.5, 0, 0, 0, 0, 1)).toThrow(
+      /layer/,
+    );
+    expect(() => withKernelWeight(weights, DEFAULT_FILTER_COUNTS, 1, 3, 0, 0, 0, 1)).toThrow(/ic/);
+    expect(() => withKernelWeight(weights, DEFAULT_FILTER_COUNTS, 1, 0, 3, 0, 0, 1)).toThrow(/oc/);
+    expect(() => withKernelWeight(weights, DEFAULT_FILTER_COUNTS, 1, 0, 0, 3, 0, 1)).toThrow(/ky/);
+    expect(() =>
+      withKernelWeight(weights, DEFAULT_FILTER_COUNTS, 1, 0, 0, 0, 0, Number.NaN),
+    ).toThrow(/finite/i);
+    expect(() =>
+      withKernelWeight(weights, DEFAULT_FILTER_COUNTS, 1, 0, 0, 0, 0, Number.POSITIVE_INFINITY),
+    ).toThrow(RangeError);
+    expect(() =>
+      withKernelWeight(weights, [3, 3, 3] as unknown as MnistCnnFilters, 1, 0, 0, 0, 0, 1),
+    ).toThrow(/four-item/);
+  });
+
+  it('rejects an out-of-range kx and a filters tuple that disagrees with the weights', () => {
+    const weights = initializeMnistCnnWeights(configWith(DEFAULT_FILTER_COUNTS), 5);
+    expect(() => withKernelWeight(weights, DEFAULT_FILTER_COUNTS, 1, 0, 0, 0, 3, 1)).toThrow(/kx/);
+    // Les poids par défaut attendent 27 valeurs pour conv1, le tuple [1, 1, 1, 1] en attend 9.
+    expect(() => withKernelWeight(weights, [1, 1, 1, 1], 1, 0, 0, 0, 0, 1)).toThrow(
+      /conv1 kernel must have 9/,
+    );
+  });
+
+  it('keeps the edited weights valid for forwardMnistCnn and changes the probabilities', () => {
+    const filters: MnistCnnFilters = [1, 1, 1, 1];
+    const config = configWith(filters);
+    const base = initializeMnistCnnWeights(config, 3);
+    for (const layer of [base.conv1, base.conv2, base.conv3, base.conv4]) {
+      layer.kernel.fill(0);
+      layer.bias.fill(0);
+    }
+    const input = rampInput();
+    const before = forwardMnistCnn(input, base, config);
+    // Chaîne de taps centraux à 1, sauf conv1 réglé à 5 par withKernelWeight :
+    // conv4 (oy, ox) remonte à l'entrée (4·oy + 5, 4·ox + 5) après quatre sigmoïdes.
+    let edited = base;
+    for (const layer of [0, 1, 2, 3]) {
+      edited = withKernelWeight(edited, filters, layer, 0, 0, 1, 1, 1);
+    }
+    edited = withKernelWeight(edited, filters, 0, 0, 0, 1, 1, 5);
+    const after = forwardMnistCnn(input, edited, config);
+    const map = after.featureMaps[3];
+    expect([map.height, map.width]).toEqual([5, 5]);
+    for (let oy = 0; oy < 5; oy += 1) {
+      for (let ox = 0; ox < 5; ox += 1) {
+        let expected = 5 * input[(4 * oy + 5) * MNIST_INPUT_SIZE + (4 * ox + 5)];
+        for (let depth = 0; depth < 4; depth += 1) {
+          expected = sigmoidOf(expected);
+        }
+        expect(map.values[oy * 5 + ox]).toBeCloseTo(expected, 6);
+      }
+    }
+    expect(after.logits).not.toEqual(before.logits);
+    expect(after.probabilities).not.toEqual(before.probabilities);
+    let sum = 0;
+    for (const probability of after.probabilities) {
+      expect(Number.isFinite(probability)).toBe(true);
+      sum += probability;
+    }
+    expect(sum).toBeCloseTo(1, 5);
+  });
+});
+
+describe('contributingTaps', () => {
+  it('returns all nine taps for an interior cell of a stride-1 no-padding layer', () => {
+    expect(contributingTaps(1, 0, 28, 13, 13)).toEqual([
+      [0, 0],
+      [0, 1],
+      [0, 2],
+      [1, 0],
+      [1, 1],
+      [1, 2],
+      [2, 0],
+      [2, 1],
+      [2, 2],
+    ]);
+  });
+
+  it('returns only the [0, 0] tap where the kernel hangs off the map', () => {
+    // En stride 1 sans remplissage, le coin haut gauche garde ses neuf taps : le noyau
+    // dépasse de la carte par le bas et la droite, jamais par le haut et la gauche.
+    expect(contributingTaps(1, 0, 28, 0, 0)).toHaveLength(9);
+    // Sur une carte 28×28, la cellule (27, 27) lit les lignes 27 à 29 : une seule ligne
+    // reste dans la carte, donc un seul tap.
+    expect(contributingTaps(1, 0, 28, 27, 27)).toEqual([[0, 0]]);
+  });
+
+  it('returns the three taps of the top row for an edge cell', () => {
+    // y = 27 sur une carte 28×28 : seul ky = 0 reste dans la carte.
+    expect(contributingTaps(1, 0, 28, 27, 13)).toEqual([
+      [0, 0],
+      [0, 1],
+      [0, 2],
+    ]);
+  });
+
+  it('keeps the taps inside the map for a stride-2 padding-1 layer at (0, 0)', () => {
+    // iy = 2·0 − 1 + ky : ky = 0 sort de la carte (−1), ky = 1 et 2 y restent.
+    // C'est le coin de conv2 : quatre pixels valides.
+    expect(contributingTaps(2, 1, 26, 0, 0)).toEqual([
+      [1, 1],
+      [1, 2],
+      [2, 1],
+      [2, 2],
+    ]);
+    expect(contributingTaps(2, 1, 26, 0, 0)).toHaveLength(4);
+  });
+
+  it('truncates only the ky axis for the real conv2 edge cell (0, 12)', () => {
+    // conv2 : pas 2, padding 1, entrée 26, sortie 13. Cellule (0, 12) :
+    // ky = 0 lit la ligne −1 (hors carte), ky = 1 et 2 restent ; les trois kx restent.
+    expect(contributingTaps(2, 1, 26, 0, 12)).toEqual([
+      [1, 0],
+      [1, 1],
+      [1, 2],
+      [2, 0],
+      [2, 1],
+      [2, 2],
+    ]);
+    expect(contributingTaps(2, 1, 26, 0, 12)).toHaveLength(6);
+  });
+
+  it('returns no tap for a cell far outside the map', () => {
+    expect(contributingTaps(1, 0, 28, 100, 100)).toEqual([]);
+    expect(contributingTaps(2, 1, 26, 500, 500)).toEqual([]);
+  });
+
+  it('rejects invalid strides, paddings, sizes and cell coordinates', () => {
+    expect(() => contributingTaps(0, 0, 28, 0, 0)).toThrow(/stride/);
+    expect(() => contributingTaps(1.5, 0, 28, 0, 0)).toThrow(/stride/);
+    expect(() => contributingTaps(1, -1, 28, 0, 0)).toThrow(/padding/);
+    expect(() => contributingTaps(1, 0.5, 28, 0, 0)).toThrow(/padding/);
+    expect(() => contributingTaps(1, 0, 0, 0, 0)).toThrow(/inputSize/);
+    expect(() => contributingTaps(1, 0, 28, -1, 0)).toThrow(/y/);
+    expect(() => contributingTaps(1, 0, 28, 0.5, 0)).toThrow(/y/);
+    expect(() => contributingTaps(1, 0, 28, 0, -1)).toThrow(/x/);
+    expect(() => contributingTaps(1, 0, 28, 0, Number.NaN)).toThrow(TypeError);
+    expect(() => contributingTaps(undefined as unknown as number, 0, 28, 0, 0)).toThrow(TypeError);
+    expect(() => contributingTaps(1, 0, 28, 0, '0' as unknown as number)).toThrow(TypeError);
   });
 });
 

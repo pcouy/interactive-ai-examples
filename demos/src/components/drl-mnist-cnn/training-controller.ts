@@ -11,13 +11,15 @@
  * - une run ne démarre que depuis un état inactif, et l'état passe à `training`
  *   avant toute attente : une assertion « run active » ne peut pas échouer au
  *   démarrage ;
- * - les poids de départ sont `request.initialWeights` à la première run, puis
- *   les derniers poids rapportés par `onWeightsChanged` ;
+ * - les poids de départ sont toujours `request.initialWeights` : le composant
+ *   construit la requête depuis les poids affichés, donc chaque run repart des
+ *   poids affichés, qu'ils soient pré-entraînés, aléatoires, édités à la main ou
+ *   issus d'une run précédente ;
  * - les poids d'inférence sont rafraîchis depuis l'entraîneur au plus toutes
  *   les 250 ms pendant une run, et toujours à la pause, en fin de course et en
  *   cas d'annulation ;
  * - chaque entraîneur créé est disposé en fin de course, en cas d'annulation,
- *   de changement de curseur et de déconnexion ;
+ *   de changement de curseur, d'édition manuelle des poids et de déconnexion ;
  * - une erreur de run est rapportée une seule fois par `onError`, sauf abandon
  *   volontaire (pause, curseur, déconnexion) qui ne rapporte rien ;
  * - un évènement tardif d'une run invalidée (identifiant de run incrémenté)
@@ -43,6 +45,7 @@ import {
   onRunCancelled,
   onRunCompleted,
   onRunStarted,
+  onWeightsEdited,
   onWeightsReset,
   type TrainingState,
 } from './training-state.js';
@@ -70,7 +73,11 @@ export interface MnistTrainingPorts {
   onProgress(progress: MnistTrainingProgress): void;
   /** Signale des poids d'inférence rafraîchis depuis l'entraîneur. */
   onWeightsChanged(weights: MnistCnnWeights): void;
-  /** Signale une réinitialisation des poids vers les poids initiaux. */
+  /**
+   * Signale des poids à afficher : réinitialisation (`resetWeights`) ou
+   * édition manuelle (`notifyWeightsEdited`). Le port unique évite d'ajouter
+   * un gestionnaire côté composant pour un même effet.
+   */
   onWeightsReset(weights: MnistCnnWeights): void;
   /** Signale une erreur d'entraînement (une seule fois par run). */
   onError(message: string): void;
@@ -94,7 +101,7 @@ export interface MnistRunRequest {
   readonly trainPercent: number;
   /** Pourcentage du jeu de validation. */
   readonly validationPercent: number;
-  /** Poids de départ : pré-entraînés ou déterministes à la première run. */
+  /** Poids de départ : les poids affichés, quelle que soit leur origine. */
   readonly initialWeights: MnistCnnWeights;
 }
 
@@ -122,9 +129,6 @@ export class MnistTrainingController {
   /** Entraîneur de la run courante (null hors entraînement). */
   private trainer: MnistCnnTfjsTrainer | null = null;
 
-  /** Derniers poids rapportés par `onWeightsChanged` (poids de départ suivants). */
-  private lastTrainedWeights: MnistCnnWeights | null = null;
-
   /** Vrai dès le premier évènement de progression de la run. */
   private metricsStarted = false;
 
@@ -146,9 +150,9 @@ export class MnistTrainingController {
   /**
    * Lance un entraînement : charge les jeux IDX, sélectionne les deux
    * sous-ensembles stratifiés, crée l'entraîneur, y pousse les poids de départ
-   * et démarre la boucle par lots bornés. La préparation est abandonnée après
-   * chaque `await` dès que la run n'est plus active (pause, curseur changé,
-   * déconnexion).
+   * `request.initialWeights` et démarre la boucle par lots bornés. La préparation
+   * est abandonnée après chaque `await` dès que la run n'est plus active (pause,
+   * curseur changé, déconnexion).
    */
   async startRun(request: MnistRunRequest): Promise<void> {
     if (this.disconnected) {
@@ -186,9 +190,9 @@ export class MnistTrainingController {
       createdTrainer = trainer;
       this.trainer = trainer;
       this.assertRunActive(runId);
-      // Poids de départ : pré-entraînés ou déterministes à la première run,
-      // derniers poids affichés ensuite.
-      const startingWeights = this.lastTrainedWeights ?? request.initialWeights;
+      // Poids de départ : toujours ceux de la requête, construits par le
+      // composant depuis les poids affichés.
+      const startingWeights = request.initialWeights;
       await trainer.applyWeights(startingWeights);
       this.assertRunActive(runId);
       const run = trainer.train({
@@ -239,35 +243,44 @@ export class MnistTrainingController {
 
   /**
    * Réinitialise les poids : la run courante s'arrête et les poids donnés sont
-   * rapportés par `onWeightsReset`. Les derniers poids entraînés sont effacés :
-   * la prochaine run repart des poids rapportés ici. `origin` `random` retient
-   * des poids tirés au hasard (badge « Poids aléatoires »).
+   * rapportés par `onWeightsReset`. La prochaine run repart des poids affichés,
+   * donc de ces poids.
    */
   async resetWeights(
     weights: MnistCnnWeights,
     origin: 'initial' | 'random' = 'initial',
   ): Promise<void> {
     await this.settleRun(false);
-    this.lastTrainedWeights = null;
     this.ports.onWeightsReset(weights);
     this.currentState = onWeightsReset(this.currentState, this.manifestMatches, origin);
     this.ports.onStateChanged(this.currentState);
   }
 
   /**
+   * Poids édités à la main : la run courante s'arrête et est libérée sans
+   * rafraîchir les poids d'inférence (les poids édités sont déjà ceux
+   * affichés). Les poids édités sont rapportés par `onWeightsReset` pour être
+   * affichés : la prochaine run repart des poids affichés, donc de ces poids.
+   */
+  async notifyWeightsEdited(weights: MnistCnnWeights): Promise<void> {
+    await this.settleRun(false);
+    this.ports.onWeightsReset(weights);
+    this.currentState = onWeightsEdited(this.currentState, this.manifestMatches);
+    this.ports.onStateChanged(this.currentState);
+  }
+
+  /**
    * Curseur changé : la run courante s'arrête et l'état retombe à l'état
    * initial selon le manifeste. L'entraînement ne peut pas continuer avec une
-   * configuration obsolée. `filtersChanged` vrai efface les derniers poids
-   * entraînés : la prochaine run repart des poids de départ de la requête.
+   * configuration obsolée. `filtersChanged` vrai arrête la run sans
+   * rafraîchir les poids d'inférence : l'architecture a changé, les poids
+   * exportés de l'ancien modèle ne seraient pas valides.
    */
   async notifySliderChanged(manifestMatches: boolean, filtersChanged: boolean): Promise<void> {
     this.manifestMatches = manifestMatches;
     this.currentState = onFiltersChanged(this.currentState, manifestMatches);
     this.ports.onStateChanged(this.currentState);
-    if (filtersChanged) {
-      this.lastTrainedWeights = null;
-    }
-    await this.settleRun(true);
+    await this.settleRun(!filtersChanged);
   }
 
   /** Composant reconnecté : une nouvelle run peut démarrer. */
@@ -280,7 +293,6 @@ export class MnistTrainingController {
     this.disconnected = true;
     this.currentState = onComponentDisconnected(this.currentState);
     this.ports.onStateChanged(this.currentState);
-    this.lastTrainedWeights = null;
     await this.settleRun(true);
   }
 
@@ -341,7 +353,6 @@ export class MnistTrainingController {
       if (runId !== this.runId) {
         return;
       }
-      this.lastTrainedWeights = weights;
       this.ports.onWeightsChanged(weights);
     } catch {
       // Rafraîchissement à meilleur effort : les poids courants restent affichés.
@@ -376,7 +387,6 @@ export class MnistTrainingController {
   private async exportAndReportWeights(trainer: MnistCnnTfjsTrainer): Promise<void> {
     try {
       const weights = await trainer.exportWeights();
-      this.lastTrainedWeights = weights;
       this.ports.onWeightsChanged(weights);
     } catch {
       // Rafraîchissement à meilleur effort : les poids courants restent affichés.

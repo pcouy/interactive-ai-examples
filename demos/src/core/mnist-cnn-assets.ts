@@ -42,6 +42,9 @@ export interface MnistCnnAssets {
 const LAYER_NAMES = ['conv1', 'conv2', 'conv3', 'conv4', 'dense1', 'dense2'] as const;
 type LayerName = (typeof LAYER_NAMES)[number];
 
+/** Clés racine acceptées par le manifeste versionné. */
+const MANIFEST_ROOT_KEYS = ['schemaVersion', 'architecture', 'parameterCount', 'layers'] as const;
+
 interface LayerShape {
   readonly kernel: number;
   readonly bias: number;
@@ -126,9 +129,9 @@ function readFilters(architecture: Record<string, unknown>): MnistCnnFilters {
 /**
  * Valide un manifeste déjà désérialisé et le convertit en configuration et
  * poids exploitables par `forwardMnistCnn`. Rejette une version de schéma
- * inconnue, une architecture non prise en charge, des longueurs de noyau ou
- * de biais incorrectes, un nombre de paramètres incohérent et toute valeur
- * non finie.
+ * inconnue, des clés racine inconnues, une architecture non prise en charge,
+ * des longueurs de noyau ou de biais incorrectes, un nombre de paramètres
+ * incohérent et toute valeur non finie.
  */
 export function parseMnistCnnManifest(raw: unknown): MnistCnnAssets {
   const root = requireObject(raw, 'manifest');
@@ -136,6 +139,14 @@ export function parseMnistCnnManifest(raw: unknown): MnistCnnAssets {
   if (version !== MNIST_CNN_MANIFEST_SCHEMA_VERSION) {
     throw new RangeError(
       `mnist-cnn-assets: unsupported schema version ${String(version)}, expected ${MNIST_CNN_MANIFEST_SCHEMA_VERSION}.`,
+    );
+  }
+  const extraRootKeys = Object.keys(root).filter(
+    (key) => !(MANIFEST_ROOT_KEYS as readonly string[]).includes(key),
+  );
+  if (extraRootKeys.length > 0) {
+    throw new RangeError(
+      `mnist-cnn-assets: unsupported manifest keys ${JSON.stringify(extraRootKeys)}, only "schemaVersion", "architecture", "parameterCount" and "layers" are supported.`,
     );
   }
   const filters = readFilters(requireObject(root.architecture, 'architecture'));

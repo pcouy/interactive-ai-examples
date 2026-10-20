@@ -245,6 +245,173 @@ function validateWeights(weights: MnistCnnWeights, filters: MnistCnnFilters): vo
   validateLayerWeights(weights.dense2, 'dense2', HIDDEN_DENSE_SIZE * LOGIT_COUNT, LOGIT_COUNT);
 }
 
+/** Exige un nombre fini, utilisé pour les paramètres qui doivent être des entiers. */
+function requireFiniteNumber(value: number, name: string): void {
+  if (typeof value !== 'number' || !Number.isFinite(value)) {
+    throw new TypeError(`${name} must be a finite number, received ${String(value)}.`);
+  }
+}
+
+/** Exige un entier ≥ 1 (pas, taille de carte, compte de canaux). */
+function requirePositiveInteger(value: number, name: string): void {
+  requireFiniteNumber(value, name);
+  if (!Number.isInteger(value) || value < 1) {
+    throw new RangeError(`${name} must be a positive integer, received ${String(value)}.`);
+  }
+}
+
+/** Exige un entier ≥ 0, sans borne haute. */
+function requireNonNegativeInteger(value: number, name: string): void {
+  requireFiniteNumber(value, name);
+  if (!Number.isInteger(value) || value < 0) {
+    throw new RangeError(`${name} must be a non-negative integer, received ${String(value)}.`);
+  }
+}
+
+/** Exige un indice entier dans [0, limit). */
+function requireIndexWithin(value: number, limit: number, name: string): void {
+  requireFiniteNumber(value, name);
+  if (!Number.isInteger(value) || value < 0 || value >= limit) {
+    throw new RangeError(
+      `${name} must be an integer from 0 to ${limit - 1}, received ${String(value)}.`,
+    );
+  }
+}
+
+/**
+ * Indice à plat HWIO d'un poids de noyau de convolution :
+ * (ky · CONV_KERNEL_SIZE + kx) · inputChannels · outputChannels
+ * + ic · outputChannels + oc, le même ordre que `convolve`.
+ */
+export function convKernelIndex(
+  inputChannels: number,
+  outputChannels: number,
+  ky: number,
+  kx: number,
+  ic: number,
+  oc: number,
+): number {
+  requirePositiveInteger(inputChannels, 'inputChannels');
+  requirePositiveInteger(outputChannels, 'outputChannels');
+  requireIndexWithin(ky, CONV_KERNEL_SIZE, 'ky');
+  requireIndexWithin(kx, CONV_KERNEL_SIZE, 'kx');
+  requireIndexWithin(ic, inputChannels, 'ic');
+  requireIndexWithin(oc, outputChannels, 'oc');
+  const kernelBase = (ky * CONV_KERNEL_SIZE + kx) * inputChannels * outputChannels;
+  return kernelBase + ic * outputChannels + oc;
+}
+
+/** Couche de convolution d'un objet de poids, par index de couche (0..3). */
+function convLayerOf(weights: MnistCnnWeights, layer: number): MnistCnnLayerWeights {
+  switch (layer) {
+    case 0:
+      return weights.conv1;
+    case 1:
+      return weights.conv2;
+    case 2:
+      return weights.conv3;
+    case 3:
+      return weights.conv4;
+    default:
+      throw new RangeError(
+        `layer must be an integer from 0 to ${CONV_LAYER_NAMES.length - 1}, received ${String(layer)}.`,
+      );
+  }
+}
+
+/** Copie les poids en remplaçant une seule couche de convolution. */
+function withConvLayer(
+  weights: MnistCnnWeights,
+  layer: number,
+  next: MnistCnnLayerWeights,
+): MnistCnnWeights {
+  switch (layer) {
+    case 0:
+      return { ...weights, conv1: next };
+    case 1:
+      return { ...weights, conv2: next };
+    case 2:
+      return { ...weights, conv3: next };
+    case 3:
+      return { ...weights, conv4: next };
+    default:
+      throw new RangeError(
+        `layer must be an integer from 0 to ${CONV_LAYER_NAMES.length - 1}, received ${String(layer)}.`,
+      );
+  }
+}
+
+/**
+ * Retourne une copie des poids où un seul poids de noyau de convolution est
+ * remplacé : le noyau de la couche touchée est un nouveau Float32Array, toutes
+ * les autres couches et tous les biais gardent leur référence d'origine.
+ * `weights` n'est jamais modifié.
+ */
+export function withKernelWeight(
+  weights: MnistCnnWeights,
+  filters: MnistCnnFilters,
+  layer: number,
+  ic: number,
+  oc: number,
+  ky: number,
+  kx: number,
+  value: number,
+): MnistCnnWeights {
+  validateFilterCounts(filters);
+  requireFiniteNumber(layer, 'layer');
+  if (!Number.isInteger(layer) || layer < 0 || layer >= CONV_LAYER_NAMES.length) {
+    throw new RangeError(
+      `layer must be an integer from 0 to ${CONV_LAYER_NAMES.length - 1}, received ${String(layer)}.`,
+    );
+  }
+  validateWeights(weights, filters);
+  if (!Number.isFinite(value)) {
+    throw new RangeError(`value must be a finite number, received ${String(value)}.`);
+  }
+  const plans = convLayerPlans(filters);
+  const plan = plans[layer];
+  const previous = convLayerOf(weights, layer);
+  const kernel = previous.kernel.slice();
+  kernel[convKernelIndex(plan.inputChannels, plan.outputChannels, ky, kx, ic, oc)] = value;
+  return withConvLayer(weights, layer, { kernel, bias: previous.bias });
+}
+
+/**
+ * Taps `[ky, kx]` d'une convolution 3×3 qui contribuent à la cellule de sortie
+ * `(y, x)` : un tap compte quand ses coordonnées d'entrée `y·stride − padding + ky`
+ * et `x·stride − padding + kx` restent dans la carte d'entrée `[0, inputSize)`.
+ * Les taps sont renvoyés en ordre ligne-major ; une cellule trop éloignée de la
+ * carte n'en reçoit aucun. `convolve` applique exactement la même condition.
+ */
+export function contributingTaps(
+  stride: number,
+  padding: number,
+  inputSize: number,
+  y: number,
+  x: number,
+): ReadonlyArray<readonly [number, number]> {
+  requirePositiveInteger(stride, 'stride');
+  requireNonNegativeInteger(padding, 'padding');
+  requirePositiveInteger(inputSize, 'inputSize');
+  requireNonNegativeInteger(y, 'y');
+  requireNonNegativeInteger(x, 'x');
+  const taps: [number, number][] = [];
+  for (let ky = 0; ky < CONV_KERNEL_SIZE; ky += 1) {
+    const iy = y * stride - padding + ky;
+    if (iy < 0 || iy >= inputSize) {
+      continue;
+    }
+    for (let kx = 0; kx < CONV_KERNEL_SIZE; kx += 1) {
+      const ix = x * stride - padding + kx;
+      if (ix < 0 || ix >= inputSize) {
+        continue;
+      }
+      taps.push([ky, kx]);
+    }
+  }
+  return taps;
+}
+
 /**
  * Convolution 3×3 + sigmoïde sur une carte carrée NHWC. Le remplissage est
  * traité implicitement : les coordonnées hors carte contribuent zéro.

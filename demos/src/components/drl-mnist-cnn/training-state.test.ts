@@ -11,6 +11,7 @@ import {
   onRunCancelled,
   onRunCompleted,
   onRunStarted,
+  onWeightsEdited,
   onWeightsReset,
   type TrainingState,
   trainingStateBadge,
@@ -119,6 +120,15 @@ describe('onWeightsReset', () => {
   });
 });
 
+describe('onWeightsEdited', () => {
+  it('never returns training and returns the initial state for every current state', () => {
+    for (const state of ALL_STATES) {
+      expect(onWeightsEdited(state, true)).toBe('pretrained');
+      expect(onWeightsEdited(state, false)).toBe('deterministic');
+    }
+  });
+});
+
 describe('onFiltersChanged', () => {
   it('returns to the initial state for every current state', () => {
     for (const state of ALL_STATES) {
@@ -186,6 +196,7 @@ describe('inactive-run guarantee', () => {
       onPauseRequested,
       onRunCancelled,
       (state) => onWeightsReset(state, true),
+      (state) => onWeightsEdited(state, true),
       (state) => onFiltersChanged(state, true),
       onComponentDisconnected,
     ];

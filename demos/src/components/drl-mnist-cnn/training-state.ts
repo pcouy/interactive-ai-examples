@@ -15,8 +15,8 @@
  * courant et du contexte (manifeste disponible et compatible ou non). La
  * garantie centrale : aucune transition ne laisse l'état à `training` quand
  * aucune run n'est active — toute transition qui met fin à une run (pause,
- * annulation, réinitialisation, changement de curseur, déconnexion) fait
- * retomber l'état sur un état inactif.
+ * annulation, réinitialisation, édition manuelle des poids, changement de
+ * curseur, déconnexion) fait retomber l'état sur un état inactif.
  */
 
 export type TrainingState =
@@ -93,6 +93,15 @@ export function onWeightsReset(
   origin: 'initial' | 'random' = 'initial',
 ): TrainingState {
   return origin === 'random' ? 'random' : initialTrainingState(manifestMatches);
+}
+
+/**
+ * Poids édités à la main : l'utilisateur fournit les poids affichés. Quel que
+ * soit l'état courant, l'état retombe à l'état initial selon le manifeste :
+ * une run en cours ne peut pas continuer avec des poids inconnus.
+ */
+export function onWeightsEdited(_state: TrainingState, manifestMatches: boolean): TrainingState {
+  return initialTrainingState(manifestMatches);
 }
 
 /**
