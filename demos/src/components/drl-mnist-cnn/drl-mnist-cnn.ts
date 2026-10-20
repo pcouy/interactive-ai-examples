@@ -24,7 +24,6 @@ import {
   type MnistCnnFeatureMap,
   type MnistCnnFilters,
   type MnistCnnForwardResult,
-  type MnistCnnLayerWeights,
   type MnistCnnWeights,
   mnistCnnParameterCount,
 } from '../../core/mnist-cnn.js';
@@ -80,6 +79,7 @@ import { applyWeightDraft, weightEditorHint, weightEditorView } from './weight-e
 import {
   applyWeightEditorEvent,
   type FilterView,
+  featureMapSizes,
   filterCanvasInputChannel,
   filterKernelMean,
   filterKernelSlice,
@@ -421,6 +421,22 @@ export function filterPanelSubtitle(selection: WeightSelection): string {
 /** Légende d'un canal de sortie : numéro et biais à trois décimales. */
 export function filterBiasCaption(channel: number, bias: number): string {
   return `sortie ${channel + 1} · b = ${formatValue(bias, 3)}`;
+}
+
+/** Titre d'une couche dense dans le panneau d'activations. */
+export function denseLayerTitle(index: number, total: number, units: number): string {
+  return index === total - 1 ? `Sortie — ${units} classes` : `Dense ${index + 1} — ${units} unités`;
+}
+
+/** Libellé accessible d'une unité cachée. */
+export function denseCellLabel(unit: number, value: number): string {
+  return `unité ${unit + 1} : ${formatValue(value, 3)}`;
+}
+
+/** Libellé accessible d'une classe de sortie, avec la mention du maximum. */
+export function outputCellLabel(digit: number, probability: number, isMax: boolean): string {
+  const base = `chiffre ${digit} : ${formatValue(probability * 100, 1)} %`;
+  return isMax ? `${base}, maximum` : base;
 }
 
 /**
@@ -1107,6 +1123,74 @@ export class MnistCnn extends LitElement {
         display: flex;
         flex-wrap: wrap;
         gap: var(--drl-space-1);
+      }
+
+      .drl-dense-layer {
+        display: flex;
+        flex-direction: column;
+        gap: var(--drl-space-1);
+        margin-top: var(--drl-space-2);
+      }
+
+      .drl-dense-title {
+        margin: 0;
+        color: var(--drl-muted);
+        font-size: 0.85em;
+      }
+
+      .drl-dense-pack {
+        display: grid;
+        grid-template-columns: repeat(4, 1fr);
+        gap: 2px;
+        width: 8rem;
+        margin: 0;
+        padding: 0;
+        list-style: none;
+      }
+
+      .drl-dense-cell {
+        aspect-ratio: 1;
+        border: 1px solid var(--drl-border);
+        border-radius: 2px;
+      }
+
+      .drl-dense-output {
+        display: flex;
+        flex-wrap: wrap;
+        gap: var(--drl-space-1);
+        margin: 0;
+        padding: 0;
+        list-style: none;
+      }
+
+      .drl-dense-output-cell {
+        display: flex;
+        flex-direction: column;
+        align-items: center;
+        gap: 2px;
+      }
+
+      .drl-dense-square {
+        width: 1.4rem;
+        height: 1.4rem;
+        border: 1px solid var(--drl-border);
+        border-radius: 2px;
+      }
+
+      .drl-dense-digit {
+        color: var(--drl-muted);
+        font-size: 0.7em;
+        font-variant-numeric: tabular-nums;
+      }
+
+      .drl-dense-output-cell--max .drl-dense-square {
+        outline: 2px solid var(--drl-fg);
+        outline-offset: 1px;
+      }
+
+      .drl-dense-output-cell--max .drl-dense-digit {
+        color: var(--drl-fg);
+        font-weight: 700;
       }
 
       .drl-cell {
@@ -2574,6 +2658,74 @@ export class MnistCnn extends LitElement {
     `;
   }
 
+  /**
+   * Panneau des couches denses : une compacité de carrés par couche cachée,
+   * colorée sur l'échelle de l'activation choisie, puis la rangée de dix cases
+   * de sortie, colorée sur l'échelle 0–1, avec le maximum souligné.
+   */
+  private renderDenseActivations(result: MnistCnnForwardResult): TemplateResult {
+    return html`
+      <div class="drl-layer-block">
+        <h5 class="drl-layer-title">Couches denses</h5>
+        ${result.denseActivations.slice(0, -1).map((values, layer) => {
+          const rgbOf = (value: number) => activationRgb(value, this.activation);
+          const title = denseLayerTitle(layer, result.denseActivations.length, values.length);
+          return html`
+            <div class="drl-dense-layer">
+              <p class="drl-dense-title">${title}</p>
+              <ul class="drl-dense-pack" role="list" aria-label=${`Activations de ${title}`}>
+                ${Array.from(values, (value, unit) => {
+                  const rgb = rgbOf(value);
+                  return html`
+                    <li
+                      class="drl-dense-cell"
+                      role="listitem"
+                      style=${`background: rgb(${rgb[0]}, ${rgb[1]}, ${rgb[2]})`}
+                      aria-label=${denseCellLabel(unit, value)}
+                    ></li>
+                  `;
+                })}
+              </ul>
+            </div>
+          `;
+        })}
+        ${(() => {
+          const probabilities = result.denseActivations[result.denseActivations.length - 1];
+          const maximum = argmaxIndex(probabilities);
+          return html`
+            <div class="drl-dense-layer">
+              <p class="drl-dense-title">
+                ${denseLayerTitle(
+                  result.denseActivations.length - 1,
+                  result.denseActivations.length,
+                  probabilities.length,
+                )}
+              </p>
+              <ol class="drl-dense-output" aria-label="Probabilités par classe, maximum surligné">
+                ${Array.from(probabilities, (probability, digit) => {
+                  const rgb = activationRgb(probability, 'sigmoid');
+                  const isMax = digit === maximum;
+                  return html`
+                    <li
+                      class=${`drl-dense-output-cell${isMax ? ' drl-dense-output-cell--max' : ''}`}
+                      aria-label=${outputCellLabel(digit, probability, isMax)}
+                    >
+                      <span
+                        class="drl-dense-square"
+                        style=${`background: rgb(${rgb[0]}, ${rgb[1]}, ${rgb[2]})`}
+                      ></span>
+                      <span class="drl-dense-digit">${digit}</span>
+                    </li>
+                  `;
+                })}
+              </ol>
+            </div>
+          `;
+        })()}
+      </div>
+    `;
+  }
+
   protected renderContent(): TemplateResult {
     const result = this.result;
     return html`
@@ -2912,7 +3064,11 @@ export class MnistCnn extends LitElement {
         <section class="drl-panel" aria-label="Cartes de caractéristiques">
           <h4 class="drl-panel-title">Cartes de caractéristiques</h4>
           <p class="drl-panel-subtitle">
-            Activations après ${this.activation === 'tanh' ? 'tanh' : 'sigmoïde'} ; rouge = ${activationScaleLabels(this.activation)[0]}, gris = ${activationScaleLabels(this.activation)[1]}, bleu = ${activationScaleLabels(this.activation)[2]}. Tailles : 26, 13, 11 puis 5.
+            Activations après ${this.activation === 'tanh' ? 'tanh' : 'sigmoïde'} ; rouge = ${activationScaleLabels(this.activation)[0]}, gris = ${activationScaleLabels(this.activation)[1]}, bleu = ${activationScaleLabels(this.activation)[2]}. ${
+              featureMapSizes(this.convLayers).length > 0
+                ? `Tailles : ${featureMapSizes(this.convLayers).join(', ')}.`
+                : 'Aucune carte de convolution.'
+            }
           </p>
           <div
             class="drl-activation-scale"
@@ -2964,6 +3120,7 @@ export class MnistCnn extends LitElement {
                   )
                 : html`<p class="drl-hint">En attente du premier passage avant.</p>`
           }
+          ${result ? this.renderDenseActivations(result) : nothing}
         </section>
       </div>
     `;

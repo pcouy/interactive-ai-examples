@@ -13,6 +13,8 @@ import {
   argmaxIndex,
   brushStrength,
   convLayerGeometry,
+  denseCellLabel,
+  denseLayerTitle,
   describeLinkLabel,
   describeWeightSelection,
   filterBiasCaption,
@@ -29,6 +31,7 @@ import {
   mapCanvasSize,
   mapCellSize,
   mixRgb,
+  outputCellLabel,
   paintDisc,
   parseWeightInput,
   pointerToCell,
@@ -265,6 +268,23 @@ describe('filterBiasCaption', () => {
     expect(filterBiasCaption(0, 0.1254)).toBe('sortie 1 · b = 0,125');
     expect(filterBiasCaption(2, -0.0432)).toBe('sortie 3 · b = -0,043');
     expect(filterBiasCaption(4, 0)).toBe('sortie 5 · b = 0,000');
+  });
+});
+
+describe('dense activation labels', () => {
+  it('names hidden layers and the output', () => {
+    expect(denseLayerTitle(0, 2, 8)).toBe('Dense 1 — 8 unités');
+    expect(denseLayerTitle(1, 2, 10)).toBe('Sortie — 10 classes');
+  });
+
+  it('labels a hidden unit with three decimals', () => {
+    expect(denseCellLabel(2, 0.4234)).toBe('unité 3 : 0,423');
+    expect(denseCellLabel(0, -0.5)).toBe('unité 1 : -0,500');
+  });
+
+  it('labels an output class with a percentage and the maximum', () => {
+    expect(outputCellLabel(7, 0.9823, true)).toBe('chiffre 7 : 98,2 %, maximum');
+    expect(outputCellLabel(0, 0.0012, false)).toBe('chiffre 0 : 0,1 %');
   });
 });
 
