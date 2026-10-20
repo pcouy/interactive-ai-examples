@@ -56,6 +56,9 @@ export abstract class DemoElement extends LitElement {
 
   protected onReset(): void {}
 
+  /** Appelée après le démarrage de l'élément (bouton Play). */
+  protected onPlay(): void {}
+
   private readonly onFrame = (time: number): void => {
     if (!this.running) {
       this.rafId = null;
@@ -93,6 +96,7 @@ export abstract class DemoElement extends LitElement {
 
   private readonly handlePlay = (): void => {
     this.running = true;
+    this.onPlay();
   };
 
   private readonly handlePause = (): void => {

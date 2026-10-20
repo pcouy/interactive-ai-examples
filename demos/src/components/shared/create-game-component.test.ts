@@ -1025,3 +1025,122 @@ describe('GameComponent series score', () => {
     expect(text).not.toContain('Série');
   });
 });
+
+/**
+ * Joue une partie jusqu'au bout : les coups humains passent par `applyMove`,
+ * les coups agents par `stepTurn()`. Le premier coup légal est toujours
+ * jouable, donc `applyMove` réussit à chaque tour humain.
+ */
+function playToTheEnd(element: TicTacToeElement): void {
+  let guard = 40;
+  while (element.gameOutcome === null && guard > 0) {
+    const state = element.currentState;
+    if (state === null) {
+      break;
+    }
+    const player = ticTacToe.currentPlayer(state);
+    if (element.playerKinds[player] === 'human') {
+      const legal = ticTacToe.legalMoves(state);
+      expect(legal.length).toBeGreaterThan(0);
+      expect(element.applyMove(legal[0])).toBe(true);
+    } else {
+      element.stepTurn();
+    }
+    guard -= 1;
+  }
+  expect(element.gameOutcome).not.toBeNull();
+}
+
+describe('GameComponent onPlay', () => {
+  function callOnPlay(element: TicTacToeElement): void {
+    const internals = element as unknown as { onPlay(): void };
+    internals.onPlay();
+  }
+
+  it('restarts a finished human vs agent game and starts the agent after the human move', () => {
+    const element = createTicTacToeElement();
+    element.players = '["human","agent"]';
+    playToTheEnd(element);
+    expect(element.gameOutcome).not.toBeNull();
+
+    callOnPlay(element);
+    expect(element.gameOutcome).toBeNull();
+    expect(element.history).toHaveLength(1);
+    // La boucle reste active : l'agent doit démarrer après le coup humain.
+    expect(element.running).toBe(true);
+    expect((element as unknown as { pending: unknown }).pending).toBeNull();
+
+    // L'humain joue : startTurn() prépare le tour de l'agent.
+    const state = element.currentState as TicTacToeState;
+    const legal = ticTacToe.legalMoves(state);
+    expect(legal.length).toBeGreaterThan(0);
+    expect(element.applyMove(legal[0])).toBe(true);
+    expect(element.history).toHaveLength(2);
+    expect((element as unknown as { pending: unknown }).pending).not.toBeNull();
+
+    // La boucle active fait avancer le tour de l'agent jusqu'à son coup.
+    element.stepTurn();
+    expect(element.history).toHaveLength(3);
+    expect(element.gameOutcome).toBeNull();
+  });
+
+  it('restarts a finished agent vs human game and keeps the loop running', () => {
+    const element = createTicTacToeElement();
+    element.players = '["agent","human"]';
+    playToTheEnd(element);
+    expect(element.gameOutcome).not.toBeNull();
+
+    callOnPlay(element);
+    expect(element.running).toBe(true);
+    element.stepTurn();
+    expect(element.history.length).toBeGreaterThan(1);
+  });
+
+  it('leaves a finished agent vs agent game untouched', () => {
+    const element = createTicTacToeElement();
+    element.players = '["agent","agent"]';
+    playToTheEnd(element);
+    const outcome = element.gameOutcome;
+    const length = element.history.length;
+
+    callOnPlay(element);
+    expect(element.gameOutcome).toBe(outcome);
+    expect(element.history).toHaveLength(length);
+    expect(element.running).toBe(false);
+  });
+
+  it('keeps the series score when a human game is restarted', () => {
+    const element = createTicTacToeElement();
+    element.players = '["human","agent"]';
+    playToTheEnd(element);
+    const series = element.seriesScore;
+
+    callOnPlay(element);
+    expect(element.seriesScore).toEqual(series);
+  });
+});
+
+describe('GameComponent showSearchFields', () => {
+  it('shows the search fields by default with the rollout evaluator', () => {
+    const element = createTicTacToeElement();
+    element.evaluator = 'rollout';
+    const internals = element as unknown as { renderContent(): unknown };
+    const text = renderTemplateTextFlat(internals.renderContent());
+    expect(text).toContain('Échantillons de rollout');
+    expect(text).toContain('Actualisation (γ)');
+    expect(text).toContain('Élagage strict');
+  });
+
+  it('hides the search fields when showSearchFields is false', () => {
+    const element = createTicTacToeElement();
+    element.evaluator = 'rollout';
+    element.showSearchFields = false;
+    const internals = element as unknown as { renderContent(): unknown };
+    const text = renderTemplateTextFlat(internals.renderContent());
+    expect(text).not.toContain('Échantillons de rollout');
+    expect(text).not.toContain('Actualisation (γ)');
+    expect(text).not.toContain('Élagage strict');
+    expect(text).toContain('Annuler le coup');
+    expect(text).toContain('Morpion');
+  });
+});
