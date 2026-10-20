@@ -72,7 +72,7 @@ ce nœud, appliqué dans la partie).
 | `game` | `'tic-tac-toe' \| 'connect4'` | `'tic-tac-toe'` | jeu affiché ; toute autre valeur retombe sur `'tic-tac-toe'` |
 | `players` | string JSON | `'["human","agent"]'` | passé tel quel au composant de jeu (voir plus bas) |
 | `depth` | number | `null` → défaut du jeu (morpion 6, puissance 4 : 4) | horizon de recherche en plies |
-| `evaluator` | `'windows' \| 'rollout' \| 'random'` | `'windows'` | passé tel quel au composant de jeu |
+| `evaluator` | `'windows' \| 'rollout' \| 'random' \| 'custom'` | `'windows'` | passé tel quel au composant de jeu |
 | `rollout-samples` | number | `10` | échantillons de rollout par évaluation ; transmis au jeu (champ « Échantillons de rollout », visible seulement si `evaluator="rollout"`) |
 | `discount` | number | `1` | actualisation γ ∈ ]0, 1] ; pondère la valeur de chaque coup enfant à la remontée ; bornée à [0.01, 1] (retombe à `1` si invalide) ; champ « Actualisation (γ) » masqué quand `evaluator="random"` |
 | `auto-fit` | boolean | `true` | case « Ajuster auto » de l'arbre cochée par défaut (recentre et ajuste le zoom à chaque mise à jour de l'arbre) |
@@ -85,7 +85,9 @@ sous son titre et le sélecteur de jeu, elle affiche la rangée des modes
 (Humain vs Agent / Agent vs Humain / Agent vs Agent) puis les paramètres de
 recherche — profondeur, évaluateur, échantillons de rollout (si
 `evaluator="rollout"`), actualisation (γ), élagage, élagage strict (sauf
-`evaluator="random"`) et transposition. Elle passe `show-search-fields=false` au
+`evaluator="random"`) et transposition. Quand `evaluator="custom"`, un bloc
+pleine largeur apparaît sous la rangée de recherche (section 4.4). Elle passe
+`show-search-fields=false` au
 composant de jeu embarqué, donc la zone de jeu ne répète pas les champs
 « Échantillons de rollout », « Actualisation » et « Élagage strict ». Le
 sélecteur « Élagage » fixe un booléen : choisir minimax désactive l'alpha-bêta.
@@ -233,6 +235,44 @@ terminal.
 | `connect4Heuristic` | `'windows'` | comptage des 69 fenêtres de 4 cases ; 1/2/3 pions valent 1/10/50, signé `rootPlayer`, divisé par 1000, borné à ±0.9499 |
 | `createRandomRolloutEvaluator({ rng?, samples?, maxPlies? })` | `'random-rollout'` | moyenne de `samples` playouts aléatoires (±1/0) ; défauts : graine 4157, `samples = 1`, `maxPlies = 200` |
 
+### 3.3.1 Évaluateur personnalisé (JavaScript)
+
+`compileCustomEvaluator(source, game, gameId)` compile le **corps** d'une
+fonction `evaluate(state, ctx)` écrit à la main et renvoie
+`{ ok: true, evaluator }` ou `{ ok: false, error }`. `gameId` est un
+`CustomGameId` : `'tic-tac-toe'` ou `'connect4'`. Le corps est compilé une
+seule fois avec `new Function('state', 'ctx', '"use strict";\n' + source)`,
+jamais à chaque évaluation.
+
+Le corps reçoit deux arguments :
+
+| Argument | Contenu |
+|---|---|
+| `state` | l'état du jeu : `{ cells, currentPlayer }` (morpion) ou `{ grid, currentPlayer, lastMove, history }` (puissance 4) |
+| `ctx` | `rootPlayer` et `opponent` (joueurs), `rows` et `cols` (dimensions), `game` (le `Game`), puis `lines` (morpion : les 8 triplets gagnants) ou `windows` (puissance 4 : les 69 quadruplets de 4 cases) |
+
+Le corps doit retourner un **nombre fini**. Le wrapper borne chaque résultat à
+`[-0.9499, 0.9499]` (`CUSTOM_BOUND`) ; un résultat non fini ou une exception
+levée pendant la recherche retombe sur `0`.
+
+À la compilation, une sonde exécute le corps sur `game.initialState()` pour
+`rootPlayer` 0 puis 1. Une erreur de syntaxe, une exception à la sonde, ou un
+résultat non numérique/non fini à la sonde renvoie `{ ok: false, error }`
+(`'the evaluator must return a finite number'` dans ce dernier cas) : le corps
+n'entre jamais en recherche tant qu'il n'est pas valide.
+
+`defaultCustomSource(gameId)` renvoie le corps par défaut du jeu actif :
+l'implémentation `windows` (comptage des fenêtres) pour le puissance 4, et
+`return 0` pour le morpion (heuristique nulle : le moteur résout la partie au
+terminal).
+
+Le composant de jeu expose la propriété `customEvaluator` (sans attribut),
+utilisée quand `evaluator="custom"` ; la page la renseigne (section 4.4).
+
+**Sécurité** — `new Function` s'exécute dans le realm de la page : le corps peut
+lire les globales, le stockage, les cookies et le réseau. Ce n'est **pas** un
+bac à sable. Réservé aux démos locales : ne collez pas de code non fiable.
+
 ### 3.4 Table de transposition
 
 ```ts
@@ -334,7 +374,8 @@ leur API commune est `GameComponentApi<S, M>` (alias
 |---|---|---|---|
 | `players` | string JSON | `'["human","agent"]'` | tableau de 2 kinds : `"human"`/`"agent"` ou `{ "kind": … }` ; entrée invalide → défaut |
 | `depth` | number | 6 / 4 | horizon des agents ; non fini → défaut du jeu (`sanitizeDepth`) |
-| `evaluator` | string | `'windows'` | `'windows'` \| `'rollout'` \| `'random'` (autre valeur → `'windows'`) |
+| `evaluator` | string | `'windows'` | `'windows'` \| `'rollout'` \| `'random'` \| `'custom'` (autre valeur → `'windows'`) |
+| `customEvaluator` | `Evaluator<S, M> \| null` | `null` | propriété seule (pas d'attribut) ; évaluateur utilisé quand `evaluator="custom"` (repli sur l'heuristique du jeu si `null`) |
 | `transposition` | boolean | `false` | table de transposition pour les agents minimax |
 | `strict-pruning` | boolean | `false` | élagage strict (`> β` / `< α`) ; case à cocher « Élagage strict » dans la barre d'outils (masquée quand `evaluator="random"`) |
 | `pruning` | boolean | `true` | `false` = minimax pur (sans élagage) ; `true` = alpha-beta |
@@ -348,9 +389,11 @@ Propriétés en lecture : `game`, `title`, `pieceStyle`, `playerNames`
 (`S | null`), `history` (`readonly S[]`), `gameOutcome`, `seriesScore`
 (`SeriesScore` : `{ wins: readonly [number, number], draws: number }`),
 `transpositionTable` (`TranspositionTable`), `searchStats`
-(`SearchStats | null`). Propriété mutable : `recorder` (`TreeRecorder<S> |
+(`SearchStats | null`). Propriétés mutables : `recorder` (`TreeRecorder<S> |
 null`, sans attribut) — le brancher avant le coup d'agent pour alimenter un
-`<drl-eval-tree>`.
+`<drl-eval-tree>` ; `customEvaluator` (`Evaluator<S, M> | null`, sans attribut)
+— l'évaluateur utilisé quand `evaluator="custom"` (repli sur l'heuristique du
+jeu si `null`).
 
 Méthodes : `applyMove(move: M): boolean` (coup légal uniquement, refuse si
 partie finie ou recherche en cours), `clearTranspositionTable()` (vide la table
@@ -449,6 +492,23 @@ racine→nœud, `null` si racine ou clé inconnue) et
 agents rejoués, pour que l'arbre enregistré reflète la recherche réellement
 jouée. Elle n'hérite pas de `DemoElement` : les contrôles de lecture sont ceux
 des composants enfants.
+
+Quand `evaluator="custom"`, la page affiche sous la rangée de recherche un bloc
+pleine largeur « Évaluateur personnalisé (JavaScript) » : une aide mémoire des
+arguments, un avertissement local (rappel complet : section 3.3.1), un
+`textarea` contenant le **corps** de la
+fonction `evaluate(state, ctx)` (contrat : section 3.3.1), les boutons
+**Appliquer** et **Réinitialiser**, et une ligne d'erreur. **Appliquer** compile
+le brouillon et l'applique : une erreur de syntaxe, une exception à la sonde sur
+l'état initial, ou un résultat non fini s'affiche alors dans la ligne d'erreur et
+le dernier évaluateur valide reste actif. **Réinitialiser** restaure la source par
+défaut du jeu et la recompile. Les brouillons et les évaluateurs compilés sont
+conservés **par jeu** : changer de jeu restaure le brouillon et l'évaluateur de
+ce jeu, et revenir à `custom` retrouve l'état précédent. Appliquer vide l'arbre
+rejoué et change `customEvaluator`, ce qui annule la recherche en attente dans le
+composant de jeu. L'évaluateur personnalisé sert à la fois la recherche en direct
+et celle de l'arbre rejoué, avec la même profondeur, la même actualisation, le
+même élagage et le même élagage strict.
 
 ## 5. Étendre la bibliothèque
 
