@@ -66,6 +66,7 @@ function makeProgress(status: MnistTrainingStatus): MnistTrainingProgress {
     batchesProcessed: 1,
     loss: 0.5,
     epochLoss: 0.5,
+    epochTrainAccuracy: 0.8,
     completedEpochs: 1,
     validationLoss: 0.4,
     validationAccuracy: 0.9,

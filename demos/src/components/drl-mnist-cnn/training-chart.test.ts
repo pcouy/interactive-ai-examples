@@ -5,6 +5,7 @@ import {
   CHART_BOX,
   type ChartBox,
   type ChartPoint,
+  type ChartSeries,
   chartAriaLabel,
   chartDomain,
   chartPath,
@@ -15,10 +16,13 @@ import {
   epochPoint,
   formatValue,
   layoutChart,
+  layoutMultiChart,
   lossPoints,
+  multiChartAriaLabel,
   TRAINING_HISTORY_CAP,
   type TrainingHistory,
   type TrainingHistoryPoint,
+  trainAccuracyPoints,
 } from './training-chart.js';
 
 /** Boîte de test : zone de tracé de 85 × 50 pixels. */
@@ -31,9 +35,14 @@ const BOX: ChartBox = {
   padBottom: 6,
 };
 
-/** Point d'historique complet, avec les deux mesures. */
-function point(epoch: number, loss: number | null, accuracy: number | null): TrainingHistoryPoint {
-  return { epoch, loss, validationAccuracy: accuracy };
+/** Point d'historique complet, avec les trois mesures. */
+function point(
+  epoch: number,
+  loss: number | null,
+  accuracy: number | null,
+  trainAccuracy: number | null = null,
+): TrainingHistoryPoint {
+  return { epoch, loss, trainAccuracy, validationAccuracy: accuracy };
 }
 
 /** Historique de `count` points, un par époque, tous mesurés. */
@@ -48,9 +57,19 @@ function measuredHistory(
   return history;
 }
 
-/** Progression de fin d'époque : `epochLoss` et `validationAccuracy` finis. */
-function epochProgress(completedEpochs: number, epochLoss = 0.4, accuracy = 0.8): EpochProgress {
-  return { completedEpochs, epochLoss, validationAccuracy: accuracy };
+/** Progression de fin d'époque : les trois mesures finies. */
+function epochProgress(
+  completedEpochs: number,
+  epochLoss = 0.4,
+  accuracy = 0.8,
+  trainAccuracy: number | null = null,
+): EpochProgress {
+  return {
+    completedEpochs,
+    epochLoss,
+    epochTrainAccuracy: trainAccuracy,
+    validationAccuracy: accuracy,
+  };
 }
 
 /** Étiquette de formatage simple, sans locale. */
@@ -116,7 +135,12 @@ describe('appendHistory', () => {
     expect(history.points).toHaveLength(1);
     expect(history.epochs).toBe(1);
     expect(history.points[0]).toBe(before);
-    expect(added).toEqual({ epoch: 2, loss: 0.3, validationAccuracy: 0.9 });
+    expect(added).toEqual({
+      epoch: 2,
+      loss: 0.3,
+      trainAccuracy: null,
+      validationAccuracy: 0.9,
+    });
     expect(result).not.toBe(history);
   });
 });
@@ -129,23 +153,43 @@ describe('epochPoint', () => {
   });
 
   it('uses nextEpoch as the abscissa and keeps finite measures', () => {
-    const result = epochPoint(epochProgress(3, 0.25, 0.75), 2, 12);
-    expect(result).toEqual({ epoch: 12, loss: 0.25, validationAccuracy: 0.75 });
+    const result = epochPoint(epochProgress(3, 0.25, 0.75, 0.9), 2, 12);
+    expect(result).toEqual({
+      epoch: 12,
+      loss: 0.25,
+      trainAccuracy: 0.9,
+      validationAccuracy: 0.75,
+    });
   });
 
   it('maps null and non-finite measures to null', () => {
     const notFinite = epochPoint(
-      { completedEpochs: 1, epochLoss: Number.NaN, validationAccuracy: Number.POSITIVE_INFINITY },
+      {
+        completedEpochs: 1,
+        epochLoss: Number.NaN,
+        epochTrainAccuracy: Number.POSITIVE_INFINITY,
+        validationAccuracy: Number.POSITIVE_INFINITY,
+      },
       0,
       1,
     );
-    expect(notFinite).toEqual({ epoch: 1, loss: null, validationAccuracy: null });
+    expect(notFinite).toEqual({
+      epoch: 1,
+      loss: null,
+      trainAccuracy: null,
+      validationAccuracy: null,
+    });
     const missing = epochPoint(
-      { completedEpochs: 1, epochLoss: null, validationAccuracy: null },
+      { completedEpochs: 1, epochLoss: null, epochTrainAccuracy: null, validationAccuracy: null },
       0,
       2,
     );
-    expect(missing).toEqual({ epoch: 2, loss: null, validationAccuracy: null });
+    expect(missing).toEqual({
+      epoch: 2,
+      loss: null,
+      trainAccuracy: null,
+      validationAccuracy: null,
+    });
   });
 });
 
@@ -183,6 +227,32 @@ describe('accuracyPoints', () => {
       epochs: 3,
     };
     expect(accuracyPoints(history)).toEqual([{ x: 2, y: 0.7 }]);
+  });
+});
+
+describe('trainAccuracyPoints', () => {
+  it('returns an empty array when no train accuracy is available', () => {
+    const history: TrainingHistory = {
+      points: [point(1, 0.4, 0.9, null), point(2, 0.3, 0.9, Number.NaN)],
+      epochs: 2,
+    };
+    expect(trainAccuracyPoints(history)).toEqual([]);
+  });
+
+  it('keeps only the finite train accuracies and maps x to the epoch', () => {
+    const history: TrainingHistory = {
+      points: [
+        point(1, 0.4, 0.9, null),
+        point(2, 0.3, 0.9, 0.7),
+        point(3, 0.2, 0.9, Number.POSITIVE_INFINITY),
+        point(4, 0.1, 0.9, 0.85),
+      ],
+      epochs: 4,
+    };
+    expect(trainAccuracyPoints(history)).toEqual([
+      { x: 2, y: 0.7 },
+      { x: 4, y: 0.85 },
+    ]);
   });
 });
 
@@ -448,6 +518,126 @@ describe('layoutChart', () => {
     const layout = layoutChart('Précision', []);
     expect(layout.path).toBe('');
     expect(layout.ariaLabel).toBe('Précision : aucune donnée.');
+  });
+});
+
+describe('multiChartAriaLabel', () => {
+  /** Courbe de test, avec un formatage simple. */
+  function series(name: string, points: ChartPoint[], lineClass = 'line'): ChartSeries {
+    return { name, points, lineClass, format: plainFormat };
+  }
+
+  it('names every present series and its last value', () => {
+    const label = multiChartAriaLabel('Précision', [
+      series('Entraînement', [
+        { x: 1, y: 0.5 },
+        { x: 2, y: 0.9 },
+      ]),
+      series('Validation', [
+        { x: 1, y: 0.4 },
+        { x: 2, y: 0.8 },
+      ]),
+    ]);
+    expect(label).toContain('Entraînement');
+    expect(label).toContain('Validation');
+    expect(label).toContain('2 points');
+    expect(label).toContain('dernière valeur 0.9');
+    expect(label).toContain('dernière valeur 0.8');
+  });
+
+  it('uses the singular for a one-point series', () => {
+    const label = multiChartAriaLabel('Précision', [series('Entraînement', [{ x: 1, y: 0.9 }])]);
+    expect(label).toContain('1 point,');
+    expect(label).not.toContain('1 points');
+  });
+
+  it('omits a series without points', () => {
+    const label = multiChartAriaLabel('Précision', [
+      series('Entraînement', [
+        { x: 1, y: 0.5 },
+        { x: 2, y: 0.9 },
+      ]),
+      series('Validation', []),
+    ]);
+    expect(label).toContain('Entraînement');
+    expect(label).not.toContain('Validation');
+  });
+
+  it('states that there is no data when every series is empty', () => {
+    const label = multiChartAriaLabel('Précision', [
+      series('Entraînement', []),
+      series('Validation', []),
+    ]);
+    expect(label).toBe('Précision : aucune donnée.');
+  });
+});
+
+describe('layoutMultiChart', () => {
+  /** Courbe de test, avec un formatage simple. */
+  function series(name: string, points: ChartPoint[], lineClass = 'line'): ChartSeries {
+    return { name, points, lineClass, format: plainFormat };
+  }
+
+  /** Courbe d'entraînement de deux points. */
+  const train = series('Entraînement', [
+    { x: 1, y: 0.5 },
+    { x: 2, y: 0.9 },
+  ]);
+
+  it('shares one domain and one tick array across the series', () => {
+    const validation = series('Validation', [
+      { x: 1, y: 0.4 },
+      { x: 2, y: 0.8 },
+    ]);
+    const layout = layoutMultiChart('Précision', [train, validation], BOX);
+    const { min, max } = chartDomain([...train.points, ...validation.points]);
+    expect(layout.ticks).toEqual(chartTickPixels(min, max, BOX));
+    // Chaque tracé utilise le domaine partagé, donc la même échelle verticale.
+    expect(layout.series[0].path).toBe(chartPath(train.points, BOX, min, max));
+    expect(layout.series[1].path).toBe(chartPath(validation.points, BOX, min, max));
+  });
+
+  it('draws one non-empty path per series', () => {
+    const layout = layoutMultiChart(
+      'Précision',
+      [
+        train,
+        series('Validation', [
+          { x: 1, y: 0.4 },
+          { x: 2, y: 0.8 },
+        ]),
+      ],
+      BOX,
+    );
+    expect(layout.series).toHaveLength(2);
+    for (const item of layout.series) {
+      expect(item.path.startsWith('M ')).toBe(true);
+      expect(item.path).toContain('L');
+    }
+    expect(layout.name).toBe('Précision');
+    expect(layout.box).toBe(BOX);
+    expect(layout.axisY).toBe(BOX.height - BOX.padBottom);
+  });
+
+  it('still draws a single-point series but marks the chart empty', () => {
+    const layout = layoutMultiChart(
+      'Précision',
+      [series('Entraînement', [{ x: 1, y: 0.5 }]), series('Validation', [{ x: 1, y: 0.4 }])],
+      BOX,
+    );
+    expect(layout.empty).toBe(true);
+    for (const item of layout.series) {
+      expect(item.path.startsWith('M ')).toBe(true);
+      expect(item.path).not.toContain('L');
+    }
+  });
+
+  it('marks the chart non-empty when one series has two points', () => {
+    const layout = layoutMultiChart('Précision', [train, series('Validation', [])], BOX);
+    expect(layout.empty).toBe(false);
+    // Une série de validation vide laisse tout de même la courbe d'entraînement.
+    expect(layout.series[0].path).toContain('L');
+    expect(layout.series[1].path).toBe('');
   });
 });
 
