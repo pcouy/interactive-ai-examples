@@ -559,6 +559,24 @@ export class NeuronCore {
   }
 
   /**
+   * Loss landscape of ONE point (x1, x2) over the weight plane: uses the
+   * current expression (fallback included), the current L1/L2 loss and the
+   * current bias. The target is evaluated once per call. Pure: no dataset
+   * access, no clamping. A non-finite target yields a non-finite loss.
+   */
+  landscapeLossForPoint(w1: number, w2: number, x1: number, x2: number): number {
+    let target: number;
+    try {
+      const raw = this.targetFn(x1, x2);
+      target = typeof raw === 'number' ? raw : Number.NaN;
+    } catch {
+      target = Number.NaN;
+    }
+    const predicted = w1 * x1 + w2 * x2 + (this.biasOn ? this.biasValue : 0);
+    return this.lossOf(predicted - target);
+  }
+
+  /**
    * Evaluates the neuron on one input point. Uses the compiled target
    * function (the default `x1 + x2` after an invalid expression), the current
    * weights, the bias only when it is enabled, and the current loss kind

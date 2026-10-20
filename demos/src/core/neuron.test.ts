@@ -993,6 +993,127 @@ describe('evaluate', () => {
   });
 });
 
+describe('point landscape', () => {
+  // Independent arithmetic: pass b = 0 when bias is off, because the core
+  // then ignores the bias term.
+  function pointLoss(
+    w1: number,
+    w2: number,
+    b: number,
+    x1: number,
+    x2: number,
+    target: number,
+    kind: LossKind,
+  ): number {
+    const err = w1 * x1 + w2 * x2 + b - target;
+    return kind === 'l1' ? Math.abs(err) : 0.5 * err * err;
+  }
+
+  it('matches the independent L2 formula at several weights', () => {
+    const core = makeCore({ expression: 'x1 * x2 + 1', count: 24, seed: 7 });
+    const x1 = 0.4;
+    const x2 = -0.6;
+    const target = 0.4 * -0.6 + 1;
+    for (const [w1, w2] of [
+      [0, 0],
+      [0.5, -0.3],
+      [1.2, -0.8],
+      [-2.5, 2.2],
+    ]) {
+      expect(core.landscapeLossForPoint(w1, w2, x1, x2)).toBeCloseTo(
+        pointLoss(w1, w2, 0, x1, x2, target, 'l2'),
+        12,
+      );
+    }
+  });
+
+  it('matches the independent L1 formula after setLoss', () => {
+    const core = makeCore({ expression: 'x1 * x2 + 1', count: 24, seed: 7 });
+    core.setLoss('l1');
+    const x1 = 0.4;
+    const x2 = -0.6;
+    const target = 0.4 * -0.6 + 1;
+    for (const [w1, w2] of [
+      [0, 0],
+      [0.5, -0.3],
+      [1.2, -0.8],
+    ]) {
+      expect(core.landscapeLossForPoint(w1, w2, x1, x2)).toBeCloseTo(
+        pointLoss(w1, w2, 0, x1, x2, target, 'l1'),
+        12,
+      );
+    }
+  });
+
+  it('uses the current bias when bias is on and ignores it when off', () => {
+    const core = makeCore({ expression: 'x1 * x2 + 1', count: 24, seed: 7 });
+    const x1 = 0.4;
+    const x2 = -0.6;
+    const target = 0.4 * -0.6 + 1;
+
+    // setWeights with b and bias off keeps b at 0.
+    core.setWeights({ w1: 0.5, w2: -0.3, b: 0.9 });
+    expect(core.b).toBe(0);
+    expect(core.landscapeLossForPoint(0.5, -0.3, x1, x2)).toBeCloseTo(
+      pointLoss(0.5, -0.3, 0, x1, x2, target, 'l2'),
+      12,
+    );
+
+    // Bias on uses the stored b.
+    core.setBiasEnabled(true);
+    core.reset({ startW1: 0.5, startW2: -0.3, startB: 0.9 });
+    expect(core.b).toBe(0.9);
+    expect(core.landscapeLossForPoint(0.5, -0.3, x1, x2)).toBeCloseTo(
+      pointLoss(0.5, -0.3, 0.9, x1, x2, target, 'l2'),
+      12,
+    );
+  });
+
+  it('matches evaluate loss at the current weights', () => {
+    const core = makeCore({ expression: 'x1 * x2 + 1', count: 24, seed: 7 });
+    core.reset({ startW1: 0.5, startW2: -0.3 });
+    const result = core.evaluate(0.4, -0.6);
+    expect(core.landscapeLossForPoint(core.w1, core.w2, 0.4, -0.6)).toBeCloseTo(result.loss, 12);
+
+    const biased = makeCore({ expression: 'x1 * x2 + 1', count: 24, seed: 7, bias: true });
+    biased.reset({ startW1: 0.5, startW2: -0.3, startB: 0.9 });
+    const biasedResult = biased.evaluate(0.4, -0.6);
+    expect(biased.landscapeLossForPoint(biased.w1, biased.w2, 0.4, -0.6)).toBeCloseTo(
+      biasedResult.loss,
+      12,
+    );
+  });
+
+  it('stays valid for a point outside the input domain without clamping', () => {
+    const core = makeCore({ expression: 'x1 + x2', count: 40, seed: 5, inputDomain: 1 });
+    core.reset({ startW1: 0.5, startW2: -0.3 });
+    const x1 = 50;
+    const x2 = -50;
+    const target = 0;
+    expect(core.landscapeLossForPoint(0.5, -0.3, x1, x2)).toBeCloseTo(
+      pointLoss(0.5, -0.3, 0, x1, x2, target, 'l2'),
+      12,
+    );
+    expect(core.landscapeLossForPoint(0.5, -0.3, x1, x2)).toBeCloseTo(800, 12);
+  });
+
+  it('yields a non-finite loss for a non-finite target', () => {
+    const core = makeCore({ expression: '1/x1', count: 24, seed: 7 });
+    core.reset({ startW1: 0.5, startW2: -0.3 });
+
+    const loss = core.landscapeLossForPoint(0.5, -0.3, 0, 0.5);
+
+    expect(Number.isFinite(loss)).toBe(false);
+    expect(loss).toBe(Number.POSITIVE_INFINITY);
+  });
+
+  it('yields a NaN loss when the target is not a number', () => {
+    const core = makeCore({ expression: 'x1 > 1 ? "abc" : 1', count: 24, seed: 7 });
+
+    expect(core.landscapeLossForPoint(0.5, -0.3, 2, 0.5)).toBeNaN();
+  });
+});
+
 describe('landscape moments', () => {
   it('matches the independent L2 mean loss across random datasets', () => {
     const rng = mulberry32(20240517);
