@@ -51,6 +51,21 @@ describe('buildCustomContext', () => {
     expect(ctx.lines).toHaveLength(8);
     expect(ctx.windows).toBeUndefined();
   });
+
+  it('freezes the context object, its arrays and their coordinates', () => {
+    const connect4Ctx = buildCustomContext(connect4.initialState(), 0, 'connect4');
+    expect(Object.isFrozen(connect4Ctx)).toBe(true);
+    expect(Object.isFrozen(connect4Ctx.windows)).toBe(true);
+    const firstWindow = connect4Ctx.windows?.[0];
+    expect(firstWindow).toBeDefined();
+    expect(Object.isFrozen(firstWindow)).toBe(true);
+    expect(Object.isFrozen(firstWindow?.[0])).toBe(true);
+
+    const ticTacToeCtx = buildCustomContext(ticTacToe.initialState(), 0, 'tic-tac-toe');
+    expect(Object.isFrozen(ticTacToeCtx)).toBe(true);
+    expect(Object.isFrozen(ticTacToeCtx.lines)).toBe(true);
+    expect(Object.isFrozen(ticTacToeCtx.lines?.[0])).toBe(true);
+  });
 });
 
 describe('compileCustomEvaluator', () => {
@@ -88,6 +103,44 @@ describe('compileCustomEvaluator', () => {
     expect(compileCustomEvaluator('return Number.NaN;', ticTacToe, 'tic-tac-toe').ok).toBe(false);
     expect(compileCustomEvaluator('return Infinity;', ticTacToe, 'tic-tac-toe').ok).toBe(false);
     expect(compileCustomEvaluator('return "1";', ticTacToe, 'tic-tac-toe').ok).toBe(false);
+  });
+
+  it('rejects a body that tries to extend the frozen helper arrays', () => {
+    const windows = compileCustomEvaluator(
+      'ctx.windows.push([0, 0, 0, 0]); return 0;',
+      connect4,
+      'connect4',
+    );
+    expect(windows.ok).toBe(false);
+
+    const lines = compileCustomEvaluator('ctx.lines.push(0); return 0;', ticTacToe, 'tic-tac-toe');
+    expect(lines.ok).toBe(false);
+  });
+
+  it('rejects a body that assigns to the frozen context during the probe', () => {
+    const result = compileCustomEvaluator('ctx.opponent = 0; return 1;', ticTacToe, 'tic-tac-toe');
+    expect(result.ok).toBe(false);
+  });
+
+  it('keeps the cached context intact when a body mutates it mid-search', () => {
+    // Le corps ne mute `ctx.opponent` que sur un état joué : la sonde (état
+    // initial) passe donc la compilation. Sur un état joué, l'affectation lève
+    // car le contexte est gelé, et l'évaluation retombe sur 0. L'évaluation
+    // suivante revoit le contexte intact.
+    const result = compileCustomEvaluator(
+      'if (state.cells[0] !== null) { ctx.opponent = 0; } return ctx.opponent * 0.5;',
+      ticTacToe,
+      'tic-tac-toe',
+    );
+    expect(result.ok).toBe(true);
+    if (!result.ok) {
+      return;
+    }
+    const initial = ticTacToe.initialState();
+    const played = ticTacToe.apply(initial, { index: 0 });
+    expect(result.evaluator.evaluate(initial, { rootPlayer: 0, game: ticTacToe })).toBe(0.5);
+    expect(result.evaluator.evaluate(played, { rootPlayer: 0, game: ticTacToe })).toBe(0);
+    expect(result.evaluator.evaluate(initial, { rootPlayer: 0, game: ticTacToe })).toBe(0.5);
   });
 
   it('clamps out-of-range results to ±0.9499', () => {

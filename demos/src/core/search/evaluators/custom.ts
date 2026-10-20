@@ -27,6 +27,7 @@ export const CUSTOM_CONNECT4_SOURCE = `// Défaut « windows » du Puissance 4 :
 const ONE = 1, TWO = 10, THREE = 50, FOUR = 10000, SCALE = 1000;
 const root = ctx.rootPlayer;
 const opp = ctx.opponent;
+const value = (n) => n === 4 ? FOUR : n === 3 ? THREE : n === 2 ? TWO : n === 1 ? ONE : 0;
 let rootTotal = 0;
 let oppTotal = 0;
 for (const window of ctx.windows) {
@@ -37,7 +38,6 @@ for (const window of ctx.windows) {
     if (cell === root) r += 1;
     else if (cell === opp) o += 1;
   }
-  const value = (n) => n === 4 ? FOUR : n === 3 ? THREE : n === 2 ? TWO : n === 1 ? ONE : 0;
   if (o === 0) rootTotal += value(r);
   else if (r === 0) oppTotal += value(o);
 }
@@ -86,6 +86,13 @@ const TIC_TAC_TOE_LINES: ReadonlyArray<readonly [number, number, number]> = [
   [0, 4, 8],
   [2, 4, 6],
 ];
+// Ces tableaux sont partagés par toutes les évaluations : un corps ne doit
+// pas pouvoir les étendre ni muter leurs coordonnées. On gèle donc le tableau
+// externe et chaque tuple de coordonnées.
+for (const line of TIC_TAC_TOE_LINES) {
+  Object.freeze(line);
+}
+Object.freeze(TIC_TAC_TOE_LINES);
 
 const TIC_TAC_TOE_SIZE = 3;
 
@@ -111,6 +118,15 @@ function buildConnect4Windows(): ReadonlyArray<WindowCells> {
 }
 
 const CONNECT4_WINDOWS: ReadonlyArray<WindowCells> = buildConnect4Windows();
+// Idem : le tableau des fenêtres, chaque fenêtre et chaque coordonnée sont
+// gelés pour qu'un corps ne puisse pas les altérer.
+for (const window of CONNECT4_WINDOWS) {
+  for (const cell of window) {
+    Object.freeze(cell);
+  }
+  Object.freeze(window);
+}
+Object.freeze(CONNECT4_WINDOWS);
 
 function gameForId(gameId: CustomGameId): Game<unknown, unknown> {
   return gameId === 'connect4' ? connect4 : ticTacToe;
@@ -120,6 +136,9 @@ function gameForId(gameId: CustomGameId): Game<unknown, unknown> {
  * Construit le contexte passé au corps personnalisé. Les dimensions viennent
  * des constantes du jeu ; `state` n'intervient pas car le contexte est le
  * même pour tout état d'un jeu donné.
+ *
+ * Le contexte est gelé : un corps ne peut pas le muter pour les feuilles
+ * suivantes. Les tableaux d'aide qu'il référence sont déjà gelés.
  */
 export function buildCustomContext(
   _state: unknown,
@@ -128,23 +147,23 @@ export function buildCustomContext(
 ): CustomContext {
   const opponent = rootPlayer === 0 ? 1 : 0;
   if (gameId === 'connect4') {
-    return {
+    return Object.freeze({
       rootPlayer,
       opponent,
       rows: CONNECT4_ROWS,
       cols: CONNECT4_COLS,
       game: gameForId(gameId),
       windows: CONNECT4_WINDOWS,
-    };
+    });
   }
-  return {
+  return Object.freeze({
     rootPlayer,
     opponent,
     rows: TIC_TAC_TOE_SIZE,
     cols: TIC_TAC_TOE_SIZE,
     game: gameForId(gameId),
     lines: TIC_TAC_TOE_LINES,
-  };
+  });
 }
 
 const CUSTOM_BOUND = 0.9499;
@@ -184,11 +203,19 @@ export function compileCustomEvaluator(
     return { ok: false, error: errorMessage(error) };
   }
 
-  const initial = game.initialState();
+  // Un contexte par joueur racine : `buildCustomContext` ne dépend que de
+  // `gameId` et de `rootPlayer`, jamais de l'état. Le construire une seule fois
+  // ici supprime une allocation d'objet à chaque feuille évaluée.
+  const contexts = new Map<PlayerId, CustomContext>();
   for (const rootPlayer of [0, 1] as const) {
+    // État initial frais par joueur : un corps qui muterait l'état reçu ne
+    // doit pas polluer la sonde du second joueur.
+    const initial = game.initialState();
     let value: unknown;
     try {
-      value = body(initial, buildCustomContext(initial, rootPlayer, gameId));
+      const context = buildCustomContext(initial, rootPlayer, gameId);
+      contexts.set(rootPlayer, context);
+      value = body(initial, context);
     } catch (error) {
       return { ok: false, error: errorMessage(error) };
     }
@@ -203,7 +230,11 @@ export function compileCustomEvaluator(
       id: 'custom',
       evaluate(state, ctx) {
         try {
-          const value = body(state, buildCustomContext(state, ctx.rootPlayer, gameId));
+          // `ctx.rootPlayer` vaut 0 ou 1 en recherche ; les autres valeurs
+          // (hors contrat) retombent sur un contexte construit à la volée.
+          const context =
+            contexts.get(ctx.rootPlayer) ?? buildCustomContext(state, ctx.rootPlayer, gameId);
+          const value = body(state, context);
           if (typeof value !== 'number' || !Number.isFinite(value)) {
             return 0;
           }
