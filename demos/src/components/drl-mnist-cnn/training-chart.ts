@@ -11,12 +11,14 @@
  * qui déborde reste monotone et sans trou.
  */
 
-/** Un point de l'historique : une époque achevée et ses deux mesures. */
+/** Un point de l'historique : une époque achevée et ses trois mesures. */
 export interface TrainingHistoryPoint {
   /** Numéro d'époque, à partir de 1. */
   readonly epoch: number;
   /** Perte d'entraînement moyenne de l'époque, ou `null` si non finie. */
   readonly loss: number | null;
+  /** Précision d'entraînement de l'époque, ou `null` si non finie. */
+  readonly trainAccuracy: number | null;
   /** Précision de validation de l'époque, ou `null` si non finie. */
   readonly validationAccuracy: number | null;
 }
@@ -38,6 +40,8 @@ export interface EpochProgress {
   readonly completedEpochs: number;
   /** Perte d'entraînement moyenne de la dernière époque achevée, ou `null`. */
   readonly epochLoss: number | null;
+  /** Précision d'entraînement de la dernière époque achevée, ou `null`. */
+  readonly epochTrainAccuracy: number | null;
   /** Précision de validation de la dernière époque achevée, ou `null`. */
   readonly validationAccuracy: number | null;
 }
@@ -108,6 +112,9 @@ export function epochPoint(
   return {
     epoch: nextEpoch,
     loss: Number.isFinite(progress.epochLoss) ? progress.epochLoss : null,
+    trainAccuracy: Number.isFinite(progress.epochTrainAccuracy)
+      ? progress.epochTrainAccuracy
+      : null,
     validationAccuracy: Number.isFinite(progress.validationAccuracy)
       ? progress.validationAccuracy
       : null,
@@ -126,6 +133,15 @@ export function accuracyPoints(history: TrainingHistory): ChartPoint[] {
   return history.points.flatMap((point) =>
     point.validationAccuracy !== null && Number.isFinite(point.validationAccuracy)
       ? [{ x: point.epoch, y: point.validationAccuracy }]
+      : [],
+  );
+}
+
+/** Points de la courbe de précision d'entraînement : les points non finis sont écartés. */
+export function trainAccuracyPoints(history: TrainingHistory): ChartPoint[] {
+  return history.points.flatMap((point) =>
+    point.trainAccuracy !== null && Number.isFinite(point.trainAccuracy)
+      ? [{ x: point.epoch, y: point.trainAccuracy }]
       : [],
   );
 }
@@ -302,5 +318,78 @@ export function layoutChart(
     axisY: box.height - box.padBottom,
     empty: points.length < 2,
     ariaLabel: chartAriaLabel(name, points, format),
+  };
+}
+
+/** Une courbe d'un graphique multi-séries : nom, points, classe CSS et formatage. */
+export interface ChartSeries {
+  /** Nom de la courbe, repris par le libellé accessible. */
+  readonly name: string;
+  /** Points de la courbe, du plus ancien au plus récent. */
+  readonly points: readonly ChartPoint[];
+  /** Classe CSS de la ligne, choisie par le composant appelant. */
+  readonly lineClass: string;
+  /** Formatage d'une valeur pour le libellé accessible. */
+  readonly format: (value: number) => string;
+}
+
+/** Graphique multi-séries : plusieurs courbes sur un domaine vertical partagé. */
+export interface MultiChartLayout {
+  /** Nom du graphique, repris par le titre et le libellé accessible. */
+  readonly name: string;
+  /** Boîte du graphique. */
+  readonly box: ChartBox;
+  /** Courbes, chacune avec son tracé SVG. */
+  readonly series: ReadonlyArray<ChartSeries & { readonly path: string }>;
+  /** Graduations verticales partagées, en valeur et en pixels. */
+  readonly ticks: ReadonlyArray<{ readonly value: number; readonly y: number }>;
+  /** Ordonnée de l'axe horizontal, au bas de la zone de tracé. */
+  readonly axisY: number;
+  /** Vrai quand aucune courbe n'a deux points : le tracé n'est pas encore lisible. */
+  readonly empty: boolean;
+  /** Libellé accessible du graphique. */
+  readonly ariaLabel: string;
+}
+
+/**
+ * Libellé accessible d'un graphique multi-séries : un segment par courbe qui a
+ * des points. Une courbe sans point est omise. Sans aucune courbe fournie, le
+ * libellé signale l'absence de données.
+ */
+export function multiChartAriaLabel(name: string, series: readonly ChartSeries[]): string {
+  const present = series.filter((item) => item.points.length > 0);
+  if (present.length === 0) {
+    return `${name} : aucune donnée.`;
+  }
+  const segments = present.map((item) => {
+    const latest = item.points[item.points.length - 1];
+    return `${item.name} : ${item.points.length} point${item.points.length > 1 ? 's' : ''}, dernière valeur ${item.format(latest.y)}.`;
+  });
+  return `${name} : ${segments.join(' ')}`;
+}
+
+/**
+ * Assemble un graphique multi-séries : un domaine et des graduations communs,
+ * puis un tracé par courbe. Les courbes partagent donc la même échelle
+ * verticale, ce qui rend leurs valeurs comparables. `empty` vaut vrai quand
+ * aucune courbe n'atteint deux points ; une courbe d'un seul point reste tracée.
+ */
+export function layoutMultiChart(
+  name: string,
+  series: readonly ChartSeries[],
+  box: ChartBox = CHART_BOX,
+): MultiChartLayout {
+  const { min, max } = chartDomain(series.flatMap((item) => item.points));
+  return {
+    name,
+    box,
+    series: series.map((item) => ({
+      ...item,
+      path: chartPath(item.points, box, min, max),
+    })),
+    ticks: chartTickPixels(min, max, box),
+    axisY: box.height - box.padBottom,
+    empty: series.every((item) => item.points.length < 2),
+    ariaLabel: multiChartAriaLabel(name, series),
   };
 }
