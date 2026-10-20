@@ -9,14 +9,18 @@ import {
   convLayerName,
   DEFAULT_CONV_LAYERS,
   DEFAULT_DENSE_LAYERS,
+  DEFAULT_DENSE_SIZES,
   DEFAULT_FILTER_COUNTS,
   DEFAULT_MNIST_CNN_ACTIVATION,
   forwardMnistCnn,
+  HIDDEN_DENSE_SIZE,
   initializeMnistCnnWeights,
   MAX_CONV_LAYERS,
   MAX_DENSE_LAYERS,
   MAX_FILTER_COUNT,
+  MAX_HIDDEN_DENSE_SIZE,
   MIN_FILTER_COUNT,
+  MIN_HIDDEN_DENSE_SIZE,
   MNIST_INPUT_LENGTH,
   MNIST_INPUT_SIZE,
   type MnistCnnActivation,
@@ -428,6 +432,11 @@ export function denseLayerTitle(index: number, total: number, units: number): st
   return index === total - 1 ? `Sortie — ${units} classes` : `Dense ${index + 1} — ${units} unités`;
 }
 
+/** Libellé du curseur de largeur d'une couche dense cachée. */
+export function denseSizeLabel(layer: number): string {
+  return `Unités de la couche dense ${layer + 1}`;
+}
+
 /** Libellé accessible d'une unité cachée. */
 export function denseCellLabel(unit: number, value: number): string {
   return `unité ${unit + 1} : ${formatValue(value, 3)}`;
@@ -600,6 +609,8 @@ export interface TrainingRunInput {
   readonly convLayers: number;
   /** Nombre de couches denses, couche de sortie comprise, de 1 à 3. */
   readonly denseLayers: number;
+  /** Largeurs des couches denses cachées, dans l'ordre, couche de sortie exclue. */
+  readonly denseSizes: readonly number[];
   readonly learningRate: number;
   readonly batchSize: number;
   readonly trainPercent: number;
@@ -621,6 +632,7 @@ export function trainingRunRequest(input: TrainingRunInput): MnistRunRequest {
     filters: input.filters,
     convLayers: input.convLayers,
     denseLayers: input.denseLayers,
+    denseSizes: input.denseSizes,
     learningRate: input.learningRate,
     batchSize: input.batchSize,
     seed: SEED,
@@ -1284,6 +1296,10 @@ export class MnistCnn extends LitElement {
   @state()
   private denseLayers = DEFAULT_DENSE_LAYERS;
 
+  /** Largeurs des couches denses cachées ; seules les couches actives comptent. */
+  @state()
+  private denseSizes: readonly [number, number] = DEFAULT_DENSE_SIZES;
+
   /** Fonction d'activation des convolutions et de la couche dense cachée. */
   @state()
   private activation: MnistCnnActivation = DEFAULT_MNIST_CNN_ACTIVATION;
@@ -1506,6 +1522,7 @@ export class MnistCnn extends LitElement {
       filters: this.filterCounts,
       convLayers: this.convLayers,
       denseLayers: this.denseLayers,
+      denseSizes: this.denseSizes,
       activation: this.activation,
     };
   }
@@ -1516,6 +1533,7 @@ export class MnistCnn extends LitElement {
       this.activation === 'sigmoid' &&
       this.convLayers === DEFAULT_CONV_LAYERS &&
       this.denseLayers === DEFAULT_DENSE_LAYERS &&
+      this.denseSizes[0] === HIDDEN_DENSE_SIZE &&
       this.pretrainedAssets !== null &&
       sameFilters(this.pretrainedAssets.config.filters, this.filterCounts)
     );
@@ -1812,6 +1830,7 @@ export class MnistCnn extends LitElement {
       filters: this.filterCounts,
       convLayers: this.convLayers,
       denseLayers: this.denseLayers,
+      denseSizes: this.denseSizes,
       learningRate: this.learningRate,
       batchSize: this.batchSize,
       trainPercent: this.trainPercent,
@@ -1947,6 +1966,25 @@ export class MnistCnn extends LitElement {
       return;
     }
     this.denseLayers = layers;
+    this.weights = this.weightsForCurrentFilters();
+    this.clearSelection();
+    this.runInference();
+    this.resetMetrics();
+    void this.controller.notifySliderChanged(this.manifestMatches, true);
+  }
+
+  /** Change la largeur d'une couche dense cachée : arrête la run et reconstruit le modèle. */
+  private setDenseSize(layer: number, value: number): void {
+    if (layer < 0 || layer >= this.denseLayers - 1) {
+      return;
+    }
+    const size = clamp(Math.round(value), MIN_HIDDEN_DENSE_SIZE, MAX_HIDDEN_DENSE_SIZE);
+    if (size === this.denseSizes[layer]) {
+      return;
+    }
+    const next: [number, number] = [this.denseSizes[0], this.denseSizes[1]];
+    next[layer] = size;
+    this.denseSizes = next;
     this.weights = this.weightsForCurrentFilters();
     this.clearSelection();
     this.runInference();
@@ -2957,7 +2995,9 @@ export class MnistCnn extends LitElement {
             denses (1 à 3) ; le choix de la fonction d'activation arrête aussi la run et reconstruit le
             modèle ; le manifeste pré-entraîné ne s'applique qu'à la profondeur de référence (quatre
             convolutions, deux couches denses) et avec la sigmoïde, toute autre configuration repart
-            des poids déterministes.
+            des poids déterministes. Les curseurs de largeur règlent les unités de chaque couche dense
+            cachée (1 à 32) et arrêtent la run ; le manifeste exige la largeur de référence, soit une
+            couche cachée de 8 unités.
           </p>
           <div class="drl-sliders" role="group" aria-label="Profondeur du réseau">
             <drl-slider
@@ -2977,6 +3017,29 @@ export class MnistCnn extends LitElement {
               @drl-input=${(event: CustomEvent<number>) => this.setDenseLayers(event.detail)}
             ></drl-slider>
           </div>
+          ${
+            this.denseLayers > 1
+              ? html`
+                  <div class="drl-sliders" role="group" aria-label="Taille des couches denses cachées">
+                    ${repeat(
+                      Array.from({ length: this.denseLayers - 1 }, (_, layer) => layer),
+                      (layer) => layer,
+                      (layer) => html`
+                        <drl-slider
+                          label=${denseSizeLabel(layer)}
+                          min=${MIN_HIDDEN_DENSE_SIZE}
+                          max=${MAX_HIDDEN_DENSE_SIZE}
+                          step="1"
+                          .value=${this.denseSizes[layer]}
+                          @drl-input=${(event: CustomEvent<number>) =>
+                            this.setDenseSize(layer, event.detail)}
+                        ></drl-slider>
+                      `,
+                    )}
+                  </div>
+                `
+              : nothing
+          }
           <div class="drl-activation-field">
             <label class="drl-field-label" for="drl-mnist-cnn-activation">
               Fonction d'activation

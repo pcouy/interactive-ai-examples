@@ -333,6 +333,10 @@ describe('initializeMnistCnnWeights', () => {
       LOGIT_COUNT,
     ]);
     expect(denseLayerWidths({ filters, denseLayers: 2 })).toEqual([HIDDEN_DENSE_SIZE, LOGIT_COUNT]);
+    expect(denseLayerWidths({ filters, denseLayers: 2, denseSizes: [3, 7] })).toEqual([
+      3,
+      LOGIT_COUNT,
+    ]);
     expect(denseLayerWidths({ filters, denseLayers: 3, denseSizes: [32] })).toEqual([
       32,
       HIDDEN_DENSE_SIZE,

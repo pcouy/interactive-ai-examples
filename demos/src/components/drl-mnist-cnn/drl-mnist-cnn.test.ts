@@ -15,6 +15,7 @@ import {
   convLayerGeometry,
   denseCellLabel,
   denseLayerTitle,
+  denseSizeLabel,
   describeLinkLabel,
   describeWeightSelection,
   filterBiasCaption,
@@ -285,6 +286,18 @@ describe('dense activation labels', () => {
   it('labels an output class with a percentage and the maximum', () => {
     expect(outputCellLabel(7, 0.9823, true)).toBe('chiffre 7 : 98,2 %, maximum');
     expect(outputCellLabel(0, 0.0012, false)).toBe('chiffre 0 : 0,1 %');
+  });
+});
+
+describe('dense size labels', () => {
+  it('names each hidden layer width control', () => {
+    expect(denseSizeLabel(0)).toBe('Unités de la couche dense 1');
+    expect(denseSizeLabel(1)).toBe('Unités de la couche dense 2');
+  });
+
+  it('shows the chosen width in the layer title', () => {
+    expect(denseLayerTitle(0, 3, 7)).toBe('Dense 1 — 7 unités');
+    expect(denseLayerTitle(2, 3, 10)).toBe('Sortie — 10 classes');
   });
 });
 
@@ -912,6 +925,7 @@ describe('trainingRunRequest', () => {
       filters,
       convLayers: 4,
       denseLayers: 2,
+      denseSizes: [8, 8],
       learningRate: 0.01,
       batchSize: 64,
       trainPercent: 25,
@@ -955,6 +969,11 @@ describe('trainingRunRequest', () => {
     const request = trainingRunRequest(input({ convLayers: 2, denseLayers: 3 }));
     expect(request.convLayers).toBe(2);
     expect(request.denseLayers).toBe(3);
+  });
+
+  it('forwards the dense sizes from the input', () => {
+    const request = trainingRunRequest(input({ denseSizes: [3, 7] }));
+    expect(request.denseSizes).toEqual([3, 7]);
   });
 
   it('forwards the batch size from the input', () => {

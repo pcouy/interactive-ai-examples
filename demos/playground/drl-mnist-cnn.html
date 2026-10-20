@@ -68,11 +68,13 @@
           complet. Le bouton
           <strong>Effacer</strong> vide le dessin, les curseurs de nombre de filtres,
           les deux curseurs de profondeur (0 à 4 couches de convolution, 1 à 3 couches
-          denses, couche de sortie comprise) et le sélecteur de fonction d'activation
+          denses, couche de sortie comprise), les curseurs de largeur (1 à 32 unités par
+          couche dense cachée) et le sélecteur de fonction d'activation
           reconstruisent le modèle et interrompent une run active ; le manifeste
-          pré-entraîné ne s'applique qu'à la profondeur de référence (quatre
-          convolutions, deux couches denses) avec la sigmoïde, toute autre configuration
-          repart des poids déterministes (graine 42) ;
+          pré-entraîné ne s'applique qu'à la profondeur et aux largeurs de référence
+          (quatre convolutions, deux couches denses, une couche cachée de 8 unités) avec
+          la sigmoïde, toute autre configuration repart des poids déterministes (graine
+          42) ;
           les curseurs de pourcentage, de taux d'apprentissage et de taille des lots
           n'interrompent pas la run et n'agissent qu'à la prochaine. Le dessin et
           la sélection d'une case
