@@ -13,7 +13,7 @@ function visit(
   depth: number,
   kind: VisitKind = 'expand',
   stateId = nodeKey,
-  bounds: { window?: SearchWindow; cut?: CutInfo } = {},
+  bounds: { window?: SearchWindow; cut?: CutInfo; entryDepth?: number } = {},
 ): VisitEvent<FakeState> {
   return {
     nodeKey,
@@ -268,6 +268,17 @@ describe('TreeModel pruned and tt-hit nodes', () => {
     expect(model.node('p')?.parentKey).toBe('root');
     expect(model.node('p')?.kind).toBe('pruned');
     expect(model.children('other')).toEqual([]);
+  });
+
+  it('stores the certified entry depth on a tt-hit node and keeps it on a bare re-visit', () => {
+    const model = new TreeModel<FakeState>();
+    model.insert(visit('root', null, null, 0));
+    model.insert(visit('h', 'root', 'mH', 1, 'tt-hit', 'h', { entryDepth: 3 }));
+    model.applyValue({ nodeKey: 'h', score: 0.4, depth: 1, exact: true, entryDepth: 3 });
+    expect(model.node('h')?.entryDepth).toBe(3);
+    // Une re-visite sans le champ ne doit pas effacer la profondeur stockée.
+    model.insert(visit('h', 'root', 'mH', 1, 'tt-hit', 'h'));
+    expect(model.node('h')?.entryDepth).toBe(3);
   });
 });
 

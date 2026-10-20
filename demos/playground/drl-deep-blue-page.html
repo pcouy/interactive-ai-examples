@@ -64,9 +64,11 @@
           relance l'évaluation de la position
           dans l'arbre, le sélecteur « élagage » compare alpha-beta et minimax,
           et la table de transposition reste partagée avec la recherche rejouée :
-          les entrées du tour courant y sont ignorées et redéployées dans
-          l'arbre, seules celles des tours antérieurs, strictement plus
-          profondes, sont consommées (tt-hit).
+          celle-ci applique les mêmes paramètres que la recherche jouée et lit la
+          table réelle en lecture seule, sans jamais l'écrire ; ses propres
+          touches du tour courant sont stockées dans une table temporaire privée,
+          si bien que les coups déjà évalués ce tour apparaissent comme des
+          raccourcis (tt-hit) dans l'arbre.
           En Agent vs Agent, la barre de statut affiche en plus le bilan
           de la série (<code>Série — &lt;nom0&gt; &lt;w0&gt; · &lt;nom1&gt;
           &lt;w1&gt; · Nulles &lt;n&gt;</code>), remis à zéro par Reset et

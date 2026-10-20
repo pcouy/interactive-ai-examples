@@ -6,6 +6,7 @@ import {
   cutDescription,
   cutLabel,
   formatBound,
+  formatEntryDepth,
   formatMove,
   formatNumber,
   formatScore,
@@ -122,6 +123,17 @@ describe('formatBound', () => {
 describe('NO_CUT_LABEL', () => {
   it('uses the exact French label of the bounds panel for an uncut node', () => {
     expect(NO_CUT_LABEL).toBe('Développement du nœud');
+  });
+});
+
+describe('formatEntryDepth', () => {
+  it('renders a finite certified depth as digits', () => {
+    expect(formatEntryDepth(3)).toBe('3');
+    expect(formatEntryDepth(0)).toBe('0');
+  });
+
+  it('renders the solved sentinel with the infinity glyph', () => {
+    expect(formatEntryDepth(Number.POSITIVE_INFINITY)).toBe('∞');
   });
 });
 

@@ -27,6 +27,7 @@ import {
   cutDescription,
   cutLabel,
   formatBound,
+  formatEntryDepth,
   formatMove,
   formatScore,
   keepFirstPruned,
@@ -380,14 +381,17 @@ export class DrlEvalTree<S> extends DemoElement {
         top: -7px;
         right: -7px;
         display: none;
-        width: 16px;
+        min-width: 18px;
         height: 16px;
-        border-radius: 50%;
+        padding: 0 3px;
+        box-sizing: border-box;
+        border-radius: 9px;
         background: var(--drl-accent-2);
         color: var(--drl-surface);
         font-size: 11px;
         line-height: 16px;
         text-align: center;
+        font-variant-numeric: tabular-nums;
       }
 
       .drl-node--tt-hit .drl-node-badge {
@@ -1186,6 +1190,15 @@ export class DrlEvalTree<S> extends DemoElement {
     );
     const boardWrap = card.children[0] as HTMLDivElement;
     const score = card.children[1] as HTMLDivElement;
+    // Badge de raccourci TT : la flèche seule, ou flèche + profondeur certifiée
+    // de l'entrée consommée (ex. « ↪3 », « ↪∞ »).
+    const badge = card.children[2] as HTMLSpanElement | undefined;
+    if (badge !== undefined) {
+      badge.textContent =
+        node.kind === 'tt-hit' && node.entryDepth !== undefined
+          ? `↪${formatEntryDepth(node.entryDepth)}`
+          : '↪';
+    }
     const cut = node.cut ?? null;
     const pruned = cut !== null && node.kind === 'pruned';
     card.classList.toggle('drl-node--cut', pruned);
@@ -1238,6 +1251,9 @@ export class DrlEvalTree<S> extends DemoElement {
       const triggerMove =
         cut.triggerKey === null ? null : (this.model.node(cut.triggerKey)?.move ?? null);
       parts.push(cutDescription(cut, triggerMove));
+    }
+    if (node.kind === 'tt-hit' && node.entryDepth !== undefined) {
+      parts.push(`Profondeur table : ${formatEntryDepth(node.entryDepth)}`);
     }
     return parts.join(' · ');
   }

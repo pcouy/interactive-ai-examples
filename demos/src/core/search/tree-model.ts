@@ -22,6 +22,8 @@ export interface TreeNode<S> {
   window?: SearchWindow;
   /** Coupure alpha-bêta, présente uniquement sur un nœud coupé. */
   cut?: CutInfo;
+  /** Profondeur certifiée de l'entrée de table consommée (tt-hit seulement). */
+  entryDepth?: number;
 }
 
 const RICHER_KIND: Record<VisitKind, number> = {
@@ -56,6 +58,11 @@ export class TreeModel<S> {
       if (event.cut) {
         existing.cut = event.cut;
       }
+      // Une profondeur absente de l'événement ne doit pas effacer la valeur
+      // déjà stockée sur le nœud.
+      if (event.entryDepth !== undefined) {
+        existing.entryDepth = event.entryDepth;
+      }
       this.lastKey = event.nodeKey;
       return;
     }
@@ -81,6 +88,7 @@ export class TreeModel<S> {
       children: [],
       window: event.window,
       cut: event.cut,
+      entryDepth: event.entryDepth,
     };
     this.counter += 1;
     this.nodes.set(event.nodeKey, node);
@@ -111,6 +119,7 @@ export class TreeModel<S> {
         children: [],
         window: event.window,
         cut: event.cut,
+        entryDepth: event.entryDepth,
       };
       this.counter += 1;
       this.nodes.set(event.nodeKey, node);
@@ -120,6 +129,9 @@ export class TreeModel<S> {
       }
       if (event.cut) {
         node.cut = event.cut;
+      }
+      if (event.entryDepth !== undefined) {
+        node.entryDepth = event.entryDepth;
       }
     }
     // Une valeur exacte prouve qu'aucune coupure ne biaise ce nœud.
