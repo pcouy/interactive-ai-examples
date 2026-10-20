@@ -1,5 +1,7 @@
 import { describe, expect, it } from 'vitest';
 import {
+  activationDomain,
+  applyMnistActivation,
   contributingTaps,
   convKernelIndex,
   convOutputLength,
@@ -40,6 +42,54 @@ function rampInput(): Float32Array {
   }
   return input;
 }
+
+describe('activation', () => {
+  it('applies sigmoid or tanh to a pre-activation', () => {
+    expect(applyMnistActivation(0, 'sigmoid')).toBe(0.5);
+    expect(applyMnistActivation(0.5, 'tanh')).toBe(Math.tanh(0.5));
+  });
+
+  it('reports the output domain of each activation', () => {
+    expect(activationDomain('sigmoid')).toEqual({ min: 0, max: 1 });
+    expect(activationDomain('tanh')).toEqual({ min: -1, max: 1 });
+  });
+});
+
+describe('forwardMnistCnn activation selection', () => {
+  it('runs the tanh forward pass between -1 and 1', () => {
+    const config = configWith(DEFAULT_FILTER_COUNTS);
+    const weights = initializeMnistCnnWeights(config, 7);
+    const output = forwardMnistCnn(rampInput(), weights, {
+      filters: DEFAULT_FILTER_COUNTS,
+      activation: 'tanh',
+    });
+    for (const map of output.featureMaps) {
+      for (let index = 0; index < map.values.length; index += 1) {
+        expect(map.values[index]).toBeGreaterThanOrEqual(-1);
+        expect(map.values[index]).toBeLessThanOrEqual(1);
+      }
+    }
+    for (let index = 0; index < HIDDEN_DENSE_SIZE; index += 1) {
+      expect(output.hidden[index]).toBeGreaterThanOrEqual(-1);
+      expect(output.hidden[index]).toBeLessThanOrEqual(1);
+    }
+    let sum = 0;
+    for (let index = 0; index < output.probabilities.length; index += 1) {
+      expect(Number.isFinite(output.probabilities[index])).toBe(true);
+      sum += output.probabilities[index];
+    }
+    expect(sum).toBeCloseTo(1, 5);
+  });
+
+  it('keeps sigmoid as the default activation', () => {
+    const filters = DEFAULT_FILTER_COUNTS;
+    const weights = initializeMnistCnnWeights(configWith(filters), 7);
+    const input = rampInput();
+    const implicit = forwardMnistCnn(input, weights, { filters });
+    const explicit = forwardMnistCnn(input, weights, { filters, activation: 'sigmoid' });
+    expect(implicit).toEqual(explicit);
+  });
+});
 
 describe('convOutputLength', () => {
   it('matches the reference stride and padding formula', () => {
