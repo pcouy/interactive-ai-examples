@@ -21,6 +21,21 @@ npm install
 | `npm run typecheck` | `tsc --noEmit` (strict) |
 | `npm run lint` / `npm run format` | Biome |
 
+## Jeux de données
+
+La démo `drl-mnist-cnn` charge dix jeux servis sous `public/datasets/<id>/`. Les
+commandes ci-dessous les téléchargent et les convertissent. Toutes écrivent dans
+`public/datasets/<id>/`.
+
+| Commande | Jeux |
+|---|---|
+| `npm run datasets:data` | MNIST, Fashion-MNIST |
+| `npm run quickdraw:data` | QuickDraw |
+| `npm run medmnist:data` | Sept jeux MedMNIST |
+
+Voir `public/datasets/README.md` pour la liste des jeux, le format des fichiers, les
+pourcentages de chargement et les licences.
+
 ## Créer une démo
 
 ```bash
