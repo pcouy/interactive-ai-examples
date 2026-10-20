@@ -1,0 +1,1032 @@
+/**
+ * Adaptateur d'entraînement TensorFlow.js du CNN MNIST de référence décrit
+ * dans `tf-playground/mnist/train.py` : quatre convolutions 3×3 suivies d'une
+ * sigmoïde (pas 1, 2, 1, 2 ; remplissage zéro symétrique de 1 sur la deuxième
+ * seulement), dropout 0.2, aplatissement, dense 8 + sigmoïde, puis dix logits.
+ * Perte d'entropie croisée softmax, optimiseur Adam au pas 3e-3.
+ *
+ * Ce module n'importe ni TensorFlow.js ni le DOM au niveau statique : seul
+ * `@tensorflow/tfjs` est importé dynamiquement, par `createMnistCnnTfjsTrainer`.
+ * Le contrat `mnist-cnn.ts` est importé statiquement (le composant l'importe
+ * déjà statiquement) : Vite isole TensorFlow.js dans un chunk paresseux distinct.
+ *
+ * L'entraînement est asynchrone et borné : un tampon circulaire garde au plus
+ * `prefetchDepth` lots matérialisés d'avance. La boucle prend le plus ancien,
+ * traite une mise à jour, recharge le tampon pendant la fenêtre de cession,
+ * puis vérifie le drapeau d'annulation avant le lot suivant. Aucune époque
+ * entière ne s'exécute dans un seul tick et les images ne sont jamais
+ * matérialisées en entier : l'entraînement lit des lots bornés et la validation
+ * est lue par blocs.
+ *
+ * La matérialisation des lots (CPU) et le calcul (GPU) partagent un seul fil
+ * JavaScript : le préchargement retire l'étape de lecture du chemin critique
+ * d'une itération, mais ne la recouvre pas avec le calcul. De même, la perte
+ * n'est jamais lue par `dataSync` : les tenseurs de coût d'une fenêtre de
+ * `lossSampleEvery` lots sont moyennés en tenseurs (`tf.stack` puis moyenne),
+ * et un seul scalaire est ramené par `await mean.data()`. Une seule lecture par
+ * fenêtre laisse la file GPU se remplir au lieu de la vider à chaque lot.
+ */
+
+import type { AdamOptimizer, Sequential, Tensor, Variable } from '@tensorflow/tfjs';
+import type { MnistCnnFilters, MnistCnnLayerWeights, MnistCnnWeights } from './mnist-cnn.js';
+import * as core from './mnist-cnn.js';
+import type { MnistSample } from './mnist-data.js';
+
+type TfModule = typeof import('@tensorflow/tfjs');
+type CoreModule = typeof core;
+type TfLayer = Sequential['layers'][number];
+
+/** Fraction d'unités désactivées pendant l'entraînement (`Dropout(p=0.2)`). */
+export const MNIST_DROPOUT_RATE = 0.2;
+
+/** Graine par défaut, même convention que les autres modules du dossier `core`. */
+export const DEFAULT_TRAINING_SEED = 42;
+
+/** Taille des blocs lus sur la source de validation (accumulation par blocs). */
+export const MNIST_VALIDATION_CHUNK_SIZE = 512;
+
+/** Profondeur de préchargement par défaut (lots matérialisés d'avance). */
+export const DEFAULT_PREFETCH_DEPTH = 3;
+
+/** Profondeur de préchargement minimale : `1` lit un lot à la fois, sans recouvrement. */
+export const MIN_PREFETCH_DEPTH = 1;
+
+/** Profondeur de préchargement maximale acceptée. */
+export const MAX_PREFETCH_DEPTH = 16;
+
+/** Intervalle minimal entre deux évènements `running`, par défaut, en millisecondes. */
+export const DEFAULT_PROGRESS_INTERVAL_MS = 100;
+
+/** Nombre de lots moyennés avant chaque lecture de perte, par défaut. */
+export const DEFAULT_LOSS_SAMPLE_EVERY = 4;
+
+/** Nombre minimal de lots moyennés avant chaque lecture de perte. */
+export const MIN_LOSS_SAMPLE_EVERY = 1;
+
+/** Nombre maximal de lots moyennés avant chaque lecture de perte. */
+export const MAX_LOSS_SAMPLE_EVERY = 64;
+
+/** Configuration figée d'un entraînement MNIST. */
+export interface MnistCnnTrainingConfig {
+  /** Nombre de filtres des quatre convolutions. */
+  readonly filters: MnistCnnFilters;
+  /** Pas d'apprentissage Adam. */
+  readonly learningRate: number;
+  /** Nombre d'exemples par lot. */
+  readonly batchSize: number;
+  /** Graine optionnelle : même graine et même configuration donnent les mêmes poids. */
+  readonly seed?: number;
+}
+
+/** État d'un entraînement, tel que rapporté par `MnistTrainingProgress`. */
+export type MnistTrainingStatus = 'running' | 'completed' | 'cancelled';
+
+/** Instantané de progression émis entre deux lots et à la fin de l'entraînement. */
+export interface MnistTrainingProgress {
+  readonly status: MnistTrainingStatus;
+  /** Nombre cumulé de lots traités depuis le début de l'entraînement. */
+  readonly batchesProcessed: number;
+  /** Perte d'entraînement moyenne de la dernière fenêtre lue. */
+  readonly loss: number;
+  /** Perte de validation, ou `null` si aucun jeu de validation n'est fourni. */
+  readonly validationLoss: number | null;
+  /** Exactitude de validation dans `[0, 1]`, ou `null` sans jeu de validation. */
+  readonly validationAccuracy: number | null;
+  /** Millisecondes écoulées depuis le début de l'entraînement. */
+  readonly elapsedMs: number;
+}
+
+/**
+ * Source d'exemples lue par lots, sans matérialiser tout le jeu. `readBatch`
+ * reçoit une plage semi-ouverte `[start, end)` et retourne exactement
+ * `end - start` exemples.
+ */
+export interface MnistTrainSource {
+  /** Nombre total d'exemples disponibles. */
+  readonly count: number;
+  /** Retourne les exemples de la plage semi-ouverte `[start, end)`. */
+  readBatch(start: number, end: number): MnistSample;
+  /**
+   * Optionnel : réordonne les exemples de la source. Appelé une fois au début
+   * de chaque époque avec une graine déterministe dérivée de la graine
+   * d'entraînement et de l'indice d'époque. Quand il est absent, l'adaptateur
+   * mélange lui-même l'ordre des lots.
+   */
+  reshuffle?(seed: number): void;
+}
+
+/** Options d'un appel à `MnistCnnTfjsTrainer.train`. */
+export interface MnistTrainOptions {
+  /** Source d'entraînement lue par lots (voir `MnistTrainSource`). */
+  readonly train: MnistTrainSource;
+  /** Source de validation lue par blocs à la fin de chaque époque. */
+  readonly validation?: MnistTrainSource;
+  /** Nombre d'époques, au moins 1. Défaut : 1. */
+  readonly epochs?: number;
+  /**
+   * Nombre de lots matérialisés d'avance (tampon circulaire borné). Défaut :
+   * `DEFAULT_PREFETCH_DEPTH` (3), borné entre `MIN_PREFETCH_DEPTH` (1) et
+   * `MAX_PREFETCH_DEPTH` (16). `1` désactive le recouvrement.
+   */
+  readonly prefetchDepth?: number;
+  /**
+   * Nombre de lots dont la perte est moyennée avant chaque lecture. Défaut :
+   * `DEFAULT_LOSS_SAMPLE_EVERY` (1), borné entre `MIN_LOSS_SAMPLE_EVERY` (1) et
+   * `MAX_LOSS_SAMPLE_EVERY` (64). Une valeur plus grande réduit le nombre de
+   * lectures et laisse la file GPU se remplir.
+   */
+  readonly lossSampleEvery?: number;
+  /**
+   * Intervalle minimal entre deux évènements `running`, en millisecondes.
+   * Défaut : `DEFAULT_PROGRESS_INTERVAL_MS` (100). Un évènement est toujours
+   * émis à la fin de chaque époque, puis à la fin de l'entraînement.
+   */
+  readonly progressIntervalMs?: number;
+  /** Rappel appelé au plus une fois par intervalle, et toujours en fin d'entraînement. */
+  readonly onProgress?: (progress: MnistTrainingProgress) => void;
+  /**
+   * Cession de la boucle d'évènements entre deux lots. Défaut : un macrotâche
+   * `setTimeout(0)`. Injectable pour rendre les tests déterministes.
+   */
+  readonly yieldControl?: () => Promise<void>;
+}
+
+/** Un lot matérialisé : ses propres tenseurs, possédés par le tampon de préchargement. */
+interface MaterializedBatch {
+  readonly images: Tensor;
+  readonly labels: Tensor;
+}
+
+/** Libère les tenseurs d'un lot matérialisé. */
+function disposeBatch(batch: MaterializedBatch): void {
+  batch.images.dispose();
+  batch.labels.dispose();
+}
+
+/** Cède la main à la boucle d'évènements sans dépendre d'une API DOM. */
+function defaultYieldControl(): Promise<void> {
+  return new Promise<void>((resolve) => {
+    setTimeout(resolve, 0);
+  });
+}
+
+/** Générateur pseudo-aléatoire déterministe, même implantation que les autres modules. */
+function mulberry32(seed: number): () => number {
+  let a = seed >>> 0;
+  return (): number => {
+    a = (a + 0x6d2b79f5) | 0;
+    let t = Math.imul(a ^ (a >>> 15), 1 | a);
+    t = (t + Math.imul(t ^ (t >>> 7), 61 | t)) ^ t;
+    return ((t ^ (t >>> 14)) >>> 0) / 4294967296;
+  };
+}
+
+/** Mélange de Fisher-Yates, même convention que `mnist-data.ts`. */
+function shuffledIndices(length: number, rng: () => number): number[] {
+  const indices: number[] = new Array<number>(length);
+  for (let index = 0; index < length; index += 1) {
+    indices[index] = index;
+  }
+  for (let index = length - 1; index > 0; index -= 1) {
+    const swap = Math.floor(rng() * (index + 1));
+    const temporary = indices[index];
+    indices[index] = indices[swap];
+    indices[swap] = temporary;
+  }
+  return indices;
+}
+
+/**
+ * Graine déterministe d'époque, dérivée de la graine d'entraînement et de
+ * l'indice d'époque : deux entraînements de même graine donnent les mêmes
+ * graines d'époque.
+ */
+function deriveEpochSeed(baseSeed: number, epoch: number): number {
+  return (baseSeed + Math.imul(epoch + 1, 0x9e3779b1)) >>> 0;
+}
+
+function assertConfig(config: MnistCnnTrainingConfig, core: CoreModule): void {
+  if (config === null || typeof config !== 'object') {
+    throw new TypeError('MNIST TFJS training config is required.');
+  }
+  core.validateFilterCounts(config.filters);
+  if (!Number.isFinite(config.learningRate) || config.learningRate <= 0) {
+    throw new RangeError(
+      `MNIST TFJS learning rate must be a positive finite number, received ${String(config.learningRate)}.`,
+    );
+  }
+  if (!Number.isInteger(config.batchSize) || config.batchSize < 1) {
+    throw new RangeError(
+      `MNIST TFJS batch size must be a positive integer, received ${String(config.batchSize)}.`,
+    );
+  }
+  if (config.seed !== undefined && (!Number.isInteger(config.seed) || config.seed < 0)) {
+    throw new RangeError(
+      `MNIST TFJS seed must be a non-negative integer, received ${String(config.seed)}.`,
+    );
+  }
+}
+
+function assertSample(sample: MnistSample, label: string, core: CoreModule): void {
+  if (sample === null || typeof sample !== 'object') {
+    throw new TypeError(`MNIST TFJS ${label} sample is required.`);
+  }
+  if (!Number.isInteger(sample.count) || sample.count < 1) {
+    throw new RangeError(
+      `MNIST TFJS ${label} sample count must be a positive integer, received ${String(sample.count)}.`,
+    );
+  }
+  const expectedImages = sample.count * core.MNIST_INPUT_LENGTH;
+  if (sample.images.length !== expectedImages) {
+    throw new RangeError(
+      `MNIST TFJS ${label} images must have ${expectedImages} values, received ${sample.images.length}.`,
+    );
+  }
+  for (let index = 0; index < sample.images.length; index += 1) {
+    if (!Number.isFinite(sample.images[index])) {
+      throw new RangeError(
+        `MNIST TFJS ${label} images must contain only finite values, received ${sample.images[index]} at index ${index}.`,
+      );
+    }
+  }
+  if (sample.labels.length !== sample.count) {
+    throw new RangeError(
+      `MNIST TFJS ${label} labels must have ${sample.count} values, received ${sample.labels.length}.`,
+    );
+  }
+  for (let index = 0; index < sample.labels.length; index += 1) {
+    const value = sample.labels[index];
+    if (!Number.isInteger(value) || value < 0 || value > core.LOGIT_COUNT - 1) {
+      throw new RangeError(
+        `MNIST TFJS ${label} labels must be integers from 0 to ${core.LOGIT_COUNT - 1}, received ${value} at index ${index}.`,
+      );
+    }
+  }
+}
+
+/**
+ * Adapte un échantillon déjà en mémoire en `MnistTrainSource`. Les plages
+ * retournées sont des vues `subarray` sur les tampons de l'échantillon : aucune
+ * copie n'est faite et le tenseur n'est créé qu'au moment où le lot est lu.
+ */
+export function sampleToTrainSource(sample: MnistSample): MnistTrainSource {
+  if (sample === null || typeof sample !== 'object') {
+    throw new TypeError('MNIST TFJS sample is required to build a train source.');
+  }
+  if (!Number.isInteger(sample.count) || sample.count < 1) {
+    throw new RangeError(
+      `MNIST TFJS sample count must be a positive integer, received ${String(sample.count)}.`,
+    );
+  }
+  const stride = sample.images.length / sample.count;
+  if (!Number.isInteger(stride) || stride < 1) {
+    throw new RangeError(
+      `MNIST TFJS sample images must split evenly into ${sample.count} examples, received ${sample.images.length} values.`,
+    );
+  }
+  return {
+    count: sample.count,
+    readBatch(start: number, end: number): MnistSample {
+      return {
+        count: end - start,
+        images: sample.images.subarray(start * stride, end * stride),
+        labels: sample.labels.subarray(start, end),
+      };
+    },
+  };
+}
+
+function assertTrainSource(source: MnistTrainSource, label: string): void {
+  if (source === null || typeof source !== 'object') {
+    throw new TypeError(`MNIST TFJS ${label} source is required.`);
+  }
+  if (!Number.isInteger(source.count) || source.count < 1) {
+    throw new RangeError(
+      `MNIST TFJS ${label} source count must be a positive integer, received ${String(source.count)}.`,
+    );
+  }
+  if (typeof source.readBatch !== 'function') {
+    throw new TypeError(`MNIST TFJS ${label} source must expose a readBatch function.`);
+  }
+}
+
+/** Lit un lot sur la source et vérifie qu'il contient exactement `end - start` exemples. */
+function readSourceBatch(
+  source: MnistTrainSource,
+  start: number,
+  end: number,
+  label: string,
+  core: CoreModule,
+): MnistSample {
+  const batch = source.readBatch(start, end);
+  assertSample(batch, label, core);
+  if (batch.count !== end - start) {
+    throw new RangeError(
+      `MNIST TFJS ${label} source readBatch(${start}, ${end}) returned ${batch.count} examples, expected ${end - start}.`,
+    );
+  }
+  return batch;
+}
+
+/**
+ * Construit le modèle séquentiel de référence. Le remplissage zéro de conv2 est
+ * posé explicitement avant la convolution : le mode `same` de TensorFlow.js
+ * ajoute un remplissage asymétrique (0 en haut, 1 en bas) qui décalerait les
+ * cartes par rapport au remplissage symétrique de PyTorch.
+ */
+function buildModel(tf: TfModule, core: CoreModule, config: MnistCnnTrainingConfig): Sequential {
+  const seed = config.seed ?? DEFAULT_TRAINING_SEED;
+  const kernelInitializer = tf.initializers.glorotUniform({ seed });
+  const biasInitializer = tf.initializers.zeros();
+  const model = tf.sequential();
+  let inputShape: number[] | undefined = [core.MNIST_INPUT_SIZE, core.MNIST_INPUT_SIZE, 1];
+  for (let index = 0; index < config.filters.length; index += 1) {
+    const stride = core.CONV_STRIDES[index];
+    const padding = core.CONV_PADDINGS[index];
+    if (padding > 0) {
+      model.add(
+        tf.layers.zeroPadding2d({
+          padding: [
+            [padding, padding],
+            [padding, padding],
+          ],
+          inputShape,
+        }),
+      );
+      inputShape = undefined;
+    }
+    model.add(
+      tf.layers.conv2d({
+        filters: config.filters[index],
+        kernelSize: core.CONV_KERNEL_SIZE,
+        strides: stride,
+        padding: 'valid',
+        activation: 'sigmoid',
+        kernelInitializer,
+        biasInitializer,
+        inputShape,
+      }),
+    );
+    inputShape = undefined;
+  }
+  model.add(tf.layers.dropout({ rate: MNIST_DROPOUT_RATE, seed }));
+  model.add(tf.layers.flatten());
+  model.add(
+    tf.layers.dense({
+      units: core.HIDDEN_DENSE_SIZE,
+      activation: 'sigmoid',
+      kernelInitializer,
+      biasInitializer,
+    }),
+  );
+  model.add(tf.layers.dense({ units: core.LOGIT_COUNT, kernelInitializer, biasInitializer }));
+  return model;
+}
+
+/**
+ * Lit les poids d'une couche dans la disposition attendue par `mnist-cnn.ts`.
+ *
+ * TensorFlow.js stocke les noyaux de convolution en HWIO
+ * `[ky][kx][canalEntrée][canalSortie]` et les noyaux denses en
+ * `[caractéristiqueEntrée][caractéristiqueSortie]` : l'aplatissement ligne-major
+ * donne donc exactement la disposition de référence, sans transposition. De
+ * plus, le `flatten` TensorFlow.js d'un tenseur NHWC (canal le plus rapide)
+ * produit le même ordre que l'aplatissement de `mnist-cnn.ts`, donc la ligne
+ * `i` du noyau dense1 correspond à la caractéristique NHWC `i`.
+ */
+function readLayerWeights(layer: TfLayer): MnistCnnLayerWeights {
+  const [kernel, bias] = layer.getWeights();
+  return {
+    kernel: new Float32Array(kernel.dataSync()),
+    bias: new Float32Array(bias.dataSync()),
+  };
+}
+
+const WEIGHT_LAYER_NAMES = ['conv1', 'conv2', 'conv3', 'conv4', 'dense1', 'dense2'] as const;
+type WeightLayerName = (typeof WEIGHT_LAYER_NAMES)[number];
+
+interface WeightLayerShape {
+  readonly kernel: number;
+  readonly bias: number;
+}
+
+/** Longueurs attendues de chaque noyau et biais pour un tuple de filtres. */
+function weightLayerShapes(filters: MnistCnnFilters): Record<WeightLayerName, WeightLayerShape> {
+  const convShapes: WeightLayerShape[] = [];
+  let inputSize = core.MNIST_INPUT_SIZE;
+  let inputChannels = 1;
+  for (let layer = 0; layer < filters.length; layer += 1) {
+    const outputSize = core.convOutputLength(
+      inputSize,
+      core.CONV_STRIDES[layer],
+      core.CONV_PADDINGS[layer],
+    );
+    const outputChannels = filters[layer];
+    convShapes.push({
+      kernel: core.CONV_KERNEL_SIZE * core.CONV_KERNEL_SIZE * inputChannels * outputChannels,
+      bias: outputChannels,
+    });
+    inputSize = outputSize;
+    inputChannels = outputChannels;
+  }
+  const denseInputLength = inputSize * inputSize * inputChannels;
+  return {
+    conv1: convShapes[0],
+    conv2: convShapes[1],
+    conv3: convShapes[2],
+    conv4: convShapes[3],
+    dense1: { kernel: denseInputLength * core.HIDDEN_DENSE_SIZE, bias: core.HIDDEN_DENSE_SIZE },
+    dense2: { kernel: core.HIDDEN_DENSE_SIZE * core.LOGIT_COUNT, bias: core.LOGIT_COUNT },
+  };
+}
+
+/**
+ * Rejette un jeu de poids qui ne correspond pas au tuple de filtres de la
+ * configuration : longueurs de noyau ou de biais incorrectes, ou valeur non
+ * finie. Les formes sont celles de `weightLayerShapes`.
+ */
+function assertWeightsForFilters(weights: MnistCnnWeights, filters: MnistCnnFilters): void {
+  const shapes = weightLayerShapes(filters);
+  const layers: ReadonlyArray<readonly [WeightLayerName, MnistCnnLayerWeights, WeightLayerShape]> =
+    [
+      ['conv1', weights.conv1, shapes.conv1],
+      ['conv2', weights.conv2, shapes.conv2],
+      ['conv3', weights.conv3, shapes.conv3],
+      ['conv4', weights.conv4, shapes.conv4],
+      ['dense1', weights.dense1, shapes.dense1],
+      ['dense2', weights.dense2, shapes.dense2],
+    ];
+  for (const [name, layer, shape] of layers) {
+    if (layer.kernel.length !== shape.kernel || layer.bias.length !== shape.bias) {
+      throw new RangeError(
+        `MNIST TFJS ${name} weights do not match the ${JSON.stringify(filters)} filter tuple.`,
+      );
+    }
+    for (const value of layer.kernel) {
+      if (!Number.isFinite(value)) {
+        throw new RangeError(`MNIST TFJS ${name} kernel must contain only finite values.`);
+      }
+    }
+    for (const value of layer.bias) {
+      if (!Number.isFinite(value)) {
+        throw new RangeError(`MNIST TFJS ${name} bias must contain only finite values.`);
+      }
+    }
+  }
+}
+
+/**
+ * Entraîneur asynchrone du CNN MNIST sur TensorFlow.js.
+ *
+ * Le modèle est construit paresseusement au premier usage. `reset` libère le
+ * modèle et l'optimiseur (poids et variables d'Adam), `dispose` ferme
+ * définitivement l'instance.
+ */
+export class MnistCnnTfjsTrainer {
+  private readonly tf: TfModule;
+
+  private readonly core: CoreModule;
+
+  private readonly config: MnistCnnTrainingConfig;
+
+  private readonly seed: number;
+
+  private model: Sequential | null = null;
+
+  private optimizer: AdamOptimizer | null = null;
+
+  private running = false;
+
+  private cancelled = false;
+
+  private disposed = false;
+
+  /** Tampon circulaire des lots matérialisés d'avance (au plus `prefetchDepth`). */
+  private prefetched: MaterializedBatch[] = [];
+
+  /** Tenseurs de coût conservés pour la fenêtre de perte en cours. */
+  private pendingCosts: Tensor[] = [];
+
+  /**
+   * Construit un entraîneur à partir des modules déjà chargés. Préférez
+   * `createMnistCnnTfjsTrainer`, qui importe TensorFlow.js dynamiquement.
+   */
+  constructor(tf: TfModule, core: CoreModule, config: MnistCnnTrainingConfig) {
+    assertConfig(config, core);
+    this.tf = tf;
+    this.core = core;
+    this.config = config;
+    this.seed = config.seed ?? DEFAULT_TRAINING_SEED;
+  }
+
+  /** Modèle TensorFlow.js sous-jacent, pour inspection (formes, débogage). */
+  get graph(): Sequential | null {
+    return this.model;
+  }
+
+  /** Vrai après `dispose`. */
+  get isDisposed(): boolean {
+    return this.disposed;
+  }
+
+  /**
+   * Entraîne le modèle par lots bornés lus sur la source. Un tampon circulaire
+   * garde au plus `prefetchDepth` lots matérialisés d'avance ; la boucle prend
+   * le plus ancien, fait une mise à jour, puis recharge le tampon pendant la
+   * fenêtre de cession et vérifie le drapeau d'annulation avant chaque lot.
+   *
+   * La perte est lue par fenêtre de `lossSampleEvery` lots, jamais par lot, et
+   * les évènements `running` sont limités à un par `progressIntervalMs`, plus
+   * un par époque. Un évènement final est toujours émis.
+   */
+  async train(options: MnistTrainOptions): Promise<MnistTrainingProgress> {
+    this.assertUsable();
+    if (this.running) {
+      throw new Error('MNIST TFJS trainer is already training.');
+    }
+    if (options === null || typeof options !== 'object') {
+      throw new TypeError('MNIST TFJS train options are required.');
+    }
+    const epochs = options.epochs ?? 1;
+    if (!Number.isInteger(epochs) || epochs < 1) {
+      throw new RangeError(`MNIST TFJS epochs must be a positive integer, received ${epochs}.`);
+    }
+    const prefetchDepth = options.prefetchDepth ?? DEFAULT_PREFETCH_DEPTH;
+    if (
+      !Number.isInteger(prefetchDepth) ||
+      prefetchDepth < MIN_PREFETCH_DEPTH ||
+      prefetchDepth > MAX_PREFETCH_DEPTH
+    ) {
+      throw new RangeError(
+        `MNIST TFJS prefetchDepth must be an integer from ${MIN_PREFETCH_DEPTH} to ${MAX_PREFETCH_DEPTH}, received ${String(options.prefetchDepth)}.`,
+      );
+    }
+    const lossSampleEvery = options.lossSampleEvery ?? DEFAULT_LOSS_SAMPLE_EVERY;
+    if (
+      !Number.isInteger(lossSampleEvery) ||
+      lossSampleEvery < MIN_LOSS_SAMPLE_EVERY ||
+      lossSampleEvery > MAX_LOSS_SAMPLE_EVERY
+    ) {
+      throw new RangeError(
+        `MNIST TFJS lossSampleEvery must be an integer from ${MIN_LOSS_SAMPLE_EVERY} to ${MAX_LOSS_SAMPLE_EVERY}, received ${String(options.lossSampleEvery)}.`,
+      );
+    }
+    const progressIntervalMs = options.progressIntervalMs ?? DEFAULT_PROGRESS_INTERVAL_MS;
+    if (!Number.isFinite(progressIntervalMs) || progressIntervalMs < 0) {
+      throw new RangeError(
+        `MNIST TFJS progressIntervalMs must be a non-negative finite number, received ${String(options.progressIntervalMs)}.`,
+      );
+    }
+    assertTrainSource(options.train, 'train');
+    if (options.validation !== undefined) {
+      assertTrainSource(options.validation, 'validation');
+    }
+
+    const yieldControl = options.yieldControl ?? defaultYieldControl;
+    const model = this.ensureModel();
+    const optimizer = this.optimizer;
+    if (optimizer === null) {
+      throw new Error('MNIST TFJS optimizer was not initialised.');
+    }
+    // `getWeights(true)` renvoie les variables d'entraînement elles-mêmes
+    // (LayerVariable.read() retourne `val`) ; le type déclaré les expose comme
+    // des `Tensor`, d'où la conversion vers `Variable`.
+    const trainable = model.getWeights(true) as unknown as Variable[];
+    const { batchSize } = this.config;
+    const count = options.train.count;
+    const rng = mulberry32(this.seed);
+    const startedAt = Date.now();
+
+    // Seules les bornes des lots sont calculées d'avance (des entiers, jamais
+    // les images). L'ordre des lots est mélangé à chaque époque : le caractère
+    // stochastique est conservé sans matérialiser tout le jeu.
+    const ranges: Array<readonly [number, number]> = [];
+    for (let start = 0; start < count; start += batchSize) {
+      ranges.push([start, Math.min(start + batchSize, count)]);
+    }
+
+    this.running = true;
+    this.cancelled = false;
+
+    let batchesProcessed = 0;
+    let loss = Number.NaN;
+    let validationLoss: number | null = null;
+    let validationAccuracy: number | null = null;
+    let status: MnistTrainingStatus = 'completed';
+    let lastProgressAt = startedAt;
+
+    const emitRunning = (now: number): void => {
+      this.emit(options.onProgress, {
+        status: 'running',
+        batchesProcessed,
+        loss,
+        validationLoss,
+        validationAccuracy,
+        elapsedMs: now - startedAt,
+      });
+    };
+
+    try {
+      for (let epoch = 0; epoch < epochs; epoch += 1) {
+        const reshuffle = options.train.reshuffle;
+        if (reshuffle !== undefined) {
+          reshuffle(deriveEpochSeed(this.seed, epoch));
+        }
+        // Avec `reshuffle`, la source ordonne elle-même les exemples et les lots
+        // sont lus dans l'ordre naturel. Sinon l'adaptateur mélange les lots.
+        const order =
+          reshuffle === undefined ? shuffledIndices(ranges.length, rng) : Array.from(ranges.keys());
+        this.disposePrefetched();
+        // Préremplissage : le tampon ne dépasse jamais `prefetchDepth` lots.
+        let next = 0;
+        while (this.prefetched.length < prefetchDepth && next < order.length) {
+          const [start, end] = ranges[order[next]];
+          this.prefetched.push(this.materializeBatch(options.train, start, end));
+          next += 1;
+        }
+        for (let step = 0; step < order.length; step += 1) {
+          if (this.cancelled) {
+            status = 'cancelled';
+            break;
+          }
+          const current = this.prefetched.shift();
+          if (current === undefined) {
+            throw new Error('MNIST TFJS prefetch buffer is empty during training.');
+          }
+          let cost: Tensor | null = null;
+          try {
+            cost = this.runBatch(model, optimizer, trainable, current);
+          } finally {
+            disposeBatch(current);
+          }
+          if (cost !== null) {
+            this.pendingCosts.push(cost);
+          }
+          batchesProcessed += 1;
+          // La fenêtre de perte n'est lue qu'à intervalle : aucune
+          // synchronisation GPU par lot.
+          if (this.pendingCosts.length >= lossSampleEvery) {
+            const windowLoss = await this.readPendingLoss();
+            if (windowLoss !== null) {
+              loss = windowLoss;
+            }
+          }
+          const now = Date.now();
+          if (now - lastProgressAt >= progressIntervalMs) {
+            emitRunning(now);
+            lastProgressAt = now;
+          }
+          // Recharge pendant la fenêtre de cession, après la mise à jour.
+          await yieldControl();
+          if (!this.cancelled && next < order.length) {
+            const [start, end] = ranges[order[next]];
+            this.prefetched.push(this.materializeBatch(options.train, start, end));
+            next += 1;
+          }
+        }
+        if (this.cancelled) {
+          status = 'cancelled';
+          break;
+        }
+        // Fin d'époque : on vide la fenêtre de perte, puis on émet un évènement
+        // même si l'intervalle n'est pas écoulé.
+        const epochLoss = await this.readPendingLoss();
+        if (epochLoss !== null) {
+          loss = epochLoss;
+        }
+        const epochEndedAt = Date.now();
+        emitRunning(epochEndedAt);
+        lastProgressAt = epochEndedAt;
+        if (this.cancelled) {
+          status = 'cancelled';
+          break;
+        }
+        if (options.validation !== undefined) {
+          const metrics = this.evaluate(model, options.validation);
+          validationLoss = metrics.loss;
+          validationAccuracy = metrics.accuracy;
+        }
+      }
+    } finally {
+      this.disposePendingCosts();
+      this.disposePrefetched();
+      this.running = false;
+    }
+
+    const progress: MnistTrainingProgress = {
+      status,
+      batchesProcessed,
+      loss,
+      validationLoss,
+      validationAccuracy,
+      elapsedMs: Date.now() - startedAt,
+    };
+    this.emit(options.onProgress, progress);
+    return progress;
+  }
+
+  /** Demande l'arrêt : effectif avant le lot suivant. */
+  async cancel(): Promise<void> {
+    this.cancelled = true;
+  }
+
+  /** Exporte les poids dans la disposition `MnistCnnWeights` de `mnist-cnn.ts`. */
+  async exportWeights(): Promise<MnistCnnWeights> {
+    this.assertUsable();
+    const model = this.ensureModel();
+    const convolutions = model.layers.filter((layer) => layer.getClassName() === 'Conv2D');
+    const denses = model.layers.filter((layer) => layer.getClassName() === 'Dense');
+    if (convolutions.length !== 4 || denses.length !== 2) {
+      throw new Error(
+        `MNIST TFJS model exposes ${convolutions.length} convolutions and ${denses.length} dense layers, expected 4 and 2.`,
+      );
+    }
+    return {
+      conv1: readLayerWeights(convolutions[0]),
+      conv2: readLayerWeights(convolutions[1]),
+      conv3: readLayerWeights(convolutions[2]),
+      conv4: readLayerWeights(convolutions[3]),
+      dense1: readLayerWeights(denses[0]),
+      dense2: readLayerWeights(denses[1]),
+    };
+  }
+
+  /**
+   * Remplace les poids du modèle par un jeu `MnistCnnWeights` du core, puis
+   * recrée l'optimiseur pour repartir de moments Adam à zéro.
+   *
+   * Les noyaux de convolution du core sont déjà en HWIO
+   * `[kernelY][kernelX][canalEntrée][canalSortie]` et les noyaux denses déjà en
+   * `[caractéristiqueEntrée][caractéristiqueSortie]` : aucune conversion de
+   * disposition n'est nécessaire. `setWeights` recopie les valeurs dans les
+   * variables du modèle, donc les tenseurs temporaires sont disposés ici.
+   *
+   * Rejette un entraîneur disposé et un jeu de poids dont le tuple de filtres
+   * ne correspond pas à la configuration.
+   */
+  async applyWeights(weights: MnistCnnWeights): Promise<void> {
+    this.assertUsable();
+    assertWeightsForFilters(weights, this.config.filters);
+    const model = this.ensureModel();
+    const shapes = weightLayerShapes(this.config.filters);
+    const values: Tensor[] = [];
+    try {
+      values.push(
+        this.tf.tensor(weights.conv1.kernel, [
+          core.CONV_KERNEL_SIZE,
+          core.CONV_KERNEL_SIZE,
+          1,
+          this.config.filters[0],
+        ]),
+        this.tf.tensor(weights.conv1.bias, [this.config.filters[0]]),
+        this.tf.tensor(weights.conv2.kernel, [
+          core.CONV_KERNEL_SIZE,
+          core.CONV_KERNEL_SIZE,
+          this.config.filters[0],
+          this.config.filters[1],
+        ]),
+        this.tf.tensor(weights.conv2.bias, [this.config.filters[1]]),
+        this.tf.tensor(weights.conv3.kernel, [
+          core.CONV_KERNEL_SIZE,
+          core.CONV_KERNEL_SIZE,
+          this.config.filters[1],
+          this.config.filters[2],
+        ]),
+        this.tf.tensor(weights.conv3.bias, [this.config.filters[2]]),
+        this.tf.tensor(weights.conv4.kernel, [
+          core.CONV_KERNEL_SIZE,
+          core.CONV_KERNEL_SIZE,
+          this.config.filters[2],
+          this.config.filters[3],
+        ]),
+        this.tf.tensor(weights.conv4.bias, [this.config.filters[3]]),
+        this.tf.tensor(weights.dense1.kernel, [
+          shapes.dense1.kernel / core.HIDDEN_DENSE_SIZE,
+          core.HIDDEN_DENSE_SIZE,
+        ]),
+        this.tf.tensor(weights.dense1.bias, [core.HIDDEN_DENSE_SIZE]),
+        this.tf.tensor(weights.dense2.kernel, [core.HIDDEN_DENSE_SIZE, core.LOGIT_COUNT]),
+        this.tf.tensor(weights.dense2.bias, [core.LOGIT_COUNT]),
+      );
+      model.setWeights(values);
+    } finally {
+      for (const value of values) {
+        value.dispose();
+      }
+    }
+    // Les moments Adam de l'ancien jeu de poids sont périmés : on recrée
+    // l'optimiseur pour repartir de moments à zéro.
+    if (this.optimizer !== null) {
+      this.optimizer.dispose();
+    }
+    this.optimizer = this.tf.train.adam(this.config.learningRate);
+  }
+
+  /**
+   * Retourne les probabilités softmax (count × 10, ligne-major) pour
+   * l'affichage. Le dropout est désactivé.
+   */
+  async predict(sample: MnistSample): Promise<Float32Array> {
+    this.assertUsable();
+    assertSample(sample, 'predict', this.core);
+    const model = this.ensureModel();
+    const images = this.tf.tensor4d(sample.images, [
+      sample.count,
+      this.core.MNIST_INPUT_SIZE,
+      this.core.MNIST_INPUT_SIZE,
+      1,
+    ]);
+    let probabilities = new Float32Array(0);
+    this.tf.tidy(() => {
+      const logits = model.apply(images, { training: false }) as Tensor;
+      probabilities = new Float32Array(logits.softmax().dataSync());
+    });
+    images.dispose();
+    return probabilities;
+  }
+
+  /** Libère le modèle, l'optimiseur et les tampons ; l'instance reste réutilisable. */
+  reset(): void {
+    this.disposePendingCosts();
+    this.disposePrefetched();
+    if (this.optimizer !== null) {
+      this.optimizer.dispose();
+      this.optimizer = null;
+    }
+    if (this.model !== null) {
+      this.model.dispose();
+      this.model = null;
+    }
+    this.cancelled = false;
+  }
+
+  /** Libère le modèle, l'optimiseur et marque l'instance comme inutilisable. */
+  async dispose(): Promise<void> {
+    this.reset();
+    this.disposed = true;
+  }
+
+  private ensureModel(): Sequential {
+    if (this.model === null) {
+      this.model = buildModel(this.tf, this.core, this.config);
+      this.optimizer = this.tf.train.adam(this.config.learningRate);
+    }
+    return this.model;
+  }
+
+  /** Lit et matérialise un lot de la source en tenseurs prêts pour la mise à jour. */
+  private materializeBatch(
+    source: MnistTrainSource,
+    start: number,
+    end: number,
+  ): MaterializedBatch {
+    const sample = readSourceBatch(source, start, end, 'train', this.core);
+    const images = this.tf.tensor4d(sample.images, [
+      sample.count,
+      this.core.MNIST_INPUT_SIZE,
+      this.core.MNIST_INPUT_SIZE,
+      1,
+    ]);
+    const labels = this.tf.tensor1d(sample.labels, 'int32');
+    return { images, labels };
+  }
+
+  /** Libère tous les lots du tampon de préchargement. */
+  private disposePrefetched(): void {
+    for (const batch of this.prefetched) {
+      disposeBatch(batch);
+    }
+    this.prefetched = [];
+  }
+
+  /**
+   * Un pas d'Adam sur un lot déjà matérialisé ; retourne le tenseur de coût
+   * sans le synchroniser. L'appelant possède le tenseur retourné.
+   */
+  private runBatch(
+    model: Sequential,
+    optimizer: AdamOptimizer,
+    trainable: readonly Variable[],
+    batch: MaterializedBatch,
+  ): Tensor | null {
+    const tf = this.tf;
+    const yBatch = tf.oneHot(batch.labels, this.core.LOGIT_COUNT);
+    // Le `finally` libère le one-hot du lot même si la mise à jour échoue.
+    try {
+      return optimizer.minimize(
+        () => {
+          const logits = model.apply(batch.images, { training: true }) as Tensor;
+          return tf.losses.softmaxCrossEntropy(yBatch, logits).mean();
+        },
+        true,
+        trainable as Variable[],
+      );
+    } finally {
+      yBatch.dispose();
+    }
+  }
+
+  /**
+   * Moyenne la fenêtre de pertes en tenseurs, puis lit le seul scalaire obtenu
+   * par `await mean.data()`. Aucun `dataSync` et une seule lecture par fenêtre.
+   * Le tenseur empilé et chaque tenseur de coût sont libérés dans un `finally`.
+   * Retourne `null` quand la fenêtre est vide.
+   */
+  private async readPendingLoss(): Promise<number | null> {
+    if (this.pendingCosts.length === 0) {
+      return null;
+    }
+    const costs = this.pendingCosts;
+    this.pendingCosts = [];
+    let stacked: Tensor | null = null;
+    try {
+      stacked = this.tf.stack(costs);
+      const mean = stacked.mean();
+      try {
+        const value = await mean.data();
+        return Number((value as Float32Array)[0]);
+      } finally {
+        mean.dispose();
+      }
+    } finally {
+      stacked?.dispose();
+      for (const cost of costs) {
+        cost.dispose();
+      }
+    }
+  }
+
+  /** Libère les tenseurs de coût de la fenêtre en cours. */
+  private disposePendingCosts(): void {
+    for (const cost of this.pendingCosts) {
+      cost.dispose();
+    }
+    this.pendingCosts = [];
+  }
+
+  /**
+   * Évalue perte et exactitude par blocs bornés sur la source de validation,
+   * dropout désactivé. Les blocs sont accumulés : le jeu complet n'est jamais
+   * matérialisé d'un coup.
+   */
+  private evaluate(
+    model: Sequential,
+    source: MnistTrainSource,
+  ): { loss: number; accuracy: number } {
+    const tf = this.tf;
+    let lossSum = 0;
+    let correct = 0;
+    for (let start = 0; start < source.count; start += MNIST_VALIDATION_CHUNK_SIZE) {
+      const end = Math.min(start + MNIST_VALIDATION_CHUNK_SIZE, source.count);
+      const chunk = readSourceBatch(source, start, end, 'validation', this.core);
+      const images = tf.tensor4d(chunk.images, [
+        chunk.count,
+        this.core.MNIST_INPUT_SIZE,
+        this.core.MNIST_INPUT_SIZE,
+        1,
+      ]);
+      const labels = tf.tensor1d(chunk.labels, 'int32');
+      try {
+        tf.tidy(() => {
+          const logits = model.apply(images, { training: false }) as Tensor;
+          const oneHot = tf.oneHot(labels, this.core.LOGIT_COUNT);
+          lossSum +=
+            tf.losses.softmaxCrossEntropy(oneHot, logits).mean().dataSync()[0] * chunk.count;
+          const predictions = logits.argMax(1);
+          correct += predictions.equal(labels).sum().dataSync()[0];
+        });
+      } finally {
+        images.dispose();
+        labels.dispose();
+      }
+    }
+    return { loss: lossSum / source.count, accuracy: correct / source.count };
+  }
+
+  private emit(
+    onProgress: ((progress: MnistTrainingProgress) => void) | undefined,
+    progress: MnistTrainingProgress,
+  ): void {
+    if (onProgress !== undefined) {
+      onProgress(progress);
+    }
+  }
+
+  private assertUsable(): void {
+    if (this.disposed) {
+      throw new Error('MNIST TFJS trainer is disposed.');
+    }
+  }
+}
+
+/**
+ * Charge TensorFlow.js dynamiquement, puis construit un entraîneur. C'est le
+ * seul point d'entrée qui charge TensorFlow.js : le graphe d'imports statique
+ * du module reste léger (le contrat `mnist-cnn.ts` est importé statiquement).
+ */
+export async function createMnistCnnTfjsTrainer(
+  config: MnistCnnTrainingConfig,
+): Promise<MnistCnnTfjsTrainer> {
+  const tf = await import('@tensorflow/tfjs');
+  return new MnistCnnTfjsTrainer(tf, core, config);
+}

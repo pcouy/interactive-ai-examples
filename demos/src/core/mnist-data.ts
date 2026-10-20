@@ -5,6 +5,14 @@
  * Le module est purement TypeScript : aucune dépendance, aucun accès DOM,
  * aucun téléchargement. Les buffers d'entrée ne sont jamais modifiés.
  *
+ * Deux niveaux d'API coexistent :
+ * - `parseIdxImages` / `parseIdxLabels` / `loadMnistDataset` convertissent
+ *   tout le jeu en `Float32Array` normalisé (utile pour les petits jeux) ;
+ * - `loadIdxDataset` conserve les octets IDX bruts, `selectStratifiedIndices`
+ *   choisit un sous-ensemble stratifié déterministe, puis
+ *   `materializeSample` / `materializeBatch` ne convertissent que les images
+ *   effectivement demandées. C'est la voie à privilégier pour MNIST complet.
+ *
  * Format IDX (gros-boutiste) :
  * - images : magic `2051`, puis `count`, `rows`, `cols` (u32), puis
  *   `count × rows × cols` octets non signés (0 à 255).
@@ -65,6 +73,30 @@ export interface MnistSample {
   readonly labels: Uint8Array;
 }
 
+/**
+ * Jeu de données MNIST conservé sous forme IDX brute : les pixels restent des
+ * octets `0` à `255`, sans conversion en `Float32`. `images` et `labels` sont
+ * des vues sur les buffers d'entrée ; le module ne les modifie jamais.
+ */
+export interface MnistIdxDataset {
+  readonly count: number;
+  /** Octets bruts des images, `count * 784`, un octet par pixel (0 à 255). */
+  readonly images: Uint8Array;
+  /** Libellés `0` à `9`, un par image. */
+  readonly labels: Uint8Array;
+}
+
+/** Indices d'images acceptés par `materializeSample` et `materializeBatch`. */
+export type SampleIndices = Uint32Array | readonly number[];
+
+/** Options de sélection stratifiée par fraction. */
+export interface StratifiedSampleOptions {
+  /** Fraction de chaque classe à retenir, dans `(0, 1]`. */
+  readonly fraction: number;
+  /** Graine entière non négative : la même graine donne toujours le même tirage. */
+  readonly seed: number;
+}
+
 function asBytes(input: IdxBuffer): Uint8Array {
   return input instanceof Uint8Array ? input : new Uint8Array(input);
 }
@@ -78,14 +110,17 @@ function readU32At(bytes: Uint8Array, offset: number): number {
   );
 }
 
-/**
- * Décode un fichier IDX d'images MNIST. Exige le magic `2051`, des images
- * 28 × 28 et une longueur de buffer exacte (en-tête 16 octets incluse).
- * Chaque octet devient un `Float32` dans `[0, 1]` (octet / 255).
- * Le buffer d'entrée n'est pas modifié.
- */
-export function parseIdxImages(input: IdxBuffer): IdxImages {
-  const bytes = asBytes(input);
+/** En-tête d'un fichier IDX d'images validé (dimensions et longueur exacte). */
+interface IdxImageHeader {
+  readonly count: number;
+  readonly rows: number;
+  readonly cols: number;
+  /** Nombre d'octets de la charge utile, hors en-tête. */
+  readonly payloadLength: number;
+}
+
+/** Valide l'en-tête et la longueur d'un fichier IDX d'images. */
+function readImageHeader(bytes: Uint8Array): IdxImageHeader {
   if (bytes.length < IMAGE_HEADER_BYTES) {
     throw new RangeError(
       `mnist-data: truncated image header, expected at least ${IMAGE_HEADER_BYTES} bytes, got ${bytes.length}`,
@@ -105,7 +140,8 @@ export function parseIdxImages(input: IdxBuffer): IdxImages {
       `mnist-data: unsupported image dimensions ${rows}x${cols}, expected ${MNIST_IMAGE_HEIGHT}x${MNIST_IMAGE_WIDTH}`,
     );
   }
-  const expectedLength = IMAGE_HEADER_BYTES + count * MNIST_PIXELS_PER_IMAGE;
+  const payloadLength = count * MNIST_PIXELS_PER_IMAGE;
+  const expectedLength = IMAGE_HEADER_BYTES + payloadLength;
   if (bytes.length < expectedLength) {
     throw new RangeError(
       `mnist-data: truncated image payload, expected ${expectedLength} bytes, got ${bytes.length}`,
@@ -116,20 +152,11 @@ export function parseIdxImages(input: IdxBuffer): IdxImages {
       `mnist-data: unexpected extra bytes after image payload, expected ${expectedLength} bytes, got ${bytes.length}`,
     );
   }
-  const images = new Float32Array(count * MNIST_PIXELS_PER_IMAGE);
-  for (let index = 0; index < images.length; index += 1) {
-    images[index] = bytes[IMAGE_HEADER_BYTES + index] / 255;
-  }
-  return { count, rows, cols, images };
+  return { count, rows, cols, payloadLength };
 }
 
-/**
- * Décode un fichier IDX de libellés MNIST. Exige le magic `2049`, une longueur
- * de buffer exacte (en-tête 8 octets incluse) et des valeurs `0` à `9`.
- * Le buffer d'entrée n'est pas modifié.
- */
-export function parseIdxLabels(input: IdxBuffer): Uint8Array {
-  const bytes = asBytes(input);
+/** Valide l'en-tête et la longueur d'un fichier IDX de libellés, sans copie. */
+function readLabelCount(bytes: Uint8Array): number {
   if (bytes.length < LABEL_HEADER_BYTES) {
     throw new RangeError(
       `mnist-data: truncated label header, expected at least ${LABEL_HEADER_BYTES} bytes, got ${bytes.length}`,
@@ -153,6 +180,44 @@ export function parseIdxLabels(input: IdxBuffer): Uint8Array {
       `mnist-data: unexpected extra bytes after label payload, expected ${expectedLength} bytes, got ${bytes.length}`,
     );
   }
+  return count;
+}
+
+/** Vérifie que chaque libellé est compris entre 0 et 9. */
+function validateLabelValues(labels: Uint8Array): void {
+  for (let index = 0; index < labels.length; index += 1) {
+    if (labels[index] > 9) {
+      throw new RangeError(
+        `mnist-data: invalid label ${labels[index]} at index ${index}, expected 0 to 9`,
+      );
+    }
+  }
+}
+
+/**
+ * Décode un fichier IDX d'images MNIST. Exige le magic `2051`, des images
+ * 28 × 28 et une longueur de buffer exacte (en-tête 16 octets incluse).
+ * Chaque octet devient un `Float32` dans `[0, 1]` (octet / 255).
+ * Le buffer d'entrée n'est pas modifié.
+ */
+export function parseIdxImages(input: IdxBuffer): IdxImages {
+  const bytes = asBytes(input);
+  const { count, rows, cols, payloadLength } = readImageHeader(bytes);
+  const images = new Float32Array(payloadLength);
+  for (let index = 0; index < images.length; index += 1) {
+    images[index] = bytes[IMAGE_HEADER_BYTES + index] / 255;
+  }
+  return { count, rows, cols, images };
+}
+
+/**
+ * Décode un fichier IDX de libellés MNIST. Exige le magic `2049`, une longueur
+ * de buffer exacte (en-tête 8 octets incluse) et des valeurs `0` à `9`.
+ * Le buffer d'entrée n'est pas modifié.
+ */
+export function parseIdxLabels(input: IdxBuffer): Uint8Array {
+  const bytes = asBytes(input);
+  const count = readLabelCount(bytes);
   const labels = new Uint8Array(count);
   for (let index = 0; index < count; index += 1) {
     const value = bytes[LABEL_HEADER_BYTES + index];
@@ -179,6 +244,29 @@ export function loadMnistDataset(imageBuffer: IdxBuffer, labelBuffer: IdxBuffer)
     );
   }
   return { count: parsedImages.count, images: parsedImages.images, labels };
+}
+
+/**
+ * Charge un jeu de données MNIST complet en conservant les octets IDX bruts,
+ * sans convertir les pixels en `Float32`. Les deux fichiers doivent décrire le
+ * même nombre d'exemples. Les tableaux retournés sont des vues sur les buffers
+ * d'entrée : le module ne les modifie jamais, et l'appelant ne doit pas les
+ * modifier tant que le jeu est utilisé.
+ */
+export function loadIdxDataset(imageBuffer: IdxBuffer, labelBuffer: IdxBuffer): MnistIdxDataset {
+  const imageBytes = asBytes(imageBuffer);
+  const labelBytes = asBytes(labelBuffer);
+  const header = readImageHeader(imageBytes);
+  const labelCount = readLabelCount(labelBytes);
+  if (header.count !== labelCount) {
+    throw new RangeError(
+      `mnist-data: image and label counts differ, ${header.count} images vs ${labelCount} labels`,
+    );
+  }
+  const labels = labelBytes.subarray(LABEL_HEADER_BYTES, LABEL_HEADER_BYTES + labelCount);
+  validateLabelValues(labels);
+  const images = imageBytes.subarray(IMAGE_HEADER_BYTES, IMAGE_HEADER_BYTES + header.payloadLength);
+  return { count: header.count, images, labels };
 }
 
 /**
@@ -301,4 +389,162 @@ export function sampleBalanced(dataset: MnistDataset, options: BalancedSampleOpt
     sampledLabels[index] = labels[sourceIndex];
   }
   return { count: cursor, images: sampledImages, labels: sampledLabels };
+}
+
+function validateIdxDataset(dataset: MnistIdxDataset): void {
+  if (dataset === null || typeof dataset !== 'object') {
+    throw new TypeError('mnist-data: an IDX dataset object is required.');
+  }
+  if (dataset.count !== dataset.labels.length) {
+    throw new RangeError(
+      `mnist-data: IDX dataset count ${dataset.count} does not match label count ${dataset.labels.length}`,
+    );
+  }
+  const expectedBytes = dataset.count * MNIST_PIXELS_PER_IMAGE;
+  if (dataset.images.length !== expectedBytes) {
+    throw new RangeError(
+      `mnist-data: IDX dataset image bytes ${dataset.images.length} do not match label count ${dataset.labels.length}, expected ${expectedBytes}`,
+    );
+  }
+}
+
+function validateFraction(fraction: number): void {
+  if (typeof fraction !== 'number' || !Number.isFinite(fraction) || fraction <= 0 || fraction > 1) {
+    throw new RangeError(
+      `mnist-data: invalid fraction ${String(fraction)}, expected a finite number in (0, 1]`,
+    );
+  }
+}
+
+/**
+ * Sélectionne une fraction stratifiée du jeu IDX brut, de façon déterministe
+ * pour une graine donnée. Chaque classe `0` à `9` fournit
+ * `max(1, round(classCount × fraction))` exemples (au moins un), mélangés par
+ * Fisher-Yates avec le PRNG de la graine, puis l'ensemble retenu est mélangé
+ * une dernière fois pour entrelacer les classes.
+ *
+ * Rejette une fraction hors de `(0, 1]`, une graine invalide, un jeu dont
+ * `count` ou la longueur des images ne correspond pas aux libellés, un libellé
+ * hors de `0` à `9`, et une classe sans aucun exemple.
+ *
+ * Ne modifie jamais le jeu source : seul un tableau d'indices est retourné.
+ */
+export function selectStratifiedIndices(
+  dataset: MnistIdxDataset,
+  options: StratifiedSampleOptions,
+): Uint32Array {
+  const { fraction, seed } = options;
+  validateSeed(seed);
+  validateFraction(fraction);
+  validateIdxDataset(dataset);
+
+  const buckets: number[][] = [];
+  for (let label = 0; label < MNIST_CLASS_COUNT; label += 1) {
+    buckets.push([]);
+  }
+  for (let index = 0; index < dataset.labels.length; index += 1) {
+    const label = dataset.labels[index];
+    if (label >= MNIST_CLASS_COUNT) {
+      throw new RangeError(
+        `mnist-data: IDX dataset label ${label} outside the 0 to ${MNIST_CLASS_COUNT - 1} range`,
+      );
+    }
+    buckets[label].push(index);
+  }
+
+  const rng = mulberry32(seed);
+  const selected: number[] = [];
+  for (let label = 0; label < MNIST_CLASS_COUNT; label += 1) {
+    const available = buckets[label].length;
+    if (available === 0) {
+      throw new RangeError(`mnist-data: class ${label} has no examples to sample`);
+    }
+    const wanted = Math.max(1, Math.round(available * fraction));
+    const order = shuffledIndices(available, rng);
+    for (let picked = 0; picked < wanted; picked += 1) {
+      selected.push(buckets[label][order[picked]]);
+    }
+  }
+
+  const finalOrder = shuffledIndices(selected.length, rng);
+  const indices = new Uint32Array(selected.length);
+  for (let index = 0; index < selected.length; index += 1) {
+    indices[index] = selected[finalOrder[index]];
+  }
+  return indices;
+}
+
+/**
+ * Convertit la tranche demandée en un `MnistSample`. Une seule allocation
+ * `Float32Array` couvre la tranche : la boucle de pixels est un accès typé
+ * direct (`octet / 255`), sans appel de fonction, tableau intermédiaire ni
+ * fermeture. Coût attendu par lot : `length × 784` divisions (une par pixel
+ * converti), plus les `length` libellés copiés.
+ */
+function materializeRange(
+  dataset: MnistIdxDataset,
+  indices: SampleIndices,
+  start: number,
+  end: number,
+): MnistSample {
+  validateIdxDataset(dataset);
+  const length = end - start;
+  const pixels = MNIST_PIXELS_PER_IMAGE;
+  const bytes = dataset.images;
+  const sourceLabels = dataset.labels;
+  const images = new Float32Array(length * pixels);
+  const labels = new Uint8Array(length);
+  for (let position = 0; position < length; position += 1) {
+    const index = indices[start + position];
+    if (!Number.isInteger(index) || index < 0 || index >= dataset.count) {
+      throw new RangeError(
+        `mnist-data: index ${String(index)} at position ${start + position} is outside 0 to ${dataset.count - 1}`,
+      );
+    }
+    const source = index * pixels;
+    const target = position * pixels;
+    for (let pixel = 0; pixel < pixels; pixel += 1) {
+      images[target + pixel] = bytes[source + pixel] / 255;
+    }
+    labels[position] = sourceLabels[index];
+  }
+  return { count: length, images, labels };
+}
+
+/**
+ * Convertit les images désignées par `indices` en un `MnistSample` normalisé
+ * (`Float32` dans `[0, 1]`). Seules les images sélectionnées sont converties.
+ * Rejette un indice non entier ou hors de `[0, count)`. Ne modifie jamais le
+ * jeu source.
+ */
+export function materializeSample(dataset: MnistIdxDataset, indices: SampleIndices): MnistSample {
+  return materializeRange(dataset, indices, 0, indices.length);
+}
+
+/**
+ * Convertit uniquement la tranche `[start, end)` de `indices`, ce qui évite de
+ * convertir tout un échantillon pour un seul lot d'entraînement. Alloue un seul
+ * `Float32Array` de `(end − start) × 784` valeurs, sans allouer de tableau pour
+ * le jeu complet, sans trier ni copier la liste d'indices, et sans modifier le
+ * jeu source. Rejette une tranche invalide (`start`/`end` non entiers, hors
+ * bornes, `end < start`) et un indice hors de `[0, count)`.
+ */
+export function materializeBatch(
+  dataset: MnistIdxDataset,
+  indices: SampleIndices,
+  start: number,
+  end: number,
+): MnistSample {
+  if (
+    !Number.isInteger(start) ||
+    !Number.isInteger(end) ||
+    start < 0 ||
+    end < start ||
+    end > indices.length
+  ) {
+    throw new RangeError(
+      `mnist-data: invalid batch range [${String(start)}, ${String(end)}) for ${indices.length} indices`,
+    );
+  }
+  return materializeRange(dataset, indices, start, end);
 }

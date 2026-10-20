@@ -1,0 +1,57 @@
+<!doctype html>
+<html lang="fr">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>MNIST CNN — démonstration interactive</title>
+    <style>
+      body {
+        margin: 0;
+        padding: 2rem;
+        background: #f8fafc;
+        color: #0f172a;
+        font-family: system-ui, sans-serif;
+      }
+
+      main {
+        display: grid;
+        gap: 1rem;
+        max-width: 1080px;
+        margin: 0 auto;
+      }
+
+      a {
+        color: #2563eb;
+      }
+    </style>
+  </head>
+  <body>
+    <main>
+      <p><a href="./index.html">← Playground</a></p>
+      <drl-card heading="MNIST CNN — démonstration interactive">
+        <p>
+          Dessinez un chiffre sur la surface 28×28, ou choisissez un exemple de la
+          galerie MNIST : le réseau à quatre couches de convolution 3×3 suivies
+          d'une sigmoïde, puis dense 8 + sigmoïde et dix logits, fait un passage
+          avant en pur TypeScript (sans TensorFlow.js) et met à jour les
+          probabilités, les filtres et les cartes de caractéristiques.
+        </p>
+        <drl-mnist-cnn></drl-mnist-cnn>
+        <p>
+          Les poids pré-entraînés du manifeste <code>mnist/model-v1.json</code> sont
+          appliqués au chargement ; en cas d'échec, des poids déterministes (graine
+          42) les remplacent. Le bouton <strong>Entraîner</strong> charge
+          TensorFlow.js paresseusement, télécharge les exemples MNIST locaux et
+          entraîne le modèle sur les sous-ensembles choisis par les curseurs de
+          pourcentage ; <strong>Pause</strong> arrête la boucle au lot suivant,
+          <strong>Réinitialiser les poids</strong> restaure les poids initiaux et
+          <strong>Poids aléatoires</strong> tire une graine nouvelle. La
+          galerie d'exemples se télécharge à la première ouverture du sélecteur,
+          pas au chargement de la page. La précision affichée est celle du
+          sous-ensemble de validation tenu à l'écart, pas celle du jeu complet.
+        </p>
+      </drl-card>
+    </main>
+    <script type="module" src="/src/index.ts"></script>
+  </body>
+</html>

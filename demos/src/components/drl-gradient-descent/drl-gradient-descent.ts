@@ -10,45 +10,25 @@ import {
   landscapeLoss,
 } from '../../core/gradient-descent.js';
 import { drlTokens } from '../../styles/tokens.js';
+import { createLandscapeScene, gridIndex, type LandscapeScene } from '../shared/landscape-scene.js';
 
 type ThreeModule = typeof import('three');
-type ThreeRenderer = InstanceType<ThreeModule['WebGLRenderer']>;
-type ThreeScene = InstanceType<ThreeModule['Scene']>;
-type ThreeCamera = InstanceType<ThreeModule['PerspectiveCamera']>;
 type ThreeMesh = InstanceType<ThreeModule['Mesh']>;
 type ThreeGroup = InstanceType<ThreeModule['Group']>;
 type ThreeColor = InstanceType<ThreeModule['Color']>;
 type ThreeVector3 = InstanceType<ThreeModule['Vector3']>;
 type ThreeBufferGeometry = InstanceType<ThreeModule['BufferGeometry']>;
-type ThreeBufferAttribute = InstanceType<ThreeModule['BufferAttribute']>;
 type ThreeArrowHelper = InstanceType<ThreeModule['ArrowHelper']>;
 type ThreeMaterial = InstanceType<ThreeModule['Material']>;
 type ThreeMeshStandardMaterial = InstanceType<ThreeModule['MeshStandardMaterial']>;
-type ThreeLineBasicMaterial = InstanceType<ThreeModule['LineBasicMaterial']>;
 
 const DOMAIN = GradientDescentCore.DOMAIN;
 /**
- * Vertical exaggeration of the landscape: scene Y = raw loss × HEIGHT_SCALE.
- * Raw loss peaks at ≈ 5.35 over [-3,3]², so HEIGHT_SCALE 0.8 gives a max
- * scene height ≈ 4.3 — steep enough for the paraboloid valley to read clearly
- * (the former 0.35 looked flat).
+ * The shared landscape module normalizes the loss field so the visible surface
+ * spans [0, 1.5] in scene Y. The component works in raw (a, b) coordinates and
+ * asks the module for the matching scene height.
  */
-const HEIGHT_SCALE = 1.5;
-const LANDSCAPE_RES = 70;
-
-/**
- * Camera framing tuned for the taller valley: slightly more top-down
- * (smaller phi) and a raised look-at target so rim and bottom stay in frame.
- */
-const CAMERA_RADIUS = 10;
-const CAMERA_THETA = Math.PI * 0.28;
-const CAMERA_PHI = Math.PI * 0.32;
-const CAMERA_TARGET_Y = 1;
-
 const BALL_RADIUS = 0.14;
-
-const TRAIL_MAX = 60;
-const TRAIL_LIFT = 0.05;
 
 const PATCH_RES = 24;
 const PATCH_HALF = 0.8;
@@ -62,7 +42,6 @@ const ARROW_COLOR_FALLBACK = '#d32f2f';
 const COLLECTED_Y_STEP = 0.04;
 
 const MAX_BATCH = 12;
-const TWEEN_MS = 600;
 const RESET_SEED = 42;
 
 const CANVAS_WIDTH = 1920;
@@ -83,28 +62,6 @@ function clamp(value: number, min: number, max: number): number {
 
 function formatNumber(value: number): string {
   return value.toFixed(2).replace('.', ',');
-}
-
-function gridIndex(res: number): number[] {
-  const indices: number[] = [];
-  for (let j = 0; j < res; j += 1) {
-    for (let i = 0; i < res; i += 1) {
-      const a = j * (res + 1) + i;
-      const b = a + 1;
-      const c = a + (res + 1);
-      const d = c + 1;
-      indices.push(a, c, b, b, c, d);
-    }
-  }
-  return indices;
-}
-
-interface BallTween {
-  fromA: number;
-  fromB: number;
-  toA: number;
-  toB: number;
-  start: number;
 }
 
 @customElement('drl-gradient-descent')
@@ -265,17 +222,7 @@ export class GradientDescent extends DemoElement {
 
   private THREE: ThreeModule | null = null;
 
-  private renderer: ThreeRenderer | null = null;
-
-  private scene: ThreeScene | null = null;
-
-  private camera: ThreeCamera | null = null;
-
-  private canvasEl: HTMLCanvasElement | null = null;
-
-  private landscapeGeometry: ThreeBufferGeometry | null = null;
-
-  private landscapeMaterial: ThreeMeshStandardMaterial | null = null;
+  private landscape: LandscapeScene | null = null;
 
   private patchGeometry: ThreeBufferGeometry | null = null;
 
@@ -293,18 +240,6 @@ export class GradientDescent extends DemoElement {
 
   private patchTarget = 0;
 
-  private ball: ThreeMesh | null = null;
-
-  private trailGeometry: ThreeBufferGeometry | null = null;
-
-  private trailMaterial: ThreeLineBasicMaterial | null = null;
-
-  private trailAttribute: ThreeBufferAttribute | null = null;
-
-  private trailPositions: Float32Array | null = null;
-
-  private trailPoints: [number, number][] = [];
-
   private gradientGroup: ThreeGroup | null = null;
 
   private solidArrow: ThreeArrowHelper | null = null;
@@ -315,34 +250,13 @@ export class GradientDescent extends DemoElement {
 
   private tmpDir: ThreeVector3 | null = null;
 
-  private target: ThreeVector3 | null = null;
-
-  private radius = CAMERA_RADIUS;
-
-  private theta = CAMERA_THETA;
-
-  private phi = CAMERA_PHI;
-
-  private dragging = false;
-
-  private panning = false;
-
-  private lastX = 0;
-
-  private lastY = 0;
-
-  private tween: BallTween | null = null;
-
-  private tweenBallA = 0;
-
-  private tweenBallB = 0;
-
   private animFrame: number | null = null;
 
   private prevFrame = 0;
 
   private lastFrameDelta = 0.016;
 
+  // Reconnect recovery is intentionally absent (pre-existing, not a regression).
   protected override async firstUpdated(): Promise<void> {
     const canvas = this.renderRoot.querySelector('canvas');
     if (!(canvas instanceof HTMLCanvasElement)) {
@@ -350,11 +264,21 @@ export class GradientDescent extends DemoElement {
     }
     try {
       const three = await import('three');
-      if (!this.isConnected || this.renderer !== null) {
+      const landscape = await createLandscapeScene(canvas);
+      if (!this.isConnected) {
+        landscape.dispose();
         return;
       }
-      this.buildScene(three, canvas);
-      this.attachControls(canvas);
+      this.THREE = three;
+      this.landscape = landscape;
+      this.tmpDir = new three.Vector3();
+      landscape.setHeightField(landscapeLoss, DOMAIN);
+
+      const accentTwo = this.readColor(three, '--drl-accent-2', '#ffffff');
+      const arrowColor = this.readColor(three, '--drl-arrow', ARROW_COLOR_FALLBACK);
+      this.buildPatchMesh(three, accentTwo);
+      this.buildArrows(three, arrowColor);
+
       this.core.reset({
         startA: this.startA,
         startB: this.startB,
@@ -367,114 +291,13 @@ export class GradientDescent extends DemoElement {
     }
   }
 
-  private buildScene(three: ThreeModule, canvas: HTMLCanvasElement): void {
-    const renderer = new three.WebGLRenderer({ canvas, antialias: true, alpha: true });
-    renderer.setPixelRatio(Math.min(window.devicePixelRatio, 2));
-    renderer.setSize(canvas.width, canvas.height, false);
-
-    const scene = new three.Scene();
-    const camera = new three.PerspectiveCamera(50, canvas.width / canvas.height, 0.1, 100);
-
-    scene.add(new three.AmbientLight(0xffffff, 0.75));
-    const keyLight = new three.DirectionalLight(0xffffff, 2.2);
-    keyLight.position.set(6, 10, 7);
-    scene.add(keyLight);
-    const fillLight = new three.DirectionalLight(0xffffff, 0.9);
-    fillLight.position.set(-6, 5, -7);
-    scene.add(fillLight);
-
-    const accent = this.readColor(three, '--drl-accent', '#ffffff');
-    const accentTwo = this.readColor(three, '--drl-accent-2', '#ffffff');
-    const arrowColor = this.readColor(three, '--drl-arrow', ARROW_COLOR_FALLBACK);
-
-    this.THREE = three;
-    this.renderer = renderer;
-    this.scene = scene;
-    this.camera = camera;
-    this.canvasEl = canvas;
-    this.target = new three.Vector3(0, CAMERA_TARGET_Y, 0);
-    this.tmpDir = new three.Vector3();
-
-    this.buildLandscape(three, accent);
-    this.buildPatchMesh(three, accentTwo);
-    this.buildBall(three, accent);
-    this.buildTrail(three, accent);
-    this.buildArrows(three, arrowColor);
-    this.updateCamera();
-  }
-
   private readColor(three: ThreeModule, name: string, fallback: string): ThreeColor {
     const value = getComputedStyle(this).getPropertyValue(name).trim();
     return new three.Color(value.length > 0 ? value : fallback);
   }
 
-  private buildLandscape(three: ThreeModule, accent: ThreeColor): void {
-    const scene = this.scene;
-    if (!scene) {
-      return;
-    }
-    const res = LANDSCAPE_RES;
-    const count = (res + 1) * (res + 1);
-    const positions = new Float32Array(count * 3);
-    const colors = new Float32Array(count * 3);
-    const heights: number[] = [];
-    let minHeight = Number.POSITIVE_INFINITY;
-    let maxHeight = Number.NEGATIVE_INFINITY;
-
-    for (let j = 0; j <= res; j += 1) {
-      const b = -DOMAIN + (2 * DOMAIN * j) / res;
-      for (let i = 0; i <= res; i += 1) {
-        const a = -DOMAIN + (2 * DOMAIN * i) / res;
-        const h = landscapeLoss(a, b);
-        heights.push(h);
-        minHeight = Math.min(minHeight, h);
-        maxHeight = Math.max(maxHeight, h);
-      }
-    }
-
-    const low = accent.clone().lerp(new three.Color(0xffffff), 0.85);
-    const high = accent.clone().multiplyScalar(0.35);
-    const span = maxHeight - minHeight || 1;
-
-    let index = 0;
-    for (let j = 0; j <= res; j += 1) {
-      const b = -DOMAIN + (2 * DOMAIN * j) / res;
-      for (let i = 0; i <= res; i += 1) {
-        const a = -DOMAIN + (2 * DOMAIN * i) / res;
-        const h = heights[index];
-        positions[index * 3] = a;
-        positions[index * 3 + 1] = h * HEIGHT_SCALE;
-        positions[index * 3 + 2] = b;
-        const t = (h - minHeight) / span;
-        colors[index * 3] = low.r + (high.r - low.r) * t;
-        colors[index * 3 + 1] = low.g + (high.g - low.g) * t;
-        colors[index * 3 + 2] = low.b + (high.b - low.b) * t;
-        index += 1;
-      }
-    }
-
-    const geometry = new three.BufferGeometry();
-    geometry.setIndex(gridIndex(res));
-    geometry.setAttribute('position', new three.BufferAttribute(positions, 3));
-    geometry.setAttribute('color', new three.BufferAttribute(colors, 3));
-    geometry.computeVertexNormals();
-
-    const material = new three.MeshStandardMaterial({
-      vertexColors: true,
-      roughness: 0.85,
-      metalness: 0,
-      side: three.DoubleSide,
-    });
-    const mesh = new three.Mesh(geometry, material);
-    mesh.frustumCulled = false;
-    scene.add(mesh);
-
-    this.landscapeGeometry = geometry;
-    this.landscapeMaterial = material;
-  }
-
   private buildPatchMesh(three: ThreeModule, accentTwo: ThreeColor): void {
-    const scene = this.scene;
+    const scene = this.landscape?.scene;
     if (!scene) {
       return;
     }
@@ -505,50 +328,8 @@ export class GradientDescent extends DemoElement {
     this.patchHighColor = accentTwo.clone().multiplyScalar(0.4);
   }
 
-  private buildBall(three: ThreeModule, accent: ThreeColor): void {
-    const scene = this.scene;
-    if (!scene) {
-      return;
-    }
-    const geometry = new three.SphereGeometry(BALL_RADIUS, 24, 24);
-    const material = new three.MeshStandardMaterial({
-      color: accent,
-      roughness: 0.4,
-      metalness: 0.05,
-    });
-    const ball = new three.Mesh(geometry, material);
-    scene.add(ball);
-    this.ball = ball;
-  }
-
-  private buildTrail(three: ThreeModule, accent: ThreeColor): void {
-    const scene = this.scene;
-    if (!scene) {
-      return;
-    }
-    const positions = new Float32Array(TRAIL_MAX * 3);
-    const geometry = new three.BufferGeometry();
-    const attribute = new three.BufferAttribute(positions, 3);
-    geometry.setAttribute('position', attribute);
-    geometry.setDrawRange(0, 0);
-
-    const material = new three.LineBasicMaterial({
-      color: accent,
-      transparent: true,
-      opacity: 0.55,
-    });
-    const line = new three.Line(geometry, material);
-    line.frustumCulled = false;
-    scene.add(line);
-
-    this.trailGeometry = geometry;
-    this.trailMaterial = material;
-    this.trailAttribute = attribute;
-    this.trailPositions = positions;
-  }
-
   private buildArrows(three: ThreeModule, arrowColor: ThreeColor): void {
-    const scene = this.scene;
+    const scene = this.landscape?.scene;
     if (!scene) {
       return;
     }
@@ -589,7 +370,8 @@ export class GradientDescent extends DemoElement {
   private buildPatch(example: Example): void {
     const three = this.THREE;
     const geometry = this.patchGeometry;
-    if (!three || !geometry) {
+    const landscape = this.landscape;
+    if (!three || !geometry || !landscape) {
       return;
     }
     const res = PATCH_RES;
@@ -600,7 +382,7 @@ export class GradientDescent extends DemoElement {
     const heights = new Float32Array(count);
     const baseA = this.core.ballA;
     const baseB = this.core.ballB;
-    const baseY = landscapeLoss(baseA, baseB) * HEIGHT_SCALE;
+    const baseY = landscape.heightAt(baseA, baseB);
 
     let maxHeight = 0;
     let index = 0;
@@ -644,23 +426,14 @@ export class GradientDescent extends DemoElement {
     geometry.computeBoundingSphere();
   }
 
-  private get displayA(): number {
-    return this.tween ? this.tweenBallA : this.core.ballA;
-  }
-
-  private get displayB(): number {
-    return this.tween ? this.tweenBallB : this.core.ballB;
-  }
-
   private updateVisuals(): void {
     const three = this.THREE;
-    const ball = this.ball;
-    if (!three || !ball) {
+    if (!three) {
       return;
     }
-    const a = this.displayA;
-    const b = this.displayB;
-    ball.position.set(a, landscapeLoss(a, b) * HEIGHT_SCALE + BALL_RADIUS, b);
+    if (!this.animating) {
+      this.landscape?.moveBall(this.core.ballA, this.core.ballB);
+    }
 
     const example = this.core.currentExample;
     if (example !== this.patchExample) {
@@ -670,7 +443,7 @@ export class GradientDescent extends DemoElement {
       }
     }
 
-    this.patchTarget = this.tween ? 0 : this.patchTargetFor(this.core.phase);
+    this.patchTarget = this.animating ? 0 : this.patchTargetFor(this.core.phase);
     const blend = clamp(this.lastFrameDelta * 8, 0, 1);
     this.patchOpacity += (this.patchTarget - this.patchOpacity) * blend;
     if (this.patchMesh && this.patchMaterial) {
@@ -685,7 +458,12 @@ export class GradientDescent extends DemoElement {
     return phase === 'present' || phase === 'gradient' ? 1 : 0;
   }
   private updateArrows(): void {
-    if (this.tween) {
+    if (this.animating) {
+      this.hideAllArrows();
+      return;
+    }
+    const landscape = this.landscape;
+    if (!landscape) {
       this.hideAllArrows();
       return;
     }
@@ -693,7 +471,7 @@ export class GradientDescent extends DemoElement {
     const phase = core.phase;
     const baseA = core.ballA;
     const baseB = core.ballB;
-    const originY = landscapeLoss(baseA, baseB) * HEIGHT_SCALE + BALL_RADIUS;
+    const originY = landscape.heightAt(baseA, baseB) + BALL_RADIUS;
     const example = core.currentExample;
 
     if ((phase === 'present' || phase === 'gradient') && example !== null) {
@@ -764,39 +542,13 @@ export class GradientDescent extends DemoElement {
     arrow.setLength(length, Math.min(0.28, length * 0.32), Math.min(0.18, length * 0.2));
   }
 
-  private pushTrail(a: number, b: number): void {
-    this.trailPoints.push([a, b]);
-    while (this.trailPoints.length > TRAIL_MAX) {
-      this.trailPoints.shift();
-    }
-    const positions = this.trailPositions;
-    const attribute = this.trailAttribute;
-    const geometry = this.trailGeometry;
-    if (!positions || !attribute || !geometry) {
-      return;
-    }
-    for (let i = 0; i < this.trailPoints.length; i += 1) {
-      const [px, py] = this.trailPoints[i];
-      positions[i * 3] = px;
-      positions[i * 3 + 1] = landscapeLoss(px, py) * HEIGHT_SCALE + TRAIL_LIFT;
-      positions[i * 3 + 2] = py;
-    }
-    attribute.needsUpdate = true;
-    geometry.setDrawRange(0, this.trailPoints.length);
-  }
-
-  private clearTrail(): void {
-    this.trailPoints = [];
-    this.trailGeometry?.setDrawRange(0, 0);
-  }
-
   override step(): void {
-    if (this.tween) {
+    if (this.animating) {
       return;
     }
     this.core.advance(this.learningRate, { detailed: !this.running });
     if (this.core.phase === 'move') {
-      this.pushTrail(this.core.ballA, this.core.ballB);
+      this.landscape?.pushTrail(this.core.ballA, this.core.ballB);
     }
     this.sync();
   }
@@ -808,22 +560,18 @@ export class GradientDescent extends DemoElement {
   };
 
   private readonly handleBatch = (): void => {
-    if (this.running || this.tween) {
+    if (this.running || this.animating) {
       return;
     }
     const move = this.core.advanceBatch(this.learningRate);
-    if (move) {
-      this.tween = {
-        fromA: move.fromA,
-        fromB: move.fromB,
-        toA: move.toA,
-        toB: move.toB,
-        start: performance.now(),
-      };
-      this.tweenBallA = move.fromA;
-      this.tweenBallB = move.fromB;
+    if (move && this.landscape) {
+      this.animating = true;
+      this.landscape.tweenBall({ w1: move.toA, w2: move.toB }, () => {
+        // Pushed when the tween lands; drl-neuron pushes at move time. Intentional.
+        this.landscape?.pushTrail(move.toA, move.toB);
+        this.animating = false;
+      });
     }
-    this.animating = move !== null;
     this.sync();
   };
 
@@ -846,7 +594,7 @@ export class GradientDescent extends DemoElement {
       cancelAnimationFrame(this.animFrame);
       this.animFrame = null;
     }
-    this.tween = null;
+    this.landscape?.clearTween();
     this.animating = false;
     this.core.reset({
       startA: this.startA,
@@ -862,7 +610,7 @@ export class GradientDescent extends DemoElement {
       this.patchMaterial.opacity = 0;
     }
     this.hideAllArrows();
-    this.clearTrail();
+    this.landscape?.clearTrail();
     this.sync();
   }
 
@@ -891,128 +639,19 @@ export class GradientDescent extends DemoElement {
     this.lastFrameDelta = delta;
 
     let busy = false;
-    if (this.tween) {
-      const t = Math.min(1, (time - this.tween.start) / TWEEN_MS);
-      const eased = t * t * (3 - 2 * t);
-      this.tweenBallA = this.tween.fromA + (this.tween.toA - this.tween.fromA) * eased;
-      this.tweenBallB = this.tween.fromB + (this.tween.toB - this.tween.fromB) * eased;
-      if (t >= 1) {
-        this.pushTrail(this.tween.toA, this.tween.toB);
-        this.tween = null;
-        this.animating = false;
-      } else {
-        busy = true;
-      }
+    this.landscape?.update(delta);
+    if (this.animating) {
+      busy = true;
     }
     this.updateVisuals();
     if (Math.abs(this.patchOpacity - this.patchTarget) > 0.01) {
       busy = true;
     }
-    this.drawScene();
+    this.landscape?.render();
     if (busy) {
       this.requestRender();
     }
   };
-
-  private attachControls(canvas: HTMLCanvasElement): void {
-    canvas.addEventListener('pointerdown', this.onPointerDown);
-    canvas.addEventListener('pointerup', this.onPointerUp);
-    canvas.addEventListener('pointerleave', this.onPointerUp);
-    canvas.addEventListener('pointermove', this.onPointerMove);
-    canvas.addEventListener('auxclick', this.onAuxClick);
-    canvas.addEventListener('wheel', this.onWheel, { passive: false });
-  }
-
-  private readonly onPointerDown = (event: PointerEvent): void => {
-    const canvas = this.canvasEl;
-    if (!canvas) {
-      return;
-    }
-    if (event.button === 1) {
-      this.panning = true;
-      event.preventDefault();
-    } else {
-      this.dragging = true;
-    }
-    this.lastX = event.clientX;
-    this.lastY = event.clientY;
-    canvas.setPointerCapture(event.pointerId);
-  };
-
-  private readonly onPointerUp = (): void => {
-    this.dragging = false;
-    this.panning = false;
-  };
-
-  private readonly onPointerMove = (event: PointerEvent): void => {
-    if (!this.dragging && !this.panning) {
-      return;
-    }
-    const dx = event.clientX - this.lastX;
-    const dy = event.clientY - this.lastY;
-    this.lastX = event.clientX;
-    this.lastY = event.clientY;
-    if (this.panning) {
-      this.panCamera(dx, dy);
-    } else {
-      this.theta -= dx * 0.006;
-      this.phi = clamp(this.phi - dy * 0.006, 0.15, Math.PI - 0.15);
-      this.updateCamera();
-    }
-    this.requestRender();
-  };
-
-  private readonly onAuxClick = (event: MouseEvent): void => {
-    if (event.button === 1) {
-      event.preventDefault();
-    }
-  };
-
-  private readonly onWheel = (event: WheelEvent): void => {
-    event.preventDefault();
-    this.radius = clamp(this.radius + event.deltaY * 0.01, 1, 50);
-    this.updateCamera();
-    this.requestRender();
-  };
-
-  private panCamera(dx: number, dy: number): void {
-    const three = this.THREE;
-    const camera = this.camera;
-    const target = this.target;
-    if (!three || !camera || !target) {
-      return;
-    }
-    camera.updateMatrixWorld();
-    const right = new three.Vector3().setFromMatrixColumn(camera.matrix, 0);
-    const up = new three.Vector3().setFromMatrixColumn(camera.matrix, 1);
-    const panScale = this.radius * 0.0015;
-    target.addScaledVector(right, -dx * panScale);
-    target.addScaledVector(up, dy * panScale);
-    this.updateCamera();
-  }
-
-  private updateCamera(): void {
-    const camera = this.camera;
-    const target = this.target;
-    if (!camera || !target) {
-      return;
-    }
-    camera.position.set(
-      target.x + this.radius * Math.sin(this.phi) * Math.sin(this.theta),
-      target.y + this.radius * Math.cos(this.phi),
-      target.z + this.radius * Math.sin(this.phi) * Math.cos(this.theta),
-    );
-    camera.lookAt(target);
-  }
-
-  private drawScene(): void {
-    const renderer = this.renderer;
-    const scene = this.scene;
-    const camera = this.camera;
-    if (renderer && scene && camera) {
-      renderer.render(scene, camera);
-    }
-  }
 
   private statusLine(): string {
     switch (this.phase) {
@@ -1104,29 +743,11 @@ export class GradientDescent extends DemoElement {
       cancelAnimationFrame(this.animFrame);
       this.animFrame = null;
     }
-    const canvas = this.canvasEl;
-    if (canvas) {
-      canvas.removeEventListener('pointerdown', this.onPointerDown);
-      canvas.removeEventListener('pointerup', this.onPointerUp);
-      canvas.removeEventListener('pointerleave', this.onPointerUp);
-      canvas.removeEventListener('pointermove', this.onPointerMove);
-      canvas.removeEventListener('auxclick', this.onAuxClick);
-      canvas.removeEventListener('wheel', this.onWheel);
-    }
-
     const disposeMaterial = (material: ThreeMaterial | null): void => {
       material?.dispose();
     };
-    this.landscapeGeometry?.dispose();
-    disposeMaterial(this.landscapeMaterial);
     this.patchGeometry?.dispose();
     disposeMaterial(this.patchMaterial);
-    if (this.ball) {
-      this.ball.geometry.dispose();
-      disposeMaterial(this.ball.material as ThreeMaterial);
-    }
-    this.trailGeometry?.dispose();
-    disposeMaterial(this.trailMaterial);
     for (const arrow of [this.solidArrow, this.meanArrow, ...this.collectedArrows]) {
       if (!arrow) {
         continue;
@@ -1134,31 +755,20 @@ export class GradientDescent extends DemoElement {
       disposeMaterial(arrow.line.material as ThreeMaterial);
       disposeMaterial(arrow.cone.material as ThreeMaterial);
     }
-    this.renderer?.dispose();
+    this.landscape?.dispose();
+    this.landscape = null;
 
     this.THREE = null;
-    this.renderer = null;
-    this.scene = null;
-    this.camera = null;
-    this.canvasEl = null;
-    this.landscapeGeometry = null;
-    this.landscapeMaterial = null;
     this.patchGeometry = null;
     this.patchMaterial = null;
     this.patchMesh = null;
     this.patchLowColor = null;
     this.patchHighColor = null;
-    this.ball = null;
-    this.trailGeometry = null;
-    this.trailMaterial = null;
-    this.trailAttribute = null;
-    this.trailPositions = null;
     this.gradientGroup = null;
     this.solidArrow = null;
     this.meanArrow = null;
     this.collectedArrows = [];
     this.tmpDir = null;
-    this.target = null;
     super.disconnectedCallback();
   }
 }

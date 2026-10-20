@@ -4,3 +4,6 @@ dist/
 
 # Isolated agent worktrees
 .worktrees/
+
+# Separate Git repository (TensorFlow Playground prototype)
+tf-playground/

@@ -12,7 +12,10 @@ import './components/drl-connect4/drl-connect4.js';
 
 import './components/drl-deep-blue-page/drl-deep-blue-page.js';
 
+import './components/drl-mnist-cnn/drl-mnist-cnn.js';
 import './components/drl-frozen-lake/drl-frozen-lake.js';
+
+import './components/drl-neuron/drl-neuron.js';
 
 // @demos-imports
 
@@ -31,6 +34,7 @@ export type { QLearningOptions, Transition } from './core/q-learning.js';
 export { QLearningAgent } from './core/q-learning.js';
 export type { ReplayBufferOptions } from './core/replay-buffer.js';
 export { ReplayBuffer } from './core/replay-buffer.js';
+export * from './core/mnist-cnn-tfjs.js';
 export { DrlCard } from './ui/drl-card.js';
 export { DrlControls } from './ui/drl-controls.js';
 export { DrlSlider } from './ui/drl-slider.js';

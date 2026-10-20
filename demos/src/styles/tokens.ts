@@ -1,20 +1,23 @@
-import { css } from 'lit';
+import { css, unsafeCSS } from 'lit';
+import { drlTokenValues } from './token-values.js';
 
+// The `css` tag only accepts CSSResultGroup | number, so each token value is
+// wrapped with unsafeCSS. The emitted CSS text is identical to the literals.
 export const drlTokens = css`
   :host {
-    --drl-bg: #f8fafc;
-    --drl-surface: #ffffff;
-    --drl-fg: #0f172a;
-    --drl-muted: #64748b;
-    --drl-accent: #2563eb;
-    --drl-accent-2: #7c3aed;
-    --drl-arrow: #d32f2f;
-    --drl-border: #e2e8f0;
-    --drl-radius: 10px;
-    --drl-font: system-ui, -apple-system, 'Segoe UI', Roboto, Helvetica, Arial, sans-serif;
-    --drl-font-size: 14px;
-    --drl-space-1: 0.25rem;
-    --drl-space-2: 0.5rem;
-    --drl-space-3: 1rem;
+    --drl-bg: ${unsafeCSS(drlTokenValues.bg)};
+    --drl-surface: ${unsafeCSS(drlTokenValues.surface)};
+    --drl-fg: ${unsafeCSS(drlTokenValues.fg)};
+    --drl-muted: ${unsafeCSS(drlTokenValues.muted)};
+    --drl-accent: ${unsafeCSS(drlTokenValues.accent)};
+    --drl-accent-2: ${unsafeCSS(drlTokenValues.accent2)};
+    --drl-arrow: ${unsafeCSS(drlTokenValues.arrow)};
+    --drl-border: ${unsafeCSS(drlTokenValues.border)};
+    --drl-radius: ${unsafeCSS(drlTokenValues.radius)};
+    --drl-font: ${unsafeCSS(drlTokenValues.font)};
+    --drl-font-size: ${unsafeCSS(drlTokenValues.fontSize)};
+    --drl-space-1: ${unsafeCSS(drlTokenValues.space1)};
+    --drl-space-2: ${unsafeCSS(drlTokenValues.space2)};
+    --drl-space-3: ${unsafeCSS(drlTokenValues.space3)};
   }
 `;

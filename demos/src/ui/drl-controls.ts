@@ -109,9 +109,9 @@ export class DrlControls extends LitElement {
         <button type="button" aria-label="Reset" @click=${this.onReset}>Reset</button>
         <drl-slider
           label="Speed"
-          min="0.25"
+          min="0.01"
           max="4"
-          step="0.25"
+          step="0.01"
           .value=${this.speed}
           @drl-input=${this.onSpeedInput}
         ></drl-slider>
