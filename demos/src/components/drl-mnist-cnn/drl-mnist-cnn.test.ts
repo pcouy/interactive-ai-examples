@@ -7,12 +7,15 @@ import type {
 import type { TrainingRunInput, WeightEditorEvent } from './drl-mnist-cnn.js';
 import {
   activationRgb,
+  activationScaleAriaLabel,
+  activationScaleLabels,
   applyWeightEditorEvent,
   argmaxIndex,
   brushStrength,
   convLayerGeometry,
   describeLinkLabel,
   describeWeightSelection,
+  filterBiasCaption,
   filterCanvasInputChannel,
   filterKernelMean,
   filterKernelSlice,
@@ -214,6 +217,46 @@ describe('activationRgb', () => {
   it('clamps values outside the unit interval', () => {
     expect(activationRgb(-1)).toEqual([215, 48, 39]);
     expect(activationRgb(2)).toEqual([69, 117, 180]);
+  });
+
+  it('centres the tanh scale on zero', () => {
+    expect(activationRgb(0, 'tanh')).toEqual([128, 128, 128]);
+    expect(activationRgb(-1, 'tanh')).toEqual([215, 48, 39]);
+    expect(activationRgb(1, 'tanh')).toEqual([69, 117, 180]);
+  });
+
+  it('interpolates the tanh scale on both sides of zero', () => {
+    expect(activationRgb(-0.5, 'tanh')).toEqual(mixRgb([215, 48, 39], [128, 128, 128], 0.5));
+    expect(activationRgb(0.5, 'tanh')).toEqual(mixRgb([128, 128, 128], [69, 117, 180], 0.5));
+  });
+
+  it('clamps a tanh value outside its domain', () => {
+    expect(activationRgb(-3, 'tanh')).toEqual([215, 48, 39]);
+    expect(activationRgb(3, 'tanh')).toEqual([69, 117, 180]);
+  });
+});
+
+describe('activationScaleLabels', () => {
+  it('names the three stops of each activation domain', () => {
+    expect(activationScaleLabels('sigmoid')).toEqual(['0', '0,5', '1']);
+    expect(activationScaleLabels('tanh')).toEqual(['-1', '0', '1']);
+  });
+
+  it('describes the scale for screen readers', () => {
+    expect(activationScaleAriaLabel('sigmoid')).toBe(
+      'Échelle des cartes : rouge à 0, gris à 0,5, bleu à 1',
+    );
+    expect(activationScaleAriaLabel('tanh')).toBe(
+      'Échelle des cartes : rouge à -1, gris à 0, bleu à 1',
+    );
+  });
+});
+
+describe('filterBiasCaption', () => {
+  it('formats the channel number and the bias with a decimal comma', () => {
+    expect(filterBiasCaption(0, 0.1254)).toBe('sortie 1 · b = 0,125');
+    expect(filterBiasCaption(2, -0.0432)).toBe('sortie 3 · b = -0,043');
+    expect(filterBiasCaption(4, 0)).toBe('sortie 5 · b = 0,000');
   });
 });
 

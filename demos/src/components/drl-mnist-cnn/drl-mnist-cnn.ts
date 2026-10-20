@@ -4,15 +4,18 @@ import { customElement, state } from 'lit/decorators.js';
 import { repeat } from 'lit/directives/repeat.js';
 import '../../ui/drl-slider.js';
 import {
+  activationDomain,
   CONV_KERNEL_SIZE,
   CONV_LAYER_NAMES,
   DEFAULT_FILTER_COUNTS,
+  DEFAULT_MNIST_CNN_ACTIVATION,
   forwardMnistCnn,
   initializeMnistCnnWeights,
   MAX_FILTER_COUNT,
   MIN_FILTER_COUNT,
   MNIST_INPUT_LENGTH,
   MNIST_INPUT_SIZE,
+  type MnistCnnActivation,
   type MnistCnnFeatureMap,
   type MnistCnnFilters,
   type MnistCnnForwardResult,
@@ -395,6 +398,11 @@ export function filterPanelSubtitle(selection: WeightSelection): string {
     : `${mean} La toile du couple sélectionné montre le noyau 3×3 exact.`;
 }
 
+/** Légende d'un canal de sortie : numéro et biais à trois décimales. */
+export function filterBiasCaption(channel: number, bias: number): string {
+  return `sortie ${channel + 1} · b = ${formatValue(bias, 3)}`;
+}
+
 /**
  * Sélecteurs des deux toiles de filtres reliées par une liaison : la toile amont
  * est le canal de sortie `inputChannel` de la couche précédente, la toile aval le
@@ -492,18 +500,35 @@ export function mixRgb(
 }
 
 /**
- * Couleur d'une activation sigmoïde : rouge à 0, gris neutre à 0,5, bleu à 1.
- * La valeur est bornée dans `[0, 1]` avant le mélange, donc une entrée hors
- * bornes prend la couleur de l'extrémité la plus proche.
+ * Couleur d'une activation : rouge à la borne basse, gris neutre au milieu,
+ * bleu à la borne haute. Sigmoïde : `[0, 1]`, milieu 0,5. Tanh : `[-1, 1]`,
+ * milieu 0. La valeur est bornée dans le domaine avant le mélange.
  */
-export function activationRgb(value: number): readonly [number, number, number] {
-  const t = clamp(value, 0, 1);
+export function activationRgb(
+  value: number,
+  activation: MnistCnnActivation = DEFAULT_MNIST_CNN_ACTIVATION,
+): readonly [number, number, number] {
+  const { min, max } = activationDomain(activation);
+  const t = (clamp(value, min, max) - min) / (max - min);
   if (t === 0.5) {
     return ACTIVATION_MID_RGB;
   }
   return t < 0.5
     ? mixRgb(ACTIVATION_LOW_RGB, ACTIVATION_MID_RGB, t * 2)
     : mixRgb(ACTIVATION_MID_RGB, ACTIVATION_HIGH_RGB, (t - 0.5) * 2);
+}
+
+/** Étiquettes des trois repères de l'échelle, dans le domaine de l'activation. */
+export function activationScaleLabels(
+  activation: MnistCnnActivation,
+): readonly [string, string, string] {
+  return activation === 'tanh' ? ['-1', '0', '1'] : ['0', '0,5', '1'];
+}
+
+/** Libellé accessible de l'échelle divergente pour une activation. */
+export function activationScaleAriaLabel(activation: MnistCnnActivation): string {
+  const [low, mid, high] = activationScaleLabels(activation);
+  return `Échelle des cartes : rouge à ${low}, gris à ${mid}, bleu à ${high}`;
 }
 
 /**
@@ -2177,6 +2202,17 @@ export class MnistCnn extends LitElement {
     context.stroke();
   }
 
+  /** Biais d'un canal de sortie de la couche de convolution donnée. */
+  private filterBias(layer: number, channel: number): number {
+    const convWeights: readonly MnistCnnLayerWeights[] = [
+      this.weights.conv1,
+      this.weights.conv2,
+      this.weights.conv3,
+      this.weights.conv4,
+    ];
+    return convWeights[layer].bias[channel];
+  }
+
   private drawFilterCanvas(canvas: HTMLCanvasElement, layer: number, channel: number): void {
     const context = canvas.getContext('2d');
     if (!context) {
@@ -2708,10 +2744,12 @@ export class MnistCnn extends LitElement {
                               width=${FILTER_CANVAS_SIZE}
                               height=${FILTER_CANVAS_SIZE}
                               role="img"
-                              aria-label="Filtre ${name}, canal de sortie ${channel + 1}"
+                              aria-label=${`Filtre ${name}, canal de sortie ${channel + 1}, biais ${formatValue(this.filterBias(layer, channel), 3)}`}
                               @pointerdown=${this.handleFilterCellClick}
                             ></canvas>
-                            <figcaption>sortie ${channel + 1}</figcaption>
+                            <figcaption>
+                              ${filterBiasCaption(channel, this.filterBias(layer, channel))}
+                            </figcaption>
                           </figure>
                         `,
                       )}
@@ -2732,11 +2770,13 @@ export class MnistCnn extends LitElement {
           <div
             class="drl-activation-scale"
             role="img"
-            aria-label="Échelle des cartes : rouge à 0, gris à 0,5, bleu à 1"
+            aria-label=${activationScaleAriaLabel(DEFAULT_MNIST_CNN_ACTIVATION)}
           >
             <span class="drl-activation-scale-bar"></span>
             <span class="drl-activation-scale-labels" aria-hidden="true">
-              <span>0</span><span>0,5</span><span>1</span>
+              ${activationScaleLabels(DEFAULT_MNIST_CNN_ACTIVATION).map(
+                (label) => html`<span>${label}</span>`,
+              )}
             </span>
           </div>
           ${
