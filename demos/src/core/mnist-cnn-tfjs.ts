@@ -737,7 +737,7 @@ export class MnistCnnTfjsTrainer {
           validationLoss = metrics.loss;
           validationAccuracy = metrics.accuracy;
         }
-        epochTrainAccuracy = await this.measureAccuracy(
+        const measuredTrainAccuracy = await this.measureAccuracy(
           model,
           options.train,
           MNIST_TRAIN_ACCURACY_SAMPLE_SIZE,
@@ -746,6 +746,7 @@ export class MnistCnnTfjsTrainer {
           status = 'cancelled';
           break;
         }
+        epochTrainAccuracy = measuredTrainAccuracy;
         epochLoss = epochBatches > 0 ? epochLossSum / epochBatches : null;
         completedEpochs += 1;
         const epochEndedAt = Date.now();
@@ -1051,6 +1052,11 @@ export class MnistCnnTfjsTrainer {
       } finally {
         images.dispose();
         labels.dispose();
+      }
+      // Une annulation pendant la lecture arrête la mesure : l'époque reste
+      // inachevée et l'appelant ignore la valeur retournée.
+      if (this.cancelled) {
+        break;
       }
     }
     return correct / total;
