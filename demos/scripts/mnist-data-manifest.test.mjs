@@ -6,7 +6,7 @@ import { MNIST_BASE_URL, MNIST_FILES } from './mnist-data-manifest.mjs';
 
 const SCRIPT_DIRECTORY = dirname(fileURLToPath(import.meta.url));
 const README = await readFile(
-  resolve(SCRIPT_DIRECTORY, '..', 'public', 'mnist', 'README.md'),
+  resolve(SCRIPT_DIRECTORY, '..', 'public', 'datasets', 'mnist', 'README.md'),
   'utf8',
 );
 const README_COMPACT = README.replace(/\s+/g, '');

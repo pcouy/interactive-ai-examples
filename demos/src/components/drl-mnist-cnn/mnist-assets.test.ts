@@ -1,4 +1,5 @@
 import { afterEach, describe, expect, it, vi } from 'vitest';
+import { getDataset } from '../../core/dataset-registry.js';
 import type { MnistIdxDataset } from '../../core/mnist-data.js';
 
 const IMAGE_MAGIC = 2051;
@@ -68,9 +69,9 @@ async function gzippedGalleryAssets(): Promise<Map<string, Uint8Array<ArrayBuffe
  * Oracle indépendant de `selectGalleryIndices` : les `perClass` premiers indices
  * de chaque classe, classe par classe, dans l'ordre naturel du jeu.
  */
-function firstOccurrencesPerClass(labels: number[], perClass: number): number[] {
+function firstOccurrencesPerClass(labels: number[], perClass: number, classCount = 10): number[] {
   const expected: number[] = [];
-  for (let label = 0; label < 10; label += 1) {
+  for (let label = 0; label < classCount; label += 1) {
     const indices = labels
       .map((value, index) => (value === label ? index : -1))
       .filter((index) => index >= 0);
@@ -187,7 +188,7 @@ describe('loadMnistSplits', () => {
     expect(first.test.count).toBe(TEST_LABELS.length);
     expect(Array.from(first.test.labels)).toEqual(TEST_LABELS);
     for (const call of fetchMock.mock.calls) {
-      expect(String(call[0])).toContain('/mnist/');
+      expect(String(call[0])).toContain('/datasets/mnist/');
     }
   });
 
@@ -262,11 +263,47 @@ describe('loadMnistSplits', () => {
   });
 });
 
+describe('loadDatasetSplits', () => {
+  it('fetches the four Fashion-MNIST files from datasets/fashion-mnist/', async () => {
+    const assets = await gzippedAssets();
+    const fetchMock = stubFetch(assets);
+    const { loadDatasetSplits } = await loadLoader();
+
+    const [first, second] = await Promise.all([
+      loadDatasetSplits(getDataset('fashion-mnist')),
+      loadDatasetSplits(getDataset('fashion-mnist')),
+    ]);
+    expect(first).toBe(second);
+    expect(fetchMock).toHaveBeenCalledTimes(4);
+    expect(first.train.count).toBe(TRAIN_LABELS.length);
+    expect(Array.from(first.test.labels)).toEqual(TEST_LABELS);
+    for (const call of fetchMock.mock.calls) {
+      expect(String(call[0])).toContain('/datasets/fashion-mnist/');
+      expect(String(call[0])).not.toContain('/datasets/mnist/');
+    }
+  });
+
+  it('caches one promise per dataset id', async () => {
+    const assets = await gzippedAssets();
+    const fetchMock = stubFetch(assets);
+    const { loadDatasetSplits } = await loadLoader();
+
+    const mnist = loadDatasetSplits(getDataset('mnist'));
+    const fashion = loadDatasetSplits(getDataset('fashion-mnist'));
+    expect(mnist).not.toBe(fashion);
+    const [mnistSplits, fashionSplits] = await Promise.all([mnist, fashion]);
+    expect(mnistSplits.train.count).toBe(TRAIN_LABELS.length);
+    expect(fashionSplits.test.count).toBe(TEST_LABELS.length);
+    // Quatre appels par jeu, jamais de partage de promesse entre jeux.
+    expect(fetchMock).toHaveBeenCalledTimes(8);
+  });
+});
+
 describe('mnistFetchErrorMessage', () => {
   it('names the missing file and points at the download command', async () => {
     const { mnistFetchErrorMessage, mnistFileName } = await loadLoader();
     const message = mnistFetchErrorMessage(
-      '/mnist/train-images-idx3-ubyte.gz',
+      '/datasets/mnist/train-images-idx3-ubyte.gz',
       'network error: offline',
     );
     expect(message).toContain('train-images-idx3-ubyte.gz');
@@ -305,6 +342,26 @@ describe('selectGalleryIndices', () => {
     expect(Array.from(indices)).toHaveLength(30);
     expect(Array.from(indices)).toEqual(firstOccurrencesPerClass(GALLERY_TEST_LABELS, 3));
     expect(Array.from(indices.slice(0, 3))).toEqual([0, 19, 28]);
+  });
+
+  it('picks only the first classCount classes when asked', async () => {
+    const { selectGalleryIndices } = await loader();
+    // Le jeu de la galerie contient vingt exemples par chiffre : les trois
+    // premiers de chaque classe suffisent, même avec un grand classCount.
+    const sparse = labelsDataset([0, 0, 0, 1, 1, 1, 2, 2, 2, 3, 3, 3, 4, 4, 4]);
+    const indices = selectGalleryIndices(sparse, 3, 2);
+    expect(Array.from(indices)).toEqual([0, 1, 2, 3, 4, 5]);
+
+    // classCount 20 : les classes 5 à 19 n'ont aucun exemple.
+    expect(() => selectGalleryIndices(sparse, 3, 20)).toThrow(RangeError);
+    expect(() => selectGalleryIndices(sparse, 3, 20)).toThrow(/class 5/);
+  });
+
+  it('rejects a classCount that is not an integer of at least 2', async () => {
+    const { selectGalleryIndices } = await loader();
+    for (const classCount of [1, 0, 1.5, Number.NaN]) {
+      expect(() => selectGalleryIndices(dataset, 3, classCount)).toThrow(RangeError);
+    }
   });
 
   it('rejects a perClass that is not a positive integer', async () => {
@@ -399,7 +456,7 @@ function minimalManifestJson(): string {
 }
 
 describe('fetchMnistCnnManifest', () => {
-  it('downloads the pretrained manifest under mnist/ and its text parses', async () => {
+  it('downloads the pretrained manifest under datasets/mnist/ and its text parses', async () => {
     const manifest = minimalManifestJson();
     const fetchMock = vi.fn(
       async (_input: RequestInfo | URL): Promise<Response> =>
@@ -411,7 +468,7 @@ describe('fetchMnistCnnManifest', () => {
 
     const text = await fetchMnistCnnManifest();
     expect(text).toBe(manifest);
-    expect(String(fetchMock.mock.calls[0][0])).toContain('/mnist/model-v1.json');
+    expect(String(fetchMock.mock.calls[0][0])).toContain('/datasets/mnist/model-v1.json');
     expect(parseMnistCnnManifestJson(text).config.filters).toEqual([3, 3, 3, 3]);
   });
 

@@ -1,5 +1,5 @@
 node_modules/
 dist/
 
-# Archives MNIST téléchargées à l'installation (npm run mnist:data)
-public/mnist/*.gz
+# Archives de données téléchargées à l'installation (npm run mnist:data)
+public/datasets/**/*.gz

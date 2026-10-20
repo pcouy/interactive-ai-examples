@@ -1,11 +1,16 @@
 /**
- * Chargeur navigateur des ressources MNIST locales de la démo `drl-mnist-cnn`.
+ * Chargeur navigateur des ressources des jeux IDX locaux de la démo
+ * `drl-mnist-cnn`.
  *
  * Le module télécharge les quatre fichiers IDX compressés servis sous
- * `import.meta.env.BASE_URL + 'mnist/'`, les décode de façon tolérante et
- * retourne les deux jeux IDX bruts (60 000 images d'entraînement, 10 000
- * images de test). Il ne sélectionne aucune fraction : le composant choisit
- * lui-même la part d'entraînement et de validation via `selectStratifiedIndices`.
+ * `import.meta.env.BASE_URL + 'datasets/<id>/'`, les décode de façon tolérante
+ * et retourne les deux jeux IDX bruts. Il ne sélectionne aucune fraction : le
+ * composant choisit lui-même la part d'entraînement et de validation via
+ * `selectStratifiedIndices`.
+ *
+ * Le répertoire et les noms de fichiers viennent du registre
+ * `dataset-registry.ts` : chaque jeu possède son propre répertoire
+ * `datasets/<id>/` et son propre nombre de classes.
  *
  * Le décodage est tolérant : un serveur qui annonce `Content-Encoding: gzip`
  * (Vite en développement, par exemple) a déjà décodé le corps, et le
@@ -15,46 +20,43 @@
  * inconnu (page d'erreur HTML, fichier corrompu) produit une erreur qui nomme
  * le fichier et la commande de téléchargement.
  *
- * La promesse de chargement est mise en cache : plusieurs appels concurrents
- * (ou une reconnexion) ne déclenchent qu'un seul téléchargement.
+ * La promesse de chargement est mise en cache par identifiant de jeu : plusieurs
+ * appels concurrents (ou une reconnexion) ne déclenchent qu'un seul
+ * téléchargement pour ce jeu.
  *
  * Ce module est réservé au navigateur : il utilise `fetch`, `Blob`, `Response`
  * et `DecompressionStream`. Le core ne l'importe jamais.
  */
 
 import {
+  type DatasetDefinition,
+  datasetClassCount,
+  getDataset,
+} from '../../core/dataset-registry.js';
+import {
   loadIdxDataset,
-  MNIST_CLASS_COUNT,
   type MnistIdxDataset,
   type MnistSample,
   materializeSample,
 } from '../../core/mnist-data.js';
 
-/** Répertoire public des ressources MNIST, relatif à la base Vite. */
-const MNIST_ASSET_DIRECTORY = 'mnist/';
+/** Répertoire public des ressources des jeux, relatif à la base Vite. */
+const DATASET_ASSET_DIRECTORY = 'datasets';
 
-/** Noms des quatre fichiers IDX compressés livrés dans `demos/public/mnist/`. */
-export const MNIST_ASSET_FILES = {
-  trainImages: 'train-images-idx3-ubyte.gz',
-  trainLabels: 'train-labels-idx1-ubyte.gz',
-  testImages: 't10k-images-idx3-ubyte.gz',
-  testLabels: 't10k-labels-idx1-ubyte.gz',
-} as const;
-
-/** Nom du manifeste de poids pré-entraîné, servi sous `mnist/model-v1.json`. */
+/** Nom du manifeste de poids pré-entraîné MNIST, servi sous `datasets/mnist/`. */
 const MNIST_MODEL_MANIFEST_FILE = 'model-v1.json';
 
 /** Magics IDX gros-boutiste : `2051` pour les images, `2049` pour les libellés. */
 const IDX_IMAGE_MAGIC = 2051;
 const IDX_LABEL_MAGIC = 2049;
 
-/** Les deux jeux IDX bruts : entraînement (60 000) et test (10 000). */
+/** Les deux jeux IDX bruts : entraînement et test. */
 export interface MnistSplits {
   readonly train: MnistIdxDataset;
   readonly test: MnistIdxDataset;
 }
 
-/** Nombre d'exemples proposés par chiffre dans la galerie MNIST. */
+/** Nombre d'exemples proposés par classe dans la galerie par défaut. */
 export const GALLERY_PER_CLASS = 10;
 
 interface ViteImportMeta extends ImportMeta {
@@ -140,7 +142,7 @@ function assertIdxPayload(bytes: Uint8Array, url: string, expectedMagic: number)
   const magic = bytes.length >= 4 ? readIdxMagic(bytes) : -1;
   if (looksLikeHtml || magic !== expectedMagic) {
     throw new Error(
-      `mnist-assets: "${mnistFileName(url)}" is not a valid MNIST IDX file (expected magic ${expectedMagic}, received ${magic}). Run "npm run mnist:data" to download the MNIST data files.`,
+      `mnist-assets: "${mnistFileName(url)}" is not a valid IDX file (expected magic ${expectedMagic}, received ${magic}). Run "npm run mnist:data" to download the MNIST data files.`,
     );
   }
 }
@@ -173,13 +175,13 @@ async function fetchGzip(url: string, expectedMagic: number): Promise<Uint8Array
 }
 
 /**
- * Télécharge le manifeste de poids pré-entraîné `mnist/model-v1.json` et
- * retourne son texte JSON brut. L'analyse et la validation sont déléguées à
+ * Télécharge le manifeste de poids pré-entraîné `datasets/mnist/model-v1.json`
+ * et retourne son texte JSON brut. L'analyse et la validation sont déléguées à
  * `parseMnistCnnManifestJson` (core) : ce chargeur ne fait que réseau et
  * décodage, avec les mêmes erreurs explicites que `fetchGzip`.
  */
 export async function fetchMnistCnnManifest(): Promise<string> {
-  const url = `${assetBaseUrl()}${MNIST_ASSET_DIRECTORY}${MNIST_MODEL_MANIFEST_FILE}`;
+  const url = `${assetBaseUrl()}${DATASET_ASSET_DIRECTORY}/mnist/${MNIST_MODEL_MANIFEST_FILE}`;
   let response: Response;
   try {
     response = await fetch(url);
@@ -192,56 +194,86 @@ export async function fetchMnistCnnManifest(): Promise<string> {
   return response.text();
 }
 
-async function downloadSplits(): Promise<MnistSplits> {
-  const base = `${assetBaseUrl()}${MNIST_ASSET_DIRECTORY}`;
+/**
+ * Télécharge et décode les quatre fichiers IDX d'un jeu. Le répertoire et les
+ * noms de fichiers viennent de `dataset` ; le nombre de classes accepté vient de
+ * `datasetClassCount(dataset)`.
+ */
+async function downloadDatasetSplits(dataset: DatasetDefinition): Promise<MnistSplits> {
+  const base = `${assetBaseUrl()}${DATASET_ASSET_DIRECTORY}/${dataset.id}/`;
+  const classCount = datasetClassCount(dataset);
   const [trainImages, trainLabels, testImages, testLabels] = await Promise.all([
-    fetchGzip(`${base}${MNIST_ASSET_FILES.trainImages}`, IDX_IMAGE_MAGIC),
-    fetchGzip(`${base}${MNIST_ASSET_FILES.trainLabels}`, IDX_LABEL_MAGIC),
-    fetchGzip(`${base}${MNIST_ASSET_FILES.testImages}`, IDX_IMAGE_MAGIC),
-    fetchGzip(`${base}${MNIST_ASSET_FILES.testLabels}`, IDX_LABEL_MAGIC),
+    fetchGzip(`${base}${dataset.files.trainImages}`, IDX_IMAGE_MAGIC),
+    fetchGzip(`${base}${dataset.files.trainLabels}`, IDX_LABEL_MAGIC),
+    fetchGzip(`${base}${dataset.files.testImages}`, IDX_IMAGE_MAGIC),
+    fetchGzip(`${base}${dataset.files.testLabels}`, IDX_LABEL_MAGIC),
   ]);
   return {
-    train: loadIdxDataset(trainImages, trainLabels),
-    test: loadIdxDataset(testImages, testLabels),
+    train: loadIdxDataset(trainImages, trainLabels, classCount),
+    test: loadIdxDataset(testImages, testLabels, classCount),
   };
 }
 
-let inFlight: Promise<MnistSplits> | null = null;
+/** Une promesse de chargement par jeu : les jeux ne partagent jamais leur cache. */
+const inFlightSplits = new Map<string, Promise<MnistSplits>>();
 
 /**
- * Retourne les deux jeux IDX bruts. Le premier appel lance le téléchargement
- * des quatre fichiers ; les appels suivants réutilisent la même promesse tant
- * qu'elle est en vol. En cas d'échec, le cache est vidé pour permettre une
- * nouvelle tentative.
+ * Retourne les deux jeux IDX bruts d'un jeu. Le premier appel lance le
+ * téléchargement des quatre fichiers ; les appels suivants réutilisent la même
+ * promesse tant qu'elle est en vol. En cas d'échec, l'entrée du cache est
+ * supprimée pour permettre une nouvelle tentative.
  */
-export function loadMnistSplits(): Promise<MnistSplits> {
-  if (inFlight === null) {
-    inFlight = downloadSplits().catch((error: unknown) => {
-      inFlight = null;
-      throw error;
-    });
+export function loadDatasetSplits(dataset: DatasetDefinition): Promise<MnistSplits> {
+  const cached = inFlightSplits.get(dataset.id);
+  if (cached !== undefined) {
+    return cached;
   }
-  return inFlight;
+  const pending = downloadDatasetSplits(dataset).catch((error: unknown) => {
+    inFlightSplits.delete(dataset.id);
+    throw error;
+  });
+  inFlightSplits.set(dataset.id, pending);
+  return pending;
 }
 
 /**
- * Sélectionne les `perClass` premiers indices de chaque classe `0` à `9` dans le
- * jeu donné, classe par classe (les `perClass` premiers de la classe 0, puis ceux
- * de la classe 1, et ainsi de suite), de façon déterministe : l'ordre naturel du
- * jeu est conservé dans chaque classe. Rejette un `perClass` qui n'est pas un
- * entier positif et une classe qui n'a pas assez d'exemples.
+ * Retourne les deux jeux IDX bruts de MNIST. Le premier appel lance le
+ * téléchargement des quatre fichiers ; les appels suivants réutilisent la même
+ * promesse tant qu'elle est en vol. En cas d'échec, le cache est vidé pour
+ * permettre une nouvelle tentative.
+ */
+export function loadMnistSplits(): Promise<MnistSplits> {
+  return loadDatasetSplits(getDataset('mnist'));
+}
+
+/**
+ * Sélectionne les `perClass` premiers indices de chaque classe `0` à
+ * `classCount - 1` dans le jeu donné, classe par classe (les `perClass` premiers
+ * de la classe 0, puis ceux de la classe 1, et ainsi de suite), de façon
+ * déterministe : l'ordre naturel du jeu est conservé dans chaque classe.
+ * Rejette un `perClass` qui n'est pas un entier positif et une classe qui n'a
+ * pas assez d'exemples.
+ *
+ * `classCount` vaut le nombre de classes de MNIST (10) par défaut, lu dans le
+ * registre : les appelants MNIST n'ont donc rien à passer.
  */
 export function selectGalleryIndices(
   dataset: MnistIdxDataset,
   perClass: number = GALLERY_PER_CLASS,
+  classCount: number = datasetClassCount(getDataset('mnist')),
 ): Uint32Array {
   if (!Number.isInteger(perClass) || perClass < 1) {
     throw new RangeError(
       `mnist-assets: perClass must be a positive integer, received ${String(perClass)}.`,
     );
   }
+  if (!Number.isInteger(classCount) || classCount < 2) {
+    throw new RangeError(
+      `mnist-assets: classCount must be an integer of at least 2, received ${String(classCount)}.`,
+    );
+  }
   const picked: number[] = [];
-  for (let label = 0; label < MNIST_CLASS_COUNT; label += 1) {
+  for (let label = 0; label < classCount; label += 1) {
     let found = 0;
     for (let index = 0; index < dataset.labels.length && found < perClass; index += 1) {
       if (dataset.labels[index] === label) {
@@ -259,10 +291,23 @@ export function selectGalleryIndices(
 }
 
 /**
- * Galerie de `perClass` exemples par chiffre, échantillonnés dans le jeu de test
- * officiel et matérialisés en `MnistSample` (`Float32` dans `[0, 1]`).
+ * Galerie de `perClass` exemples par classe d'un jeu, échantillonnés dans son
+ * jeu de test et matérialisés en `MnistSample` (`Float32` dans `[0, 1]`). Le
+ * nombre de classes vient de `datasetClassCount(dataset)`.
  */
-export async function loadMnistGallery(perClass: number = GALLERY_PER_CLASS): Promise<MnistSample> {
-  const splits = await loadMnistSplits();
-  return materializeSample(splits.test, selectGalleryIndices(splits.test, perClass));
+export async function loadDatasetGallery(
+  dataset: DatasetDefinition,
+  perClass: number = GALLERY_PER_CLASS,
+): Promise<MnistSample> {
+  const splits = await loadDatasetSplits(dataset);
+  const indices = selectGalleryIndices(splits.test, perClass, datasetClassCount(dataset));
+  return materializeSample(splits.test, indices);
+}
+
+/**
+ * Galerie de `perClass` exemples par chiffre MNIST, échantillonnés dans le jeu
+ * de test officiel et matérialisés en `MnistSample` (`Float32` dans `[0, 1]`).
+ */
+export function loadMnistGallery(perClass: number = GALLERY_PER_CLASS): Promise<MnistSample> {
+  return loadDatasetGallery(getDataset('mnist'), perClass);
 }

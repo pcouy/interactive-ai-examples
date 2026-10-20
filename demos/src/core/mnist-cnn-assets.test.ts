@@ -7,7 +7,7 @@ import {
   parseMnistCnnManifestJson,
 } from './mnist-cnn-assets.js';
 
-const MANIFEST_URL = new URL('../../public/mnist/model-v1.json', import.meta.url);
+const MANIFEST_URL = new URL('../../public/datasets/mnist/model-v1.json', import.meta.url);
 const MANIFEST_TEXT = readFileSync(MANIFEST_URL, 'utf8');
 
 /** Copie modifiable du manifeste exporté, pour les cas d'erreur. */
