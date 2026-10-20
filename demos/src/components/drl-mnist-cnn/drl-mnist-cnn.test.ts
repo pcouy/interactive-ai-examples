@@ -26,6 +26,8 @@ import {
   linkCanvasSelectors,
   linkGroupIndices,
   linkLineState,
+  mapCanvasSize,
+  mapCellSize,
   mixRgb,
   paintDisc,
   parseWeightInput,
@@ -108,6 +110,15 @@ function filterCellEvent(
 ): WeightEditorEvent {
   return { kind: 'filterCell', layer, inputChannel, outputChannel, ky, kx };
 }
+
+describe('mapCanvasSize', () => {
+  it('keeps the cell size at least four pixels and fits the maximum canvas', () => {
+    expect(mapCellSize(26)).toBe(Math.floor(192 / 26));
+    expect(mapCanvasSize(26)).toBe(26 * Math.floor(192 / 26));
+    expect(mapCanvasSize(5)).toBe(5 * Math.floor(192 / 5));
+    expect(mapCanvasSize(64)).toBe(64 * 4);
+  });
+});
 
 describe('brushStrength', () => {
   it('is 1 at the stroke center and fades linearly to 0 at the brush radius', () => {
