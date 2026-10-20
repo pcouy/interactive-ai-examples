@@ -1057,7 +1057,7 @@ describe('GameComponent onPlay', () => {
     internals.onPlay();
   }
 
-  it('restarts a finished human vs agent game and stops the loop', () => {
+  it('restarts a finished human vs agent game and starts the agent after the human move', () => {
     const element = createTicTacToeElement();
     element.players = '["human","agent"]';
     playToTheEnd(element);
@@ -1066,13 +1066,22 @@ describe('GameComponent onPlay', () => {
     callOnPlay(element);
     expect(element.gameOutcome).toBeNull();
     expect(element.history).toHaveLength(1);
-    expect(element.running).toBe(false);
+    // La boucle reste active : l'agent doit démarrer après le coup humain.
+    expect(element.running).toBe(true);
     expect((element as unknown as { pending: unknown }).pending).toBeNull();
 
+    // L'humain joue : startTurn() prépare le tour de l'agent.
     const state = element.currentState as TicTacToeState;
     const legal = ticTacToe.legalMoves(state);
     expect(legal.length).toBeGreaterThan(0);
     expect(element.applyMove(legal[0])).toBe(true);
+    expect(element.history).toHaveLength(2);
+    expect((element as unknown as { pending: unknown }).pending).not.toBeNull();
+
+    // La boucle active fait avancer le tour de l'agent jusqu'à son coup.
+    element.stepTurn();
+    expect(element.history).toHaveLength(3);
+    expect(element.gameOutcome).toBeNull();
   });
 
   it('restarts a finished agent vs human game and keeps the loop running', () => {
