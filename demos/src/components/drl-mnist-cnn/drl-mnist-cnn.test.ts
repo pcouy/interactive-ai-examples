@@ -6,6 +6,7 @@ import type {
 } from '../../core/mnist-cnn.js';
 import type { TrainingRunInput, WeightEditorEvent } from './drl-mnist-cnn.js';
 import {
+  activationRgb,
   applyWeightEditorEvent,
   argmaxIndex,
   brushStrength,
@@ -195,6 +196,24 @@ describe('mixRgb', () => {
   it('interpolates between two colors', () => {
     expect(mixRgb([255, 255, 255], [0, 0, 0], 0.5)).toEqual([128, 128, 128]);
     expect(mixRgb([255, 255, 255], [255, 0, 0], 0)).toEqual([255, 255, 255]);
+  });
+});
+
+describe('activationRgb', () => {
+  it('maps 0 to red, 0.5 to neutral grey and 1 to blue', () => {
+    expect(activationRgb(0)).toEqual([215, 48, 39]);
+    expect(activationRgb(0.5)).toEqual([128, 128, 128]);
+    expect(activationRgb(1)).toEqual([69, 117, 180]);
+  });
+
+  it('interpolates from each end to the neutral grey', () => {
+    expect(activationRgb(0.25)).toEqual(mixRgb([215, 48, 39], [128, 128, 128], 0.5));
+    expect(activationRgb(0.75)).toEqual(mixRgb([128, 128, 128], [69, 117, 180], 0.5));
+  });
+
+  it('clamps values outside the unit interval', () => {
+    expect(activationRgb(-1)).toEqual([215, 48, 39]);
+    expect(activationRgb(2)).toEqual([69, 117, 180]);
   });
 });
 
@@ -802,6 +821,7 @@ describe('trainingRunRequest', () => {
     return {
       filters,
       learningRate: 0.01,
+      batchSize: 64,
       trainPercent: 25,
       validationPercent: 15,
       epochs: 4,
@@ -816,19 +836,30 @@ describe('trainingRunRequest', () => {
 
   it('forwards the training parameters from the input', () => {
     const request = trainingRunRequest(
-      input({ epochs: 9, trainPercent: 40, validationPercent: 20, learningRate: 0.02 }),
+      input({
+        epochs: 9,
+        trainPercent: 40,
+        validationPercent: 20,
+        learningRate: 0.02,
+        batchSize: 32,
+      }),
     );
     expect(request.epochs).toBe(9);
     expect(request.trainPercent).toBe(40);
     expect(request.validationPercent).toBe(20);
     expect(request.learningRate).toBe(0.02);
+    expect(request.batchSize).toBe(32);
     expect(request.filters).toBe(filters);
   });
 
-  it('pins the batch size and the seed', () => {
+  it('pins the seed', () => {
     const request = trainingRunRequest(input());
-    expect(request.batchSize).toBe(64);
     expect(request.seed).toBe(42);
+  });
+
+  it('forwards the batch size from the input', () => {
+    const request = trainingRunRequest(input({ batchSize: 32 }));
+    expect(request.batchSize).toBe(32);
   });
 });
 

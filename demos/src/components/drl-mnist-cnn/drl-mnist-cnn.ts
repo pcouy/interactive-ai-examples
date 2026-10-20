@@ -55,12 +55,16 @@ import {
   appendHistory,
   CHART_BOX,
   type ChartLayout,
+  type ChartSeries,
   emptyHistory,
   epochPoint,
   formatValue,
   layoutChart,
+  layoutMultiChart,
   lossPoints,
+  type MultiChartLayout,
   type TrainingHistory,
+  trainAccuracyPoints,
 } from './training-chart.js';
 import { type MnistRunRequest, MnistTrainingController } from './training-controller.js';
 import { isTrainingActive, type TrainingState } from './training-state.js';
@@ -113,9 +117,9 @@ export {
  * lot suivant ; « Réinitialiser les poids » restaure les poids initiaux ;
  * « Poids aléatoires » tire une graine nouvelle et remplace les poids affichés.
  * Les poids d'inférence TypeScript sont rafraîchis depuis le modèle au plus
- * toutes les 250 ms, et toujours à la pause et en fin de course. Deux courbes
- * affichent la perte d'entraînement et la précision de validation, un point par
- * époque achevée.
+ * toutes les 250 ms, et toujours à la pause et en fin de course. Les courbes
+ * affichent la perte d'entraînement et deux précisions — d'entraînement et de
+ * validation — sur une échelle partagée, un point par époque achevée.
  *
  * Mise en page : la colonne de gauche réunit le dessin, la galerie et le panneau
  * d'entraînement ; la colonne de droite réunit les probabilités par classe et les
@@ -173,8 +177,17 @@ const HIT_LINE_INSET = 6;
 
 const WHITE_RGB: readonly [number, number, number] = [255, 255, 255];
 
-/** Taille des lots d'entraînement, même valeur que `tf-playground/mnist/train.py`. */
-const TRAIN_BATCH_SIZE = 64;
+/** Échelle divergente des cartes d'activation : rouge à 0, gris à 0,5, bleu à 1. */
+const ACTIVATION_LOW_RGB: readonly [number, number, number] = [215, 48, 39];
+const ACTIVATION_MID_RGB: readonly [number, number, number] = [128, 128, 128];
+const ACTIVATION_HIGH_RGB: readonly [number, number, number] = [69, 117, 180];
+
+/** Taille des lots par défaut, même valeur que `tf-playground/mnist/train.py`. */
+const DEFAULT_BATCH_SIZE = 64;
+
+/** Bornes du curseur de taille des lots (pas de 8). */
+const MIN_BATCH_SIZE = 8;
+const MAX_BATCH_SIZE = 256;
 
 /** Nombre d'époques par entraînement. */
 const TRAIN_EPOCHS = 1;
@@ -479,6 +492,21 @@ export function mixRgb(
 }
 
 /**
+ * Couleur d'une activation sigmoïde : rouge à 0, gris neutre à 0,5, bleu à 1.
+ * La valeur est bornée dans `[0, 1]` avant le mélange, donc une entrée hors
+ * bornes prend la couleur de l'extrémité la plus proche.
+ */
+export function activationRgb(value: number): readonly [number, number, number] {
+  const t = clamp(value, 0, 1);
+  if (t === 0.5) {
+    return ACTIVATION_MID_RGB;
+  }
+  return t < 0.5
+    ? mixRgb(ACTIVATION_LOW_RGB, ACTIVATION_MID_RGB, t * 2)
+    : mixRgb(ACTIVATION_MID_RGB, ACTIVATION_HIGH_RGB, (t - 0.5) * 2);
+}
+
+/**
  * Estimation déterministe du nombre d'exemples d'une sélection stratifiée (voir
  * `selectStratifiedIndices`) pour un jeu de `total` exemples répartis en dix
  * classes équilibrées : chaque classe fournit `max(1, round(total ÷ 10 × fraction))`
@@ -508,6 +536,7 @@ function sameFilters(a: MnistCnnFilters, b: MnistCnnFilters): boolean {
 export interface TrainingRunInput {
   readonly filters: MnistCnnFilters;
   readonly learningRate: number;
+  readonly batchSize: number;
   readonly trainPercent: number;
   readonly validationPercent: number;
   readonly epochs: number;
@@ -524,7 +553,7 @@ export function trainingRunRequest(input: TrainingRunInput): MnistRunRequest {
   return {
     filters: input.filters,
     learningRate: input.learningRate,
-    batchSize: TRAIN_BATCH_SIZE,
+    batchSize: input.batchSize,
     seed: SEED,
     epochs: input.epochs,
     trainPercent: input.trainPercent,
@@ -712,6 +741,33 @@ export class MnistCnn extends LitElement {
         image-rendering: pixelated;
       }
 
+      .drl-activation-scale {
+        display: flex;
+        flex-direction: column;
+        gap: 2px;
+        margin: 0 0 var(--drl-space-2);
+      }
+
+      .drl-activation-scale-bar {
+        height: 8px;
+        border: 1px solid var(--drl-border);
+        border-radius: calc(var(--drl-radius) / 2);
+        background: linear-gradient(
+          to right,
+          rgb(215, 48, 39),
+          rgb(128, 128, 128),
+          rgb(69, 117, 180)
+        );
+      }
+
+      .drl-activation-scale-labels {
+        display: flex;
+        justify-content: space-between;
+        color: var(--drl-muted);
+        font-size: 0.75em;
+        font-variant-numeric: tabular-nums;
+      }
+
       .drl-hint {
         margin: 0;
         color: var(--drl-muted);
@@ -868,6 +924,41 @@ export class MnistCnn extends LitElement {
       .drl-chart-empty {
         fill: var(--drl-muted);
         font-size: 9px;
+      }
+
+      /* Précision d'entraînement : pointillés, à distinguer de la précision de
+         validation (trait plein) sans la couleur. */
+      .drl-chart-line--accuracy-train {
+        stroke: var(--drl-accent);
+        stroke-width: 2;
+        stroke-dasharray: 4 3;
+        fill: none;
+      }
+
+      .drl-chart-legend {
+        display: flex;
+        flex-wrap: wrap;
+        gap: var(--drl-space-2);
+        margin: 0;
+        padding: 0;
+        list-style: none;
+        color: var(--drl-muted);
+        font-size: 0.75em;
+      }
+
+      .drl-chart-legend-item {
+        display: inline-flex;
+        align-items: center;
+        gap: var(--drl-space-1);
+      }
+
+      .drl-chart-legend-swatch {
+        display: block;
+        overflow: visible;
+      }
+
+      .drl-chart-legend-line {
+        stroke-width: 2;
       }
 
       .drl-gallery-counter {
@@ -1129,6 +1220,10 @@ export class MnistCnn extends LitElement {
   @state()
   private learningRate = DEFAULT_LEARNING_RATE;
 
+  /** Taille des lots de la prochaine run, de 8 à 256. */
+  @state()
+  private batchSize = DEFAULT_BATCH_SIZE;
+
   @state()
   private trainExampleCount = stratifiedExampleCountEstimate(MNIST_TRAIN_SPLIT_SIZE, 10 / 100);
 
@@ -1291,14 +1386,29 @@ export class MnistCnn extends LitElement {
     );
   }
 
-  /** Courbe de précision de validation, un point par époque achevée. */
-  private get accuracyLayout(): ChartLayout {
-    return layoutChart(
-      'Précision de validation',
-      accuracyPoints(this.history),
-      CHART_BOX,
-      (value) => `${formatValue(value * 100, 1)} %`,
-    );
+  /**
+   * Courbe de précision : entraînement et validation partagent la même échelle
+   * verticale, un point par époque achevée. La distinction sans couleur repose
+   * sur le motif (pointillés pour l'entraînement, trait plein pour la validation)
+   * et sur la légende textuelle.
+   */
+  private get accuracyLayout(): MultiChartLayout {
+    const percent = (value: number): string => `${formatValue(value * 100, 1)} %`;
+    const series: ChartSeries[] = [
+      {
+        name: 'Entraînement',
+        points: trainAccuracyPoints(this.history),
+        lineClass: 'drl-chart-line--accuracy-train',
+        format: percent,
+      },
+      {
+        name: 'Validation',
+        points: accuracyPoints(this.history),
+        lineClass: 'drl-chart-line--accuracy',
+        format: percent,
+      },
+    ];
+    return layoutMultiChart('Précision (entraînement et validation)', series, CHART_BOX);
   }
 
   /**
@@ -1532,6 +1642,7 @@ export class MnistCnn extends LitElement {
     const request = trainingRunRequest({
       filters: this.filterCounts,
       learningRate: this.learningRate,
+      batchSize: this.batchSize,
       trainPercent: this.trainPercent,
       validationPercent: this.validationPercent,
       epochs,
@@ -1640,39 +1751,49 @@ export class MnistCnn extends LitElement {
     void this.controller.notifySliderChanged(this.manifestMatches, true);
   }
 
-  /** Change la part du jeu d'entraînement : n'agit qu'à la prochaine run. */
+  /** Change la part du jeu d'entraînement : n'agit qu'à la prochaine run et
+   * n'interrompt pas une run active. */
   private setTrainPercent(value: number): void {
     const percent = clamp(Math.round(value), MIN_PERCENT, MAX_PERCENT);
     if (percent === this.trainPercent) {
       return;
     }
     this.trainPercent = percent;
-    this.updateExampleCounts();
-    this.resetMetrics();
-    void this.controller.notifySliderChanged(this.manifestMatches, false);
+    if (!this.controller.isRunActive()) {
+      this.updateExampleCounts();
+    }
   }
 
-  /** Change la part du jeu de validation : n'agit qu'à la prochaine run. */
+  /** Change la part du jeu de validation : n'agit qu'à la prochaine run et
+   * n'interrompt pas une run active. */
   private setValidationPercent(value: number): void {
     const percent = clamp(Math.round(value), MIN_PERCENT, MAX_PERCENT);
     if (percent === this.validationPercent) {
       return;
     }
     this.validationPercent = percent;
-    this.updateExampleCounts();
-    this.resetMetrics();
-    void this.controller.notifySliderChanged(this.manifestMatches, false);
+    if (!this.controller.isRunActive()) {
+      this.updateExampleCounts();
+    }
   }
 
-  /** Change le taux d'apprentissage : n'agit qu'à la prochaine run. */
+  /** Change le taux d'apprentissage : n'agit qu'à la prochaine run et
+   * n'interrompt pas une run active. */
   private setLearningRate(value: number): void {
     const rate = clamp(value, MIN_LEARNING_RATE, MAX_LEARNING_RATE);
     if (rate === this.learningRate) {
       return;
     }
     this.learningRate = rate;
-    this.resetMetrics();
-    void this.controller.notifySliderChanged(this.manifestMatches, false);
+  }
+
+  /** Change la taille des lots : n'interrompt pas une run active et n'agit qu'à la prochaine run. */
+  private setBatchSize(value: number): void {
+    const size = clamp(Math.round(value), MIN_BATCH_SIZE, MAX_BATCH_SIZE);
+    if (size === this.batchSize) {
+      return;
+    }
+    this.batchSize = size;
   }
 
   /** Applique le chiffre choisi et remet la position au premier exemple. */
@@ -2123,11 +2244,10 @@ export class MnistCnn extends LitElement {
     }
     const image = scratch.createImageData(featureMap.width, featureMap.height);
     for (let index = 0; index < featureMap.width * featureMap.height; index += 1) {
-      const value = clamp(featureMap.values[index * featureMap.channels + channel], 0, 1);
-      const shade = Math.round(255 * value);
-      image.data[index * 4] = shade;
-      image.data[index * 4 + 1] = shade;
-      image.data[index * 4 + 2] = shade;
+      const rgb = activationRgb(featureMap.values[index * featureMap.channels + channel]);
+      image.data[index * 4] = rgb[0];
+      image.data[index * 4 + 1] = rgb[1];
+      image.data[index * 4 + 2] = rgb[2];
       image.data[index * 4 + 3] = 255;
     }
     scratch.putImageData(image, 0, 0);
@@ -2154,7 +2274,7 @@ export class MnistCnn extends LitElement {
   /**
    * Une courbe d'entraînement : titre, grille de graduations, axe horizontal,
    * puis le tracé ou le message d'attente. Les fragments SVG imbriqués
-   * (`<line>`, `<text>`, `<path>`) utilisent le tag ``svg` `` : un template
+   * (`<line>`, `<text>`, `<path>`) utilisent le tag `svg` : un template
    * dont la racine est un élément SVG doit être parsé dans le namespace SVG,
    * sinon les nœuds existent dans le DOM mais ne sont jamais dessinés.
    */
@@ -2210,6 +2330,104 @@ export class MnistCnn extends LitElement {
               : svg`<path class="drl-chart-line ${lineClass}" d=${layout.path} fill="none"></path>`
           }
         </svg>
+      </figure>
+    `;
+  }
+
+  /**
+   * Graphique multi-séries : titre, grille de graduations et axe partagés, un
+   * tracé par courbe, puis une légende textuelle. Les fragments SVG imbriqués
+   * (`<line>`, `<text>`, `<path>` et le `<svg>` de la pastille de légende)
+   * utilisent le tag ``svg`` : un template dont la racine est un élément SVG
+   * doit être parsé dans le namespace SVG. Le texte de la légende porte le sens,
+   * donc la pastille est décorative (`aria-hidden="true"`). Une courbe sans
+   * point n'a pas de tracé, mais reste dans la légende.
+   */
+  private renderMultiTrainingChart(layout: MultiChartLayout): TemplateResult {
+    const box = layout.box;
+    const right = box.width - box.padRight;
+    return html`
+      <figure class="drl-chart">
+        <figcaption class="drl-chart-title">${layout.name}</figcaption>
+        <svg
+          class="drl-chart-svg"
+          viewBox="0 0 ${box.width} ${box.height}"
+          role="img"
+          aria-label=${layout.ariaLabel}
+        >
+          <g class="drl-chart-grid">
+            ${layout.ticks.map(
+              (tick) => svg`
+                <line
+                  class="drl-chart-gridline"
+                  x1=${box.padLeft}
+                  x2=${right}
+                  y1=${tick.y}
+                  y2=${tick.y}
+                ></line>
+                <text
+                  class="drl-chart-tick"
+                  x=${box.padLeft - 4}
+                  y=${tick.y}
+                  text-anchor="end"
+                  dominant-baseline="middle"
+                  >${formatValue(tick.value, 2)}</text
+                >
+              `,
+            )}
+          </g>
+          <line
+            class="drl-chart-axis"
+            x1=${box.padLeft}
+            x2=${right}
+            y1=${layout.axisY}
+            y2=${layout.axisY}
+          ></line>
+          ${
+            layout.empty
+              ? svg`<text
+                class="drl-chart-empty"
+                x=${box.width / 2}
+                y=${box.height / 2}
+                text-anchor="middle"
+                >En attente de deux époques</text
+              >`
+              : layout.series
+                  .filter((series) => series.points.length > 0)
+                  .map(
+                    (series) => svg`<path
+                      class="drl-chart-line ${series.lineClass}"
+                      d=${series.path}
+                      fill="none"
+                    ></path>`,
+                  )
+          }
+        </svg>
+        <ul class="drl-chart-legend">
+          ${layout.series.map(
+            (series) => html`
+              <li class="drl-chart-legend-item">
+                ${svg`
+                  <svg
+                    class="drl-chart-legend-swatch"
+                    width="24"
+                    height="8"
+                    aria-hidden="true"
+                  >
+                    <line
+                      class="drl-chart-legend-line ${series.lineClass}"
+                      x1="0"
+                      y1="4"
+                      x2="24"
+                      y2="4"
+                    ></line>
+                  </svg>
+                `}
+                ${series.name}
+              </li>
+            `,
+          )}
+        </ul>
       </figure>
     `;
   }
@@ -2298,9 +2516,9 @@ export class MnistCnn extends LitElement {
               TensorFlow.js est chargé au premier clic sur un bouton d'entraînement, ainsi que les
               exemples MNIST locaux. L'entraînement repart toujours des poids affichés :
               pré-entraînés, aléatoires ou modifiés à la main. « Entraîner 1 époque » fait une
-              passe ; « Entraîner en boucle » enchaîne les époques jusqu'à Pause. La précision
-              affichée est celle du sous-ensemble de validation tenu à l'écart, pas celle du jeu
-              complet.
+              passe ; « Entraîner en boucle » enchaîne les époques jusqu'à Pause. La courbe en
+              pointillés mesure la précision d'entraînement sur l'échantillon borné ; la courbe en
+              trait plein mesure la précision de validation sur le sous-ensemble tenu à l'écart.
             </p>
             <div class="drl-toolbar" role="group" aria-label="Lancer et contrôler l'entraînement">
               <button
@@ -2337,7 +2555,7 @@ export class MnistCnn extends LitElement {
             <div
               class="drl-sliders"
               role="group"
-              aria-label="Fraction des jeux d'entraînement et de validation, taux d'apprentissage"
+              aria-label="Fraction des jeux d'entraînement et de validation, taux d'apprentissage et taille des lots"
             >
               <drl-slider
                 label="Données d'entraînement"
@@ -2363,12 +2581,20 @@ export class MnistCnn extends LitElement {
                 .value=${this.learningRate}
                 @drl-input=${(event: CustomEvent<number>) => this.setLearningRate(event.detail)}
               ></drl-slider>
+              <drl-slider
+                label="Taille des lots"
+                min=${MIN_BATCH_SIZE}
+                max=${MAX_BATCH_SIZE}
+                step="8"
+                .value=${this.batchSize}
+                @drl-input=${(event: CustomEvent<number>) => this.setBatchSize(event.detail)}
+              ></drl-slider>
             </div>
             <p class="drl-hint">
               ${
                 this.trainingError !== null
                   ? html`Erreur d'entraînement : ${this.trainingError}`
-                  : "Les curseurs de pourcentage et le taux ne prennent effet qu'au prochain entraînement."
+                  : "Les curseurs de pourcentage, de taux et de taille des lots ne prennent effet qu'au prochain entraînement, sans interrompre une run."
               }
             </p>
           </section>
@@ -2422,7 +2648,7 @@ export class MnistCnn extends LitElement {
 
           <div class="drl-charts">
             ${this.renderTrainingChart(this.lossLayout, 'drl-chart-line--loss')}
-            ${this.renderTrainingChart(this.accuracyLayout, 'drl-chart-line--accuracy')}
+            ${this.renderMultiTrainingChart(this.accuracyLayout)}
           </div>
         </section>
       </div>
@@ -2503,8 +2729,18 @@ export class MnistCnn extends LitElement {
         <section class="drl-panel" aria-label="Cartes de caractéristiques">
           <h4 class="drl-panel-title">Cartes de caractéristiques</h4>
           <p class="drl-panel-subtitle">
-            Activations après sigmoïde ; blanc = activation forte. Tailles : 26, 13, 11 puis 5.
+            Activations après sigmoïde ; rouge = 0, gris = 0,5, bleu = 1. Tailles : 26, 13, 11 puis 5.
           </p>
+          <div
+            class="drl-activation-scale"
+            role="img"
+            aria-label="Échelle des cartes : rouge à 0, gris à 0,5, bleu à 1"
+          >
+            <span class="drl-activation-scale-bar"></span>
+            <span class="drl-activation-scale-labels" aria-hidden="true">
+              <span>0</span><span>0,5</span><span>1</span>
+            </span>
+          </div>
           ${
             result
               ? repeat(

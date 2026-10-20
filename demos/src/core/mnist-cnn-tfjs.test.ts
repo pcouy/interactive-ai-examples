@@ -552,6 +552,38 @@ describe('training accuracy', () => {
     expect(cancelled.status).toBe('cancelled');
     expect(tf.memory().numTensors).toBe(baseline);
   });
+
+  it('keeps the training accuracy of the last completed epoch when a cancel arrives during the read', async () => {
+    const base = makeSource(4);
+    let trainerRef: MnistCnnTfjsTrainer | null = null;
+    // Les lots d'entraînement lisent `[0, 2]` puis `[2, 4]` ; la mesure
+    // d'exactitude lit le préfixe `[0, 4]` en un seul bloc. On distingue la
+    // mesure par sa taille et on annule pendant sa lecture.
+    const source: MnistTrainSource = {
+      count: base.count,
+      readBatch(start, end) {
+        if (end - start === 4) {
+          void trainerRef?.cancel();
+        }
+        return base.readBatch(start, end);
+      },
+    };
+    const trainer = await makeTrainer(SMALL_FILTERS, { batchSize: 2 });
+    trainerRef = trainer;
+    await trainer.exportWeights();
+    // Premier passage : crée les moments Adam persistants de l'optimiseur, de
+    // sorte que le compteur de tenseurs soit stable avant la run mesurée.
+    await trainer.train({ train: makeSource(4), epochs: 1 });
+    const baseline = tf.memory().numTensors;
+    const result = await trainer.train({
+      train: source,
+      epochs: 1,
+    });
+    expect(result.status).toBe('cancelled');
+    expect(result.completedEpochs).toBe(0);
+    expect(result.epochTrainAccuracy).toBeNull();
+    expect(tf.memory().numTensors).toBe(baseline);
+  });
 });
 
 describe('cancellation', () => {
