@@ -16,6 +16,7 @@ import {
   MAX_CONV_LAYERS,
   MAX_DENSE_LAYERS,
   MAX_FILTER_COUNT,
+  MAX_OUTPUT_CLASSES,
   MIN_FILTER_COUNT,
   MNIST_INPUT_LENGTH,
   MNIST_INPUT_SIZE,
@@ -24,6 +25,7 @@ import {
   type MnistCnnLayerWeights,
   type MnistCnnWeights,
   mnistCnnParameterCount,
+  resolveOutputClasses,
   softmax,
   validateDenseSizes,
   validateFilterCounts,
@@ -453,6 +455,76 @@ describe('initializeMnistCnnWeights', () => {
     expect(() => validateDenseSizes([129])).toThrow(/hidden dense size/i);
     expect(() => validateDenseSizes([8, 8, 8])).toThrow(/at most 2/);
     expect(() => validateDenseSizes(undefined)).not.toThrow();
+  });
+});
+
+describe('output classes', () => {
+  const filters = DEFAULT_FILTER_COUNTS;
+
+  it('keeps ten output classes by default', () => {
+    expect(resolveOutputClasses({ filters })).toBe(LOGIT_COUNT);
+    expect(denseLayerWidths({ filters })).toEqual([HIDDEN_DENSE_SIZE, LOGIT_COUNT]);
+    expect(mnistCnnParameterCount({ filters })).toBe(980);
+  });
+
+  it('resolves the requested output class count', () => {
+    expect(resolveOutputClasses({ filters, outputClasses: 20 })).toBe(MAX_OUTPUT_CLASSES);
+    expect(denseLayerWidths({ filters, outputClasses: 20 })).toEqual([HIDDEN_DENSE_SIZE, 20]);
+  });
+
+  it('rejects output class counts outside the supported range', () => {
+    expect(() => resolveOutputClasses({ filters, outputClasses: 1 })).toThrow(RangeError);
+    expect(() => resolveOutputClasses({ filters, outputClasses: 21 })).toThrow(RangeError);
+    expect(() => resolveOutputClasses({ filters, outputClasses: 10.5 })).toThrow(RangeError);
+    expect(() => resolveOutputClasses({ filters, outputClasses: 1 })).toThrow(/outputClasses/);
+    expect(() => resolveOutputClasses({ filters, outputClasses: 21 })).toThrow(/outputClasses/);
+    expect(() => resolveOutputClasses({ filters, outputClasses: 10.5 })).toThrow(/integer/);
+    expect(() => resolveOutputClasses({ filters, outputClasses: 2 })).not.toThrow();
+  });
+
+  it('rejects an invalid output class count before counting parameters', () => {
+    expect(() => mnistCnnParameterCount({ filters, outputClasses: 1 })).toThrow(/outputClasses/);
+    expect(() => initializeMnistCnnWeights({ filters, outputClasses: 21 }, 1)).toThrow(
+      /outputClasses/,
+    );
+    expect(() =>
+      forwardMnistCnn(rampInput(), initializeMnistCnnWeights({ filters }, 1), {
+        filters,
+        outputClasses: 1,
+      }),
+    ).toThrow(/outputClasses/);
+  });
+
+  it('counts 1070 parameters for twenty output classes', () => {
+    // La sortie passe de 8·10+10 = 90 à 8·20+20 = 180, soit +90 paramètres.
+    expect(mnistCnnParameterCount({ filters, outputClasses: 20 })).toBe(
+      980 + (8 * 20 + 20) - (8 * 10 + 10),
+    );
+    expect(mnistCnnParameterCount({ filters, outputClasses: 20 })).toBe(1070);
+  });
+
+  it('sizes the output layer for twenty classes', () => {
+    const weights = initializeMnistCnnWeights({ filters, outputClasses: 20 }, 7);
+    expect(weights.dense[1].bias).toHaveLength(20);
+    expect(weights.dense[1].kernel).toHaveLength(8 * 20);
+    expect(weights.dense[0].bias).toHaveLength(HIDDEN_DENSE_SIZE);
+    expect(weights.dense[0].kernel).toHaveLength(5 * 5 * 3 * HIDDEN_DENSE_SIZE);
+  });
+
+  it('runs the forward pass with twenty probabilities that sum to one', () => {
+    const config: MnistCnnConfig = { filters, outputClasses: 20 };
+    const weights = initializeMnistCnnWeights(config, 7);
+    const output = forwardMnistCnn(rampInput(), weights, config);
+    expect(output.logits).toHaveLength(20);
+    expect(output.probabilities).toHaveLength(20);
+    expect(output.denseActivations[output.denseActivations.length - 1]).toHaveLength(20);
+    let sum = 0;
+    for (const probability of output.probabilities) {
+      expect(Number.isFinite(probability)).toBe(true);
+      expect(probability).toBeGreaterThanOrEqual(0);
+      sum += probability;
+    }
+    expect(sum).toBeCloseTo(1, 5);
   });
 });
 
