@@ -1299,7 +1299,7 @@ describe('configuration validation', () => {
   });
 
   it('rejects invalid denseSizes', async () => {
-    await expect(makeTrainer(SMALL_FILTERS, { denseSizes: [33] })).rejects.toThrow(
+    await expect(makeTrainer(SMALL_FILTERS, { denseSizes: [129] })).rejects.toThrow(
       /hidden dense size/i,
     );
     await expect(makeTrainer(SMALL_FILTERS, { denseSizes: [0] })).rejects.toThrow(

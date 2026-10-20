@@ -337,11 +337,23 @@ describe('initializeMnistCnnWeights', () => {
       3,
       LOGIT_COUNT,
     ]);
-    expect(denseLayerWidths({ filters, denseLayers: 3, denseSizes: [32] })).toEqual([
-      32,
+    expect(denseLayerWidths({ filters, denseLayers: 3, denseSizes: [128] })).toEqual([
+      128,
       HIDDEN_DENSE_SIZE,
       LOGIT_COUNT,
     ]);
+  });
+
+  it('accepts the maximum hidden dense size', () => {
+    const filters = DEFAULT_FILTER_COUNTS;
+    expect(denseLayerWidths({ filters, denseLayers: 3, denseSizes: [128] })).toEqual([
+      128,
+      8,
+      LOGIT_COUNT,
+    ]);
+    expect(
+      mnistCnnParameterCount({ filters, convLayers: 0, denseLayers: 3, denseSizes: [128, 128] }),
+    ).toBe(118282);
   });
 
   it('sizes the dense layers and counts parameters for custom denseSizes', () => {
@@ -389,7 +401,7 @@ describe('initializeMnistCnnWeights', () => {
   it('rejects invalid denseSizes', () => {
     const base = { filters: DEFAULT_FILTER_COUNTS };
     expect(() => initializeMnistCnnWeights({ ...base, denseSizes: [0] }, 1)).toThrow(RangeError);
-    expect(() => initializeMnistCnnWeights({ ...base, denseSizes: [33] }, 1)).toThrow(RangeError);
+    expect(() => initializeMnistCnnWeights({ ...base, denseSizes: [129] }, 1)).toThrow(RangeError);
     expect(() => initializeMnistCnnWeights({ ...base, denseSizes: [1.5] }, 1)).toThrow(RangeError);
     expect(() => initializeMnistCnnWeights({ ...base, denseSizes: [8, 8, 8] }, 1)).toThrow(
       RangeError,
@@ -401,7 +413,7 @@ describe('initializeMnistCnnWeights', () => {
       }),
     ).toThrow(RangeError);
     expect(() => validateDenseSizes([0])).toThrow(/hidden dense size/i);
-    expect(() => validateDenseSizes([33])).toThrow(/hidden dense size/i);
+    expect(() => validateDenseSizes([129])).toThrow(/hidden dense size/i);
     expect(() => validateDenseSizes([8, 8, 8])).toThrow(/at most 2/);
     expect(() => validateDenseSizes(undefined)).not.toThrow();
   });

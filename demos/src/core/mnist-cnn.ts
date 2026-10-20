@@ -78,7 +78,7 @@ export const LOGIT_COUNT = 10;
 
 /** Bornes des couches denses cachées. */
 export const MIN_HIDDEN_DENSE_SIZE = 1;
-export const MAX_HIDDEN_DENSE_SIZE = 32;
+export const MAX_HIDDEN_DENSE_SIZE = 128;
 
 /** Largeurs par défaut des couches denses cachées. */
 export const DEFAULT_DENSE_SIZES: readonly [number, number] = [
@@ -220,7 +220,7 @@ function resolveDenseLayers(config: MnistCnnConfig): number {
   return value;
 }
 
-/** Valide les largeurs cachées : au plus deux entrées, entières, de 1 à 32. */
+/** Valide les largeurs cachées : au plus deux entrées, entières, de 1 à 128. */
 export function validateDenseSizes(sizes: readonly number[] | undefined): void {
   if (sizes === undefined) {
     return;
