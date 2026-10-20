@@ -73,8 +73,22 @@ ce nœud, appliqué dans la partie).
 | `players` | string JSON | `'["human","agent"]'` | passé tel quel au composant de jeu (voir plus bas) |
 | `depth` | number | `null` → défaut du jeu (morpion 6, puissance 4 : 4) | horizon de recherche en plies |
 | `evaluator` | `'windows' \| 'rollout' \| 'random'` | `'windows'` | passé tel quel au composant de jeu |
+| `rollout-samples` | number | `10` | échantillons de rollout par évaluation ; transmis au jeu (champ « Échantillons de rollout », visible seulement si `evaluator="rollout"`) |
+| `discount` | number | `1` | actualisation γ ∈ ]0, 1] ; pondère la valeur de chaque coup enfant à la remontée ; bornée à [0.01, 1] (retombe à `1` si invalide) ; champ « Actualisation (γ) » masqué quand `evaluator="random"` |
+| `auto-fit` | boolean | `true` | case « Ajuster auto » de l'arbre cochée par défaut (recentre et ajuste le zoom à chaque mise à jour de l'arbre) |
 | `transposition` | boolean | `false` | active la table de transposition |
+| `pruning` | boolean | `false` | `false` = minimax pur (sans élagage) ; `true` = alpha-beta |
 | `strict-pruning` | boolean | `false` | élagage strict (`> β` / `< α`) ; transmis au jeu **et** aux deux agents rejoués dans l'arbre, pour que l'arbre enregistré corresponde à la recherche jouée |
+
+La page possède ses propres contrôles (le HTML de démo ne les contient plus) :
+sous son titre et le sélecteur de jeu, elle affiche la rangée des modes
+(Humain vs Agent / Agent vs Humain / Agent vs Agent) puis les paramètres de
+recherche — profondeur, évaluateur, échantillons de rollout (si
+`evaluator="rollout"`), actualisation (γ), élagage, élagage strict (sauf
+`evaluator="random"`) et transposition. Elle passe `show-search-fields=false` au
+composant de jeu embarqué, donc la zone de jeu ne répète pas les champs
+« Échantillons de rollout », « Actualisation » et « Élagage strict ». Le
+sélecteur « Élagage » fixe un booléen : choisir minimax désactive l'alpha-bêta.
 
 ```html
 <drl-deep-blue-page
@@ -320,6 +334,10 @@ leur API commune est `GameComponentApi<S, M>` (alias
 | `evaluator` | string | `'windows'` | `'windows'` \| `'rollout'` \| `'random'` (autre valeur → `'windows'`) |
 | `transposition` | boolean | `false` | table de transposition pour les agents minimax |
 | `strict-pruning` | boolean | `false` | élagage strict (`> β` / `< α`) ; case à cocher « Élagage strict » dans la barre d'outils (masquée quand `evaluator="random"`) |
+| `pruning` | boolean | `true` | `false` = minimax pur (sans élagage) ; `true` = alpha-beta |
+| `rollout-samples` | number | `1` | échantillons de rollout par évaluation ; champ « Échantillons de rollout » de la barre d'outils (visible si `evaluator="rollout"`) |
+| `discount` | number | `1` | actualisation γ ∈ ]0, 1] ; pondère la valeur de chaque coup enfant à la remontée ; bornée à [0.01, 1] (retombe à `1` si invalide) ; champ « Actualisation (γ) » de la barre d'outils (masqué quand `evaluator="random"`) |
+| `show-search-fields` | boolean | `true` | `false` masque de la barre d'outils les champs « Échantillons de rollout », « Actualisation » et « Élagage strict » |
 | `cell-size` | number | 72 / 48 | taille des cases du plateau |
 
 Propriétés en lecture : `game`, `title`, `pieceStyle`, `playerNames`
