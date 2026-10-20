@@ -177,6 +177,11 @@ const HIT_LINE_INSET = 6;
 
 const WHITE_RGB: readonly [number, number, number] = [255, 255, 255];
 
+/** Échelle divergente des cartes d'activation : rouge à 0, gris à 0,5, bleu à 1. */
+const ACTIVATION_LOW_RGB: readonly [number, number, number] = [215, 48, 39];
+const ACTIVATION_MID_RGB: readonly [number, number, number] = [128, 128, 128];
+const ACTIVATION_HIGH_RGB: readonly [number, number, number] = [69, 117, 180];
+
 /** Taille des lots par défaut, même valeur que `tf-playground/mnist/train.py`. */
 const DEFAULT_BATCH_SIZE = 64;
 
@@ -487,6 +492,21 @@ export function mixRgb(
 }
 
 /**
+ * Couleur d'une activation sigmoïde : rouge à 0, gris neutre à 0,5, bleu à 1.
+ * La valeur est bornée dans `[0, 1]` avant le mélange, donc une entrée hors
+ * bornes prend la couleur de l'extrémité la plus proche.
+ */
+export function activationRgb(value: number): readonly [number, number, number] {
+  const t = clamp(value, 0, 1);
+  if (t === 0.5) {
+    return ACTIVATION_MID_RGB;
+  }
+  return t < 0.5
+    ? mixRgb(ACTIVATION_LOW_RGB, ACTIVATION_MID_RGB, t * 2)
+    : mixRgb(ACTIVATION_MID_RGB, ACTIVATION_HIGH_RGB, (t - 0.5) * 2);
+}
+
+/**
  * Estimation déterministe du nombre d'exemples d'une sélection stratifiée (voir
  * `selectStratifiedIndices`) pour un jeu de `total` exemples répartis en dix
  * classes équilibrées : chaque classe fournit `max(1, round(total ÷ 10 × fraction))`
@@ -718,6 +738,33 @@ export class MnistCnn extends LitElement {
          image-rendering pixelated garde les cellules nettes. */
       .drl-canvas--map {
         image-rendering: pixelated;
+      }
+
+      .drl-activation-scale {
+        display: flex;
+        flex-direction: column;
+        gap: 2px;
+        margin: 0 0 var(--drl-space-2);
+      }
+
+      .drl-activation-scale-bar {
+        height: 8px;
+        border: 1px solid var(--drl-border);
+        border-radius: calc(var(--drl-radius) / 2);
+        background: linear-gradient(
+          to right,
+          rgb(215, 48, 39),
+          rgb(128, 128, 128),
+          rgb(69, 117, 180)
+        );
+      }
+
+      .drl-activation-scale-labels {
+        display: flex;
+        justify-content: space-between;
+        color: var(--drl-muted);
+        font-size: 0.75em;
+        font-variant-numeric: tabular-nums;
       }
 
       .drl-hint {
@@ -2195,11 +2242,10 @@ export class MnistCnn extends LitElement {
     }
     const image = scratch.createImageData(featureMap.width, featureMap.height);
     for (let index = 0; index < featureMap.width * featureMap.height; index += 1) {
-      const value = clamp(featureMap.values[index * featureMap.channels + channel], 0, 1);
-      const shade = Math.round(255 * value);
-      image.data[index * 4] = shade;
-      image.data[index * 4 + 1] = shade;
-      image.data[index * 4 + 2] = shade;
+      const rgb = activationRgb(featureMap.values[index * featureMap.channels + channel]);
+      image.data[index * 4] = rgb[0];
+      image.data[index * 4 + 1] = rgb[1];
+      image.data[index * 4 + 2] = rgb[2];
       image.data[index * 4 + 3] = 255;
     }
     scratch.putImageData(image, 0, 0);
@@ -2681,8 +2727,18 @@ export class MnistCnn extends LitElement {
         <section class="drl-panel" aria-label="Cartes de caractéristiques">
           <h4 class="drl-panel-title">Cartes de caractéristiques</h4>
           <p class="drl-panel-subtitle">
-            Activations après sigmoïde ; blanc = activation forte. Tailles : 26, 13, 11 puis 5.
+            Activations après sigmoïde ; rouge = 0, gris = 0,5, bleu = 1. Tailles : 26, 13, 11 puis 5.
           </p>
+          <div
+            class="drl-activation-scale"
+            role="img"
+            aria-label="Échelle des cartes : rouge à 0, gris à 0,5, bleu à 1"
+          >
+            <span class="drl-activation-scale-bar"></span>
+            <span class="drl-activation-scale-labels" aria-hidden="true">
+              <span>0</span><span>0,5</span><span>1</span>
+            </span>
+          </div>
           ${
             result
               ? repeat(

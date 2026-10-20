@@ -6,6 +6,7 @@ import type {
 } from '../../core/mnist-cnn.js';
 import type { TrainingRunInput, WeightEditorEvent } from './drl-mnist-cnn.js';
 import {
+  activationRgb,
   applyWeightEditorEvent,
   argmaxIndex,
   brushStrength,
@@ -195,6 +196,24 @@ describe('mixRgb', () => {
   it('interpolates between two colors', () => {
     expect(mixRgb([255, 255, 255], [0, 0, 0], 0.5)).toEqual([128, 128, 128]);
     expect(mixRgb([255, 255, 255], [255, 0, 0], 0)).toEqual([255, 255, 255]);
+  });
+});
+
+describe('activationRgb', () => {
+  it('maps 0 to red, 0.5 to neutral grey and 1 to blue', () => {
+    expect(activationRgb(0)).toEqual([215, 48, 39]);
+    expect(activationRgb(0.5)).toEqual([128, 128, 128]);
+    expect(activationRgb(1)).toEqual([69, 117, 180]);
+  });
+
+  it('interpolates from each end to the neutral grey', () => {
+    expect(activationRgb(0.25)).toEqual(mixRgb([215, 48, 39], [128, 128, 128], 0.5));
+    expect(activationRgb(0.75)).toEqual(mixRgb([128, 128, 128], [69, 117, 180], 0.5));
+  });
+
+  it('clamps values outside the unit interval', () => {
+    expect(activationRgb(-1)).toEqual([215, 48, 39]);
+    expect(activationRgb(2)).toEqual([69, 117, 180]);
   });
 });
 
