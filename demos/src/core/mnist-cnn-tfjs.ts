@@ -92,6 +92,12 @@ export interface MnistCnnTrainingConfig {
   readonly convLayers: number;
   /** Nombre de couches denses, sortie comprise, de 1 à 3. */
   readonly denseLayers: number;
+  /**
+   * Largeurs des couches denses cachées, dans l'ordre, couche de sortie exclue.
+   * Défaut : `[8, 8]`. Une entrée manquante est remplacée par 8 ; les entrées
+   * au-delà du nombre de couches cachées sont ignorées.
+   */
+  readonly denseSizes?: readonly number[];
   /** Graine optionnelle : même graine et même configuration donnent les mêmes poids. */
   readonly seed?: number;
 }
@@ -255,6 +261,7 @@ function assertConfig(config: MnistCnnTrainingConfig, core: CoreModule): void {
       `MNIST TFJS denseLayers must be an integer from 1 to ${core.MAX_DENSE_LAYERS}, received ${String(config.denseLayers)}.`,
     );
   }
+  core.validateDenseSizes(config.denseSizes);
   if (!Number.isFinite(config.learningRate) || config.learningRate <= 0) {
     throw new RangeError(
       `MNIST TFJS learning rate must be a positive finite number, received ${String(config.learningRate)}.`,
@@ -426,7 +433,7 @@ function buildModel(tf: TfModule, core: CoreModule, config: MnistCnnTrainingConf
   }
   model.add(tf.layers.dropout({ rate: MNIST_DROPOUT_RATE, seed, inputShape }));
   model.add(tf.layers.flatten());
-  const widths = core.denseLayerWidths(config.denseLayers);
+  const widths = core.denseLayerWidths(config);
   for (let index = 0; index < config.denseLayers - 1; index += 1) {
     model.add(
       tf.layers.dense({
@@ -492,7 +499,7 @@ function weightLayerShapes(core: CoreModule, config: MnistCnnTrainingConfig): We
     inputSize = outputSize;
     inputChannels = outputChannels;
   }
-  const widths = core.denseLayerWidths(config.denseLayers);
+  const widths = core.denseLayerWidths(config);
   let inputLength =
     conv.length === 0 ? core.MNIST_INPUT_LENGTH : inputSize * inputSize * inputChannels;
   const dense: WeightLayerShape[] = [];

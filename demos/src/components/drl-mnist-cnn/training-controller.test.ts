@@ -54,6 +54,7 @@ function makeRequest(overrides: Partial<MnistRunRequest> = {}): MnistRunRequest 
     trainPercent: 10,
     validationPercent: 10,
     initialWeights: makeWeights(1),
+    denseSizes: overrides.denseSizes,
     ...overrides,
   };
 }
@@ -333,6 +334,13 @@ describe('MnistTrainingController.startRun', () => {
     await controller.startRun(makeRequest({ convLayers: 2, denseLayers: 3 }));
     expect(ports.lastTrainerConfig?.convLayers).toBe(2);
     expect(ports.lastTrainerConfig?.denseLayers).toBe(3);
+  });
+
+  it('forwards the requested dense sizes to the trainer', async () => {
+    const ports = new FakePorts();
+    const controller = new MnistTrainingController(ports);
+    await controller.startRun(makeRequest({ denseSizes: [3, 7] }));
+    expect(ports.lastTrainerConfig?.denseSizes).toEqual([3, 7]);
   });
 
   it('reports counts after selection with the requested fractions', async () => {

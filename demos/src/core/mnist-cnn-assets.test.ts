@@ -149,6 +149,12 @@ describe('parseMnistCnnManifest', () => {
     expect(() => parseMnistCnnManifest(longBias)).toThrow(/dense2 bias must have 10 values/);
   });
 
+  it('names the layer whose dense bias has the wrong length', () => {
+    const wrongBias = manifestClone();
+    layersOf(wrongBias).dense1.bias = [0, 0, 0, 0, 0, 0, 0];
+    expect(() => parseMnistCnnManifest(wrongBias)).toThrow(/dense1 bias must have 8 values/);
+  });
+
   it('rejects non-finite and non-numeric weight values', () => {
     const notFinite = manifestClone();
     (layersOf(notFinite).conv2.kernel as number[])[3] = Number.NaN;
