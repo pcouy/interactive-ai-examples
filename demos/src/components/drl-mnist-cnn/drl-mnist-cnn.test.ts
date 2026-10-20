@@ -912,7 +912,7 @@ describe('trainingRunRequest', () => {
     expect(request.activation).toBe('tanh');
   });
 
-  it('defaults the forwarded activation to sigmoid', () => {
+  it('forwards sigmoid from the input', () => {
     expect(trainingRunRequest(input()).activation).toBe('sigmoid');
   });
 });

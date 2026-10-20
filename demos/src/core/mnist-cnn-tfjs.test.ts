@@ -1210,6 +1210,12 @@ describe('configuration validation', () => {
     await expect(makeTrainer(SMALL_FILTERS, { seed: -1 })).rejects.toThrow(/seed/i);
   });
 
+  it('rejects an unknown activation', async () => {
+    await expect(makeTrainer(SMALL_FILTERS, { activation: 'relu' as never })).rejects.toThrow(
+      /activation/i,
+    );
+  });
+
   it('rejects an invalid prefetchDepth', async () => {
     const trainer = await makeTrainer(SMALL_FILTERS);
     await expect(

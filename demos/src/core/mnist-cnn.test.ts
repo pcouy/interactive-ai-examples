@@ -56,6 +56,17 @@ describe('activation', () => {
 });
 
 describe('forwardMnistCnn activation selection', () => {
+  it('rejects an unknown activation', () => {
+    const config = configWith(DEFAULT_FILTER_COUNTS);
+    const weights = initializeMnistCnnWeights(config, 7);
+    expect(() =>
+      forwardMnistCnn(rampInput(), weights, {
+        filters: DEFAULT_FILTER_COUNTS,
+        activation: 'relu' as never,
+      }),
+    ).toThrow(/activation/i);
+  });
+
   it('runs the tanh forward pass between -1 and 1', () => {
     const config = configWith(DEFAULT_FILTER_COUNTS);
     const weights = initializeMnistCnnWeights(config, 7);
@@ -73,6 +84,8 @@ describe('forwardMnistCnn activation selection', () => {
       expect(output.hidden[index]).toBeGreaterThanOrEqual(-1);
       expect(output.hidden[index]).toBeLessThanOrEqual(1);
     }
+    expect(Array.from(output.featureMaps[0].values).some((value) => value < 0)).toBe(true);
+    expect(Array.from(output.hidden).some((value) => value < 0)).toBe(true);
     let sum = 0;
     for (let index = 0; index < output.probabilities.length; index += 1) {
       expect(Number.isFinite(output.probabilities[index])).toBe(true);

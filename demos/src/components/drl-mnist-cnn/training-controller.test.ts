@@ -322,7 +322,7 @@ describe('MnistTrainingController.startRun', () => {
     expect(ports.lastTrainerConfig?.activation).toBe('tanh');
   });
 
-  it('defaults the forwarded activation to sigmoid', async () => {
+  it('forwards the sigmoid activation to the trainer', async () => {
     const ports = new FakePorts();
     const controller = new MnistTrainingController(ports);
     await controller.startRun(makeRequest());

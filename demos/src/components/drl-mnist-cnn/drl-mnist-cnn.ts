@@ -1583,8 +1583,7 @@ export class MnistCnn extends LitElement {
       const assets = parseMnistCnnManifestJson(text);
       this.pretrainedAssets = assets;
       this.manifestError = null;
-      const matches = sameFilters(assets.config.filters, this.filterCounts);
-      this.controller.notifyManifestChanged(matches);
+      this.controller.notifyManifestChanged(this.manifestMatches);
       if (this.trainingState === 'pretrained') {
         this.applyPretrainedWeights();
       }

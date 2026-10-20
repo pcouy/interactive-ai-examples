@@ -141,6 +141,15 @@ function validateConfig(config: MnistCnnConfig): void {
   if (config === null || typeof config !== 'object') {
     throw new TypeError('MNIST CNN config with a filters tuple is required.');
   }
+  if (
+    config.activation !== undefined &&
+    config.activation !== 'sigmoid' &&
+    config.activation !== 'tanh'
+  ) {
+    throw new RangeError(
+      `MNIST CNN activation must be "sigmoid" or "tanh", received ${String(config.activation)}.`,
+    );
+  }
 }
 
 function convLayerPlans(filters: MnistCnnFilters): ConvLayerPlan[] {
