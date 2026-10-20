@@ -43,7 +43,8 @@ core pur) :
   - `exact` (valeur définitive) = score en gras ; valeur provisoire = score
     en italique/muted ;
   - badges de type : `pruned` = miniature **grisée** avec hachure,
-    `tt-hit` = icône raccourci, `terminal` = bordure pleine ;
+    `tt-hit` = icône raccourci (`↪`, ou `↪3` / `↪∞` quand la profondeur
+    certifiée de l'entrée consommée est connue), `terminal` = bordure pleine ;
   - sur un nœud *pruned*, l'emplacement du score affiche une **étiquette de
     coupure** compacte (`> β` / `≥ β` / `< α` / `≤ α`) colorée avec
     `--drl-arrow`, qui rend la comparaison lisible d'un coup d'œil ;
@@ -51,7 +52,8 @@ core pur) :
     est **pointillée et rouge** (`--drl-arrow`) : on voit quelle branche a
     provoqué la coupure, pas seulement qu'elle a eu lieu ;
   - chaque nœud porte un **tooltip composé** (score, α/β, raison de coupure
-    et coup déclencheur).
+    et coup déclencheur, et, pour un nœud *tt-hit*, le segment
+    `Profondeur table : …` avec la profondeur certifiée de l'entrée).
 - Les nœuds *pruned* et *tt-hit* n'ont pas de descendants : placeholder
   grisé (point pédagogique : *ce que l'algorithme ne calcule pas*). Un nœud
   coupé émet un frère `pruned` par coup restant ; l'affichage n'en garde

@@ -155,6 +155,24 @@ describe('TreeModel applyValue', () => {
     expect(model.has('ghost')).toBe(true);
     expect(model.node('ghost')?.score).toBe(0.3);
   });
+
+  it('stores the certified entry depth when it creates the node from scratch', () => {
+    const model = new TreeModel<FakeState>();
+    model.applyValue({ nodeKey: 'ghost', score: 0.3, depth: 4, exact: false, entryDepth: 3 });
+    expect(model.node('ghost')?.entryDepth).toBe(3);
+  });
+
+  it('keeps an infinite certified entry depth', () => {
+    const model = new TreeModel<FakeState>();
+    model.applyValue({
+      nodeKey: 'solved',
+      score: 1,
+      depth: 9,
+      exact: true,
+      entryDepth: Number.POSITIVE_INFINITY,
+    });
+    expect(model.node('solved')?.entryDepth).toBe(Number.POSITIVE_INFINITY);
+  });
 });
 
 describe('TreeModel alpha-bêta fields', () => {

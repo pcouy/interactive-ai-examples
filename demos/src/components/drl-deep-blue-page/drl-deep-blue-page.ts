@@ -570,7 +570,10 @@ export class DrlDeepBluePage extends LitElement {
     // Le rejoué lit la table partagée en lecture seule et écrit dans sa propre
     // table temporaire : la table réelle n'est jamais polluée par le rejoué.
     const realTable = game?.transpositionTable;
-    const replayTable = realTable === undefined ? undefined : createReadOnlyOverlay(realTable);
+    // L'overlay n'est construit que si la transposition est active : sinon on
+    // passe `undefined` et le rejoué n'utilise aucune table.
+    const replayTable =
+      this.transposition && realTable !== undefined ? createReadOnlyOverlay(realTable) : undefined;
     if (this.activeGameId === 'connect4') {
       const agent = createGameAgent(CONNECT4_GAME_CONFIG.game, {
         mode: parseEvaluatorMode(this.evaluator),
