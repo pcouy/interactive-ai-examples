@@ -4,6 +4,7 @@ import { customElement, state } from 'lit/decorators.js';
 import { repeat } from 'lit/directives/repeat.js';
 import '../../ui/drl-slider.js';
 import {
+  DATASETS,
   type DatasetDefinition,
   datasetClassCount,
   getDataset,
@@ -641,6 +642,11 @@ export function stratifiedExampleCountEstimate(
   return classCount * Math.max(1, Math.round(perClass * fraction));
 }
 
+/** Pourcentage maximal applicable à un jeu : 100, ou sa limite mémoire. */
+export function datasetMaxPercent(dataset: DatasetDefinition): number {
+  return Math.min(MAX_PERCENT, dataset.maxPercent ?? MAX_PERCENT);
+}
+
 /**
  * Effectif exact des exemples retenus pour `percent` pourcent dans une fraction
  * d'un jeu segmenté : la somme des effectifs des fragments que `selectShardEntries`
@@ -963,6 +969,14 @@ export class MnistCnn extends LitElement {
       }
 
       .drl-activation-field {
+        display: flex;
+        flex-direction: column;
+        gap: var(--drl-space-1);
+        margin-bottom: var(--drl-space-2);
+        max-width: 16rem;
+      }
+
+      .drl-dataset-field {
         display: flex;
         flex-direction: column;
         gap: var(--drl-space-1);
@@ -1364,6 +1378,14 @@ export class MnistCnn extends LitElement {
   /** Jeu de données sélectionné ; MNIST par défaut. */
   @state()
   private selectedDatasetId = 'mnist';
+
+  /** Vrai pendant le chargement des ressources du jeu sélectionné. */
+  @state()
+  private datasetLoading = false;
+
+  /** Erreur de chargement du jeu, ou null. */
+  @state()
+  private datasetError: string | null = null;
 
   /** Index des shards QuickDraw, une fois chargé (null pour les jeux IDX). */
   @state()
@@ -1892,12 +1914,16 @@ export class MnistCnn extends LitElement {
       this.galleryClass = 0;
       this.galleryIndex = 0;
       this.galleryError = null;
+      // Le sélecteur de jeu et la galerie affichent la même erreur : un échec
+      // laisse les deux lisibles sans bloquer l'inférence.
+      this.datasetError = null;
       this.updateExampleCounts();
       this.applyGalleryExample();
     } catch (error) {
       this.gallerySample = null;
       this.galleryClass = null;
       this.galleryError = (error as Error).message;
+      this.datasetError = this.galleryError;
     } finally {
       this.galleryLoading = false;
     }
@@ -1913,24 +1939,10 @@ export class MnistCnn extends LitElement {
     const trainFraction = this.trainPercent / 100;
     const validationFraction = this.validationPercent / 100;
     const dataset = this.currentDataset;
-    if (this.splits !== null) {
-      if (dataset.kind === 'sharded') {
-        // Les shards chargés forment déjà la fraction demandée.
-        this.trainExampleCount = this.splits.train.count;
-        this.validationExampleCount = this.splits.test.count;
-      } else {
-        this.trainExampleCount = selectStratifiedIndices(this.splits.train, {
-          fraction: trainFraction,
-          seed: SEED,
-          classCount: this.outputClasses,
-        }).length;
-        this.validationExampleCount = selectStratifiedIndices(this.splits.test, {
-          fraction: validationFraction,
-          seed: SEED,
-          classCount: this.outputClasses,
-        }).length;
-      }
-    } else if (dataset.kind === 'sharded') {
+    if (dataset.kind === 'sharded') {
+      // L'index donne l'effectif exact de la fraction courante, y compris après
+      // un déplacement de curseur ; les fragments déjà chargés ne couvrent que
+      // l'ancienne fraction.
       if (this.shardedIndex !== null) {
         this.trainExampleCount = shardedSplitExampleCount(
           this.shardedIndex.splits.train,
@@ -1940,10 +1952,26 @@ export class MnistCnn extends LitElement {
           this.shardedIndex.splits.test,
           this.validationPercent,
         );
+      } else if (this.splits !== null) {
+        this.trainExampleCount = this.splits.train.count;
+        this.validationExampleCount = this.splits.test.count;
       } else {
         this.trainExampleCount = Math.round(dataset.trainCount * trainFraction);
         this.validationExampleCount = Math.round(dataset.testCount * validationFraction);
       }
+      return;
+    }
+    if (this.splits !== null) {
+      this.trainExampleCount = selectStratifiedIndices(this.splits.train, {
+        fraction: trainFraction,
+        seed: SEED,
+        classCount: this.outputClasses,
+      }).length;
+      this.validationExampleCount = selectStratifiedIndices(this.splits.test, {
+        fraction: validationFraction,
+        seed: SEED,
+        classCount: this.outputClasses,
+      }).length;
     } else {
       this.trainExampleCount = stratifiedExampleCountEstimate(
         dataset.trainCount,
@@ -2155,10 +2183,58 @@ export class MnistCnn extends LitElement {
     void this.controller.notifySliderChanged(this.manifestMatches, true);
   }
 
+  private readonly handleDatasetChange = (event: Event): void => {
+    const target = event.currentTarget;
+    if (!(target instanceof HTMLSelectElement)) {
+      return;
+    }
+    this.setDataset(target.value);
+  };
+
+  /**
+   * Change de jeu : arrête la run, remet le modèle à zéro et recharge la galerie.
+   * L'identifiant inconnu est ignoré : le sélecteur ne peut alors plus dériver
+   * d'un jeu servi. Le manifeste pré-entraîné ne vaut que pour MNIST, donc la
+   * notification finale porte l'état du nouveau jeu.
+   */
+  private setDataset(id: string): void {
+    if (id === this.selectedDatasetId) {
+      return;
+    }
+    let dataset: DatasetDefinition;
+    try {
+      dataset = getDataset(id);
+    } catch {
+      return;
+    }
+    this.selectedDatasetId = dataset.id;
+    this.datasetError = null;
+    this.datasetLoading = true;
+    this.resetMetrics();
+    this.clearSelection();
+    this.trainingError = null;
+    this.splits = null;
+    this.shardedIndex = null;
+    this.gallerySample = null;
+    this.galleryClass = null;
+    this.galleryLabel = null;
+    this.galleryIndex = 0;
+    this.galleryError = null;
+    this.trainPercent = dataset.defaultTrainPercent;
+    this.validationPercent = dataset.defaultValidationPercent;
+    this.weights = this.weightsForCurrentFilters();
+    this.runInference();
+    this.updateExampleCounts();
+    void this.controller.notifySliderChanged(this.manifestMatches, true);
+    void this.loadGallery().finally(() => {
+      this.datasetLoading = false;
+    });
+  }
+
   /** Change la part du jeu d'entraînement : n'agit qu'à la prochaine run et
    * n'interrompt pas une run active. */
   private setTrainPercent(value: number): void {
-    const percent = clamp(Math.round(value), MIN_PERCENT, MAX_PERCENT);
+    const percent = clamp(Math.round(value), MIN_PERCENT, datasetMaxPercent(this.currentDataset));
     if (percent === this.trainPercent) {
       return;
     }
@@ -2171,7 +2247,7 @@ export class MnistCnn extends LitElement {
   /** Change la part du jeu de validation : n'agit qu'à la prochaine run et
    * n'interrompt pas une run active. */
   private setValidationPercent(value: number): void {
-    const percent = clamp(Math.round(value), MIN_PERCENT, MAX_PERCENT);
+    const percent = clamp(Math.round(value), MIN_PERCENT, datasetMaxPercent(this.currentDataset));
     if (percent === this.validationPercent) {
       return;
     }
@@ -2929,6 +3005,29 @@ export class MnistCnn extends LitElement {
               @pointercancel=${this.onDrawPointerUp}
             ></canvas>
             <p class="drl-hint">${this.inputHint}</p>
+            <div class="drl-dataset-field">
+              <label class="drl-field-label" for="drl-mnist-cnn-dataset">Jeu de données</label>
+              <select
+                id="drl-mnist-cnn-dataset"
+                aria-label="Jeu de données"
+                .value=${this.selectedDatasetId}
+                @change=${this.handleDatasetChange}
+              >
+                ${DATASETS.map(
+                  (dataset) => html`<option value=${dataset.id}>${dataset.name}</option>`,
+                )}
+              </select>
+              ${
+                this.datasetLoading
+                  ? html`<span class="drl-hint" role="status">Chargement du jeu…</span>`
+                  : nothing
+              }
+              ${
+                this.datasetError
+                  ? html`<span class="drl-hint" role="alert">${this.datasetError}</span>`
+                  : nothing
+              }
+            </div>
             <div class="drl-field">
               <label class="drl-field-label" for="drl-mnist-cnn-sample">Exemple MNIST</label>
               <select
@@ -3038,7 +3137,7 @@ export class MnistCnn extends LitElement {
               <drl-slider
                 label="Données d'entraînement"
                 min=${MIN_PERCENT}
-                max=${MAX_PERCENT}
+                max=${datasetMaxPercent(this.currentDataset)}
                 step="1"
                 .value=${this.trainPercent}
                 @drl-input=${(event: CustomEvent<number>) => this.setTrainPercent(event.detail)}
@@ -3046,7 +3145,7 @@ export class MnistCnn extends LitElement {
               <drl-slider
                 label="Validation"
                 min=${MIN_PERCENT}
-                max=${MAX_PERCENT}
+                max=${datasetMaxPercent(this.currentDataset)}
                 step="1"
                 .value=${this.validationPercent}
                 @drl-input=${(event: CustomEvent<number>) => this.setValidationPercent(event.detail)}
@@ -3068,6 +3167,11 @@ export class MnistCnn extends LitElement {
                 @drl-input=${(event: CustomEvent<number>) => this.setBatchSize(event.detail)}
               ></drl-slider>
             </div>
+            ${
+              datasetMaxPercent(this.currentDataset) < MAX_PERCENT
+                ? html`<p class="drl-hint">Ce jeu est limité à ${datasetMaxPercent(this.currentDataset)} % pour rester dans la mémoire du navigateur.</p>`
+                : nothing
+            }
             <p class="drl-hint">
               ${
                 this.trainingError !== null

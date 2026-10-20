@@ -1,4 +1,5 @@
 import { describe, expect, it } from 'vitest';
+import { getDataset } from '../../core/dataset-registry.js';
 import type {
   MnistCnnFilters,
   MnistCnnLayerWeights,
@@ -14,6 +15,7 @@ import {
   brushStrength,
   clampDenseSize,
   convLayerGeometry,
+  datasetMaxPercent,
   denseCellLabel,
   denseLayerTitle,
   densePackColumns,
@@ -383,6 +385,13 @@ describe('stratifiedExampleCountEstimate', () => {
   it('rejects a class count below two', () => {
     expect(() => stratifiedExampleCountEstimate(60000, 0.1, 1)).toThrow(RangeError);
     expect(() => stratifiedExampleCountEstimate(60000, 0.1, 2.5)).toThrow(RangeError);
+  });
+});
+
+describe('datasetMaxPercent', () => {
+  it('caps a memory-heavy dataset and leaves the others at 100', () => {
+    expect(datasetMaxPercent(getDataset('mnist'))).toBe(100);
+    expect(datasetMaxPercent(getDataset('quickdraw'))).toBe(10);
   });
 });
 
@@ -1020,6 +1029,8 @@ describe('trainingRunRequest', () => {
   it('forwards the output class count from the input', () => {
     expect(trainingRunRequest(input()).outputClasses).toBe(10);
     expect(trainingRunRequest(input({ outputClasses: 20 })).outputClasses).toBe(20);
+    // QuickDraw : cinq classes de sortie.
+    expect(trainingRunRequest(input({ outputClasses: 5 })).outputClasses).toBe(5);
   });
 
   it('forwards the batch size from the input', () => {
