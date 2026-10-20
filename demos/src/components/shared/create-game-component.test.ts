@@ -410,6 +410,17 @@ function createTicTacToeElement(): TicTacToeElement {
   return element;
 }
 
+/**
+ * Le banc neutralise `performUpdate` : on rejoue la phase `willUpdate` de Lit
+ * pour simuler la réaction du cycle réactif à un changement de propriété.
+ */
+function runWillUpdate(element: TicTacToeElement, property: string): void {
+  const internals = element as unknown as {
+    willUpdate(changed: Map<PropertyKey, unknown>): void;
+  };
+  internals.willUpdate(new Map([[property, undefined]]));
+}
+
 describe('persistent transposition table', () => {
   const baseOptions = {
     mode: 'windows' as const,
@@ -901,17 +912,6 @@ describe('GameComponent series score', () => {
     }
   }
 
-  /**
-   * Le banc neutralise `performUpdate` : on rejoue la phase `willUpdate` de Lit
-   * pour simuler la réaction du cycle réactif à un changement de propriété.
-   */
-  function runWillUpdate(element: TicTacToeElement, property: string): void {
-    const internals = element as unknown as {
-      willUpdate(changed: Map<PropertyKey, unknown>): void;
-    };
-    internals.willUpdate(new Map([[property, undefined]]));
-  }
-
   it('counts a win for each side and a draw across finished games', () => {
     const element = createTicTacToeElement();
     element.players = '["agent","agent"]';
@@ -1118,6 +1118,38 @@ describe('GameComponent onPlay', () => {
     callOnPlay(element);
     expect(element.seriesScore).toEqual(series);
   });
+
+  it('resets a finished human vs agent game through the real handlePlay wiring', () => {
+    const element = createTicTacToeElement();
+    element.players = '["human","agent"]';
+    playToTheEnd(element);
+    expect(element.gameOutcome).not.toBeNull();
+
+    // Le bouton Play délègue à handlePlay() : c'est le chemin réel de la page.
+    let resetCount = 0;
+    element.addEventListener('drl-game-reset', () => {
+      resetCount += 1;
+    });
+    (element as unknown as { handlePlay(): void }).handlePlay();
+
+    expect(element.gameOutcome).toBeNull();
+    expect(element.history).toHaveLength(1);
+    expect(element.running).toBe(true);
+    // Une relance émet exactement un événement drl-game-reset.
+    expect(resetCount).toBe(1);
+
+    // L'humain joue : startTurn() prépare le tour de l'agent.
+    const state = element.currentState as TicTacToeState;
+    const legal = ticTacToe.legalMoves(state);
+    expect(element.applyMove(legal[0])).toBe(true);
+    expect(element.history).toHaveLength(2);
+    expect((element as unknown as { pending: unknown }).pending).not.toBeNull();
+
+    // La boucle active fait avancer le tour de l'agent jusqu'à son coup.
+    element.stepTurn();
+    expect(element.history).toHaveLength(3);
+    expect(element.gameOutcome).toBeNull();
+  });
 });
 
 describe('GameComponent showSearchFields', () => {
@@ -1142,5 +1174,17 @@ describe('GameComponent showSearchFields', () => {
     expect(text).not.toContain('Élagage strict');
     expect(text).toContain('Annuler le coup');
     expect(text).toContain('Morpion');
+  });
+
+  it('does not clear a pending agent turn when showSearchFields changes', () => {
+    const element = createTicTacToeElement();
+    element.players = '["agent","agent"]';
+    element.depth = 3;
+    (element as unknown as { startTurn(): void }).startTurn();
+    expect((element as unknown as { pending: unknown }).pending).not.toBeNull();
+
+    element.showSearchFields = false;
+    runWillUpdate(element, 'showSearchFields');
+    expect((element as unknown as { pending: unknown }).pending).not.toBeNull();
   });
 });

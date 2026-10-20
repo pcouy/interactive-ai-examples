@@ -14,6 +14,7 @@ import {
   createGameAgent,
   type GameComponentApi,
   parseEvaluatorMode,
+  parsePlayersConfig,
   sanitizeDepth,
   sanitizeDiscount,
   sanitizeSamples,
@@ -24,7 +25,7 @@ export type DeepBlueGameId = 'tic-tac-toe' | 'connect4';
 
 const DEFAULT_PLAYERS = '["human","agent"]';
 /** Nombre d'échantillons par défaut quand l'évaluateur rollout est choisi. */
-const DEFAULT_ROLLOUT_SAMPLES = 10;
+const PAGE_ROLLOUT_SAMPLES = 10;
 
 interface VsMode {
   readonly label: string;
@@ -36,6 +37,13 @@ const VS_MODES: readonly VsMode[] = [
   { label: 'Agent vs Humain', players: '["agent","human"]' },
   { label: 'Agent vs Agent', players: '["agent","agent"]' },
 ];
+
+/** Compare deux configurations de joueurs indépendamment des espaces JSON. */
+function samePlayers(left: string, right: string): boolean {
+  const [leftFirst, leftSecond] = parsePlayersConfig(left);
+  const [rightFirst, rightSecond] = parsePlayersConfig(right);
+  return leftFirst === rightFirst && leftSecond === rightSecond;
+}
 
 interface GameSettings {
   readonly pieceStyle: PieceStyle;
@@ -283,7 +291,7 @@ export class DrlDeepBluePage extends LitElement {
   evaluator = 'windows';
 
   @property({ type: Number, attribute: 'rollout-samples' })
-  rolloutSamples = DEFAULT_ROLLOUT_SAMPLES;
+  rolloutSamples = PAGE_ROLLOUT_SAMPLES;
 
   @property({ type: Boolean, attribute: 'auto-fit' })
   autoFit = true;
@@ -393,7 +401,7 @@ export class DrlDeepBluePage extends LitElement {
             type="button"
             class="drl-page-mode"
             data-players=${mode.players}
-            aria-pressed=${this.players === mode.players}
+            aria-pressed=${samePlayers(this.players, mode.players)}
             @click=${this.onModePick}
           >
             ${mode.label}
@@ -629,7 +637,7 @@ export class DrlDeepBluePage extends LitElement {
     if (select === null || typeof select.value !== 'string') {
       return;
     }
-    this.evaluator = select.value;
+    this.evaluator = parseEvaluatorMode(select.value);
   };
 
   private readonly onSamplesChange = (event: Event): void => {
@@ -637,7 +645,7 @@ export class DrlDeepBluePage extends LitElement {
     if (input === null || typeof input.value !== 'string') {
       return;
     }
-    this.rolloutSamples = sanitizeSamples(Number(input.value), DEFAULT_ROLLOUT_SAMPLES);
+    this.rolloutSamples = sanitizeSamples(Number(input.value), PAGE_ROLLOUT_SAMPLES);
   };
 
   private readonly onDiscountChange = (event: Event): void => {
