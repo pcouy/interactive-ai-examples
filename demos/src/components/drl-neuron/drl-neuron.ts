@@ -88,6 +88,14 @@ function formatNumber(value: number): string {
 }
 
 /**
+ * Formats a weight or bias for an editable input. Four significant digits keep
+ * the field readable without showing binary noise; an empty string clears it.
+ */
+function formatInputValue(value: number): string {
+  return Number.isFinite(value) ? String(Number(value.toPrecision(4))) : '';
+}
+
+/**
  * Maps an input coordinate to the SVG plane. `domain` must be > 0; the core
  * clamps the input domain to at least 0.1.
  */
@@ -166,6 +174,39 @@ export class Neuron extends DemoElement {
         font-variant-numeric: tabular-nums;
       }
 
+      .drl-stat-editable {
+        display: grid;
+        gap: 2px;
+      }
+
+      .drl-stat-input {
+        width: 100%;
+        background: transparent;
+        border: 1px solid transparent;
+        border-radius: calc(var(--drl-radius) / 2);
+        padding: 0;
+        color: inherit;
+        font: inherit;
+        font-variant-numeric: tabular-nums;
+      }
+
+      .drl-stat-input:hover,
+      .drl-stat-input:focus {
+        border-color: var(--drl-border);
+        outline: none;
+      }
+
+      .drl-stat-input:disabled {
+        color: var(--drl-muted);
+        cursor: not-allowed;
+      }
+
+      .drl-stat-hint {
+        margin: 0;
+        color: var(--drl-muted);
+        font-size: 0.75em;
+      }
+
       .drl-views {
         display: grid;
         grid-template-columns: repeat(2, minmax(0, 1fr));
@@ -237,11 +278,17 @@ export class Neuron extends DemoElement {
   @property({ type: Boolean, attribute: 'bias' })
   bias = false;
 
+  @property({ type: Boolean, attribute: 'stop-on-diverge' })
+  stopOnDiverge = true;
+
   @property({ type: Number, attribute: 'count' })
   count = 40;
 
   @property({ type: Number, attribute: 'input-domain' })
   inputDomain = 1;
+
+  @property({ type: Number, attribute: 'weight-domain' })
+  weightDomain = Number.NaN;
 
   @property({ type: Number, attribute: 'batch-size' })
   batchSize = 4;
@@ -320,6 +367,12 @@ export class Neuron extends DemoElement {
   /** Last weights broadcast to listeners, so drl-weights fires only on change. */
   private lastWeights: { w1: number; w2: number; b: number } | null = null;
 
+  /** Last divergence count broadcast to listeners, so drl-divergence fires once. */
+  private lastDivergenceCount = 0;
+
+  /** Last weight-domain pair broadcast to listeners, so drl-weight-domain fires on change. */
+  private lastWeightDomain: { domain: number; auto: boolean } | null = null;
+
   protected override async firstUpdated(): Promise<void> {
     const svgElement = this.renderRoot.querySelector<SVGSVGElement>('svg');
     if (svgElement) {
@@ -352,6 +405,10 @@ export class Neuron extends DemoElement {
     this.core.setLoss(this.lossKind);
     this.core.setBiasEnabled(this.bias);
     this.core.setBatchSize(clamp(Math.round(this.batchSize), MIN_BATCH, MAX_BATCH));
+    this.core.setStopOnDiverge(this.stopOnDiverge);
+    if (Number.isFinite(this.weightDomain)) {
+      this.core.setWeightDomain(this.weightDomain);
+    }
     this.dispatchTargetError();
     this.sync();
     this.draw();
@@ -477,6 +534,58 @@ export class Neuron extends DemoElement {
   }
 
   /**
+   * Commits a weight or bias typed in the header. An empty or non-finite entry
+   * restores the current formatted value instead of moving the neuron. The
+   * guard on `input.value` keeps the handler usable from the node test bench.
+   */
+  private handleWeightChange =
+    (field: 'w1' | 'w2' | 'b') =>
+    (event: Event): void => {
+      const input = event.target as HTMLInputElement | null;
+      if (input === null || typeof input.value !== 'string') {
+        return;
+      }
+      const raw = input.value.trim();
+      const value = Number(raw);
+      if (raw === '' || !Number.isFinite(value)) {
+        input.value = formatInputValue(this[field]);
+        return;
+      }
+      if (field === 'w1') {
+        this.setWeights({ w1: value });
+      } else if (field === 'w2') {
+        this.setWeights({ w2: value });
+      } else {
+        this.setWeights({ b: value });
+      }
+      input.value = formatInputValue(this[field]);
+    };
+
+  /**
+   * Writes the current formatted weights into the header inputs. The inputs
+   * carry no `value` binding: an IDL write from the change handler makes the
+   * element dirty, so a later attribute write would be ignored and the fields
+   * would go stale during training. This runs after each render instead, and
+   * skips the focused field so typing is never clobbered.
+   */
+  private syncWeightInputs(): void {
+    if (!this.renderRoot) {
+      return;
+    }
+    const root = this.renderRoot as ShadowRoot;
+    for (const field of ['w1', 'w2', 'b'] as const) {
+      const input = root.querySelector<HTMLInputElement>(`#drl-${field}`);
+      if (input === null) continue;
+      if (root.activeElement === input) continue;
+      input.value = formatInputValue(this[field]);
+    }
+  }
+
+  protected override updated(): void {
+    this.syncWeightInputs();
+  }
+
+  /**
    * Evaluates the neuron on one input point. Delegates to the core, so the
    * result follows the current expression, weights, bias and loss kind. The
    * component emits no event for this: the page re-calls it when it needs a
@@ -484,6 +593,16 @@ export class Neuron extends DemoElement {
    */
   evaluate(x1: number, x2: number): NeuronEvaluation {
     return this.core.evaluate(x1, x2);
+  }
+
+  /** Returns the active weight domain: the manual override or the fitted one. */
+  get effectiveWeightDomain(): number {
+    return this.core.domain;
+  }
+
+  /** Clears the manual weight-domain override and restores the fitted domain. */
+  resetWeightDomain(): void {
+    this.weightDomain = Number.NaN;
   }
 
   protected override willUpdate(changed: PropertyValues<this>): void {
@@ -525,6 +644,20 @@ export class Neuron extends DemoElement {
       this.core.reset();
       reconfigured = true;
     }
+    // Stop-on-diverge is a flag only: it must not reset training or rebuild the
+    // surface, so it routes the core and refreshes the view in place.
+    if (changed.has('stopOnDiverge')) {
+      this.core.setStopOnDiverge(this.stopOnDiverge);
+      this.sync();
+    }
+    // The weight domain is configuration only: it changes the landscape extent,
+    // so it rebuilds the field but never resets the training run.
+    if (changed.has('weightDomain')) {
+      this.core.setWeightDomain(Number.isFinite(this.weightDomain) ? this.weightDomain : null);
+      this.rebuildHeightField();
+      this.sync();
+      this.draw();
+    }
     // regenerateDataset already rebuilds the height field, clears the trail,
     // syncs and draws, so the shared sequence below must not run for it.
     if (changed.has('count')) {
@@ -552,6 +685,8 @@ export class Neuron extends DemoElement {
     this.gradMag = core.gradientMagnitude;
     this.currentExample = core.currentExample;
     this.exampleNumber = core.exampleIndex + 1;
+    // drl-weights fires whenever a weight or the bias changes: training, manual
+    // placement or a header edit. Listeners use it to refresh probe values.
     const last = this.lastWeights;
     if (last === null || last.w1 !== this.w1 || last.w2 !== this.w2 || last.b !== this.b) {
       this.lastWeights = { w1: this.w1, w2: this.w2, b: this.b };
@@ -569,6 +704,37 @@ export class Neuron extends DemoElement {
       this.dispatchEvent(
         new CustomEvent<boolean>('drl-diverged', {
           detail: diverged,
+          bubbles: true,
+          composed: true,
+        }),
+      );
+    }
+    // Continue mode counts each snap-back; halt mode reports it through
+    // drl-diverged instead. Only an increase dispatches: a reset or
+    // setWeights zeroes the count, and that must not re-fire the event.
+    const divergenceCount = core.divergenceCount;
+    if (divergenceCount > this.lastDivergenceCount) {
+      this.lastDivergenceCount = divergenceCount;
+      if (!diverged) {
+        this.dispatchEvent(
+          new CustomEvent<number>('drl-divergence', {
+            detail: divergenceCount,
+            bubbles: true,
+            composed: true,
+          }),
+        );
+      }
+    } else if (divergenceCount < this.lastDivergenceCount) {
+      this.lastDivergenceCount = divergenceCount;
+    }
+    const domain = core.domain;
+    const auto = !Number.isFinite(this.weightDomain);
+    const lastDomain = this.lastWeightDomain;
+    if (lastDomain === null || lastDomain.domain !== domain || lastDomain.auto !== auto) {
+      this.lastWeightDomain = { domain, auto };
+      this.dispatchEvent(
+        new CustomEvent<{ domain: number; auto: boolean }>('drl-weight-domain', {
+          detail: { domain, auto },
           bubbles: true,
           composed: true,
         }),
@@ -674,11 +840,13 @@ export class Neuron extends DemoElement {
     if (!force && !structural && !bChanged) {
       return;
     }
-    // During play the bias moves on every batch. Rebuilding the whole surface
-    // each frame is wasteful, so a bias-only change is throttled. The surface
-    // may then lag the bias by up to FIELD_REBUILD_INTERVAL_MS; a forced rebuild
-    // (pause, reset, reconfigure) restores exactness.
-    if (!force && !structural && bChanged) {
+    // During play the bias moves on every batch. For L1 the loss is not a
+    // smooth quadratic, so rebuilding the whole surface each frame is wasteful
+    // and a bias-only change is throttled. For L2 the loss is a smooth
+    // quadratic with O(1) moments, so rebuilding is cheap and the surface can
+    // stay exact, so a bias-only change always rebuilds. A forced rebuild
+    // (pause, reset, reconfigure) restores exactness for L1.
+    if (!force && !structural && bChanged && lossKind === 'l1') {
       const stepped = Math.abs(b - this.fieldB) >= FIELD_B_STEP;
       const due = performance.now() - this.fieldRebuiltAt >= FIELD_REBUILD_INTERVAL_MS;
       if (!stepped && !due) {
@@ -767,17 +935,42 @@ export class Neuron extends DemoElement {
         <span class="drl-status-text">${this.statusLine()}</span>
       </div>
       <div class="drl-stats">
-        <div class="drl-stat">
-          <p class="drl-stat-label">w₁</p>
-          <p class="drl-stat-value">${formatNumber(this.w1)}</p>
+        <div class="drl-stat drl-stat-editable">
+          <label class="drl-stat-label" for="drl-w1">w₁</label>
+          <input
+            id="drl-w1"
+            class="drl-stat-input"
+            type="number"
+            step="0.01"
+            @change=${this.handleWeightChange('w1')}
+            title="Poids w₁"
+          />
         </div>
-        <div class="drl-stat">
-          <p class="drl-stat-label">w₂</p>
-          <p class="drl-stat-value">${formatNumber(this.w2)}</p>
+        <div class="drl-stat drl-stat-editable">
+          <label class="drl-stat-label" for="drl-w2">w₂</label>
+          <input
+            id="drl-w2"
+            class="drl-stat-input"
+            type="number"
+            step="0.01"
+            @change=${this.handleWeightChange('w2')}
+            title="Poids w₂"
+          />
         </div>
-        <div class="drl-stat">
-          <p class="drl-stat-label">b</p>
-          <p class="drl-stat-value">${formatNumber(this.b)}</p>
+        <div class="drl-stat drl-stat-editable">
+          <label class="drl-stat-label" for="drl-b">b</label>
+          <input
+            id="drl-b"
+            class="drl-stat-input"
+            type="number"
+            step="0.01"
+            ?disabled=${!this.bias}
+            @change=${this.handleWeightChange('b')}
+            title="Biais b — cochez « Biais » pour l'éditer"
+          />
+          <p class="drl-stat-hint" ?hidden=${this.bias}>
+            Cochez « Biais » pour éditer b.
+          </p>
         </div>
         <div class="drl-stat">
           <p class="drl-stat-label">Loss (moyenne)</p>
@@ -894,6 +1087,8 @@ export class Neuron extends DemoElement {
     this.fieldB = Number.NaN;
     // The next sync() must re-broadcast the weights, so drop the change cache.
     this.lastWeights = null;
+    this.lastDivergenceCount = 0;
+    this.lastWeightDomain = null;
     super.disconnectedCallback();
   }
 }
