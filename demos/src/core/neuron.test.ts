@@ -676,6 +676,77 @@ describe('divergence', () => {
     expect(core.b).toBeGreaterThan(50);
     expect(core.b).toBeLessThan(200);
   });
+
+  it('continues training after a divergence when stop-on-diverge is off', () => {
+    const core = makeCore({ expression: 'x1 + x2', count: 40, seed: 5 });
+    core.setStopOnDiverge(false);
+    const startW1 = core.w1;
+    const startW2 = core.w2;
+
+    const move = core.advanceBatch(1e6);
+    expect(move).not.toBeNull();
+    expect(core.diverged).toBe(false);
+    expect(core.w1).toBe(startW1);
+    expect(core.w2).toBe(startW2);
+    expect(core.divergenceCount).toBeGreaterThan(0);
+
+    const epoch = core.epoch;
+    expect(core.advanceBatch(0.1)).not.toBeNull();
+    expect(core.epoch).toBe(epoch + 1);
+  });
+
+  it('counts every divergence in halting and continue mode', () => {
+    const halting = makeCore({ expression: 'x1 + x2', count: 40, seed: 5 });
+    expect(halting.divergenceCount).toBe(0);
+    halting.advanceBatch(1e6);
+    expect(halting.divergenceCount).toBe(1);
+    expect(halting.diverged).toBe(true);
+
+    const continuing = makeCore({ expression: 'x1 + x2', count: 40, seed: 5 });
+    continuing.setStopOnDiverge(false);
+    continuing.advanceBatch(1e6);
+    expect(continuing.divergenceCount).toBe(1);
+    continuing.advanceBatch(1e6);
+    expect(continuing.divergenceCount).toBe(2);
+    expect(continuing.diverged).toBe(false);
+  });
+
+  it('disabling stop-on-diverge clears a latched divergence', () => {
+    const core = makeCore({ expression: 'x1 + x2', count: 40, seed: 5 });
+    core.advanceBatch(1e6);
+    expect(core.diverged).toBe(true);
+
+    core.setStopOnDiverge(false);
+    expect(core.diverged).toBe(false);
+    expect(core.advanceBatch(0.1)).not.toBeNull();
+    expect(core.epoch).toBe(1);
+  });
+
+  it('enabling stop-on-diverge does not retro-halt', () => {
+    const core = makeCore({ expression: 'x1 + x2', count: 40, seed: 5 });
+    core.setStopOnDiverge(false);
+    core.advanceBatch(1e6);
+    expect(core.diverged).toBe(false);
+
+    core.setStopOnDiverge(true);
+    expect(core.diverged).toBe(false);
+    expect(core.advanceBatch(0.1)).not.toBeNull();
+  });
+
+  it('reset and setWeights clear the divergence count', () => {
+    const core = makeCore({ expression: 'x1 + x2', count: 40, seed: 5 });
+    core.advanceBatch(1e6);
+    expect(core.divergenceCount).toBe(1);
+
+    core.reset({ startW1: 0.1, startW2: 0.2 });
+    expect(core.divergenceCount).toBe(0);
+
+    core.advanceBatch(1e6);
+    expect(core.divergenceCount).toBe(1);
+
+    core.setWeights({ w1: 0.1, w2: 0.2 });
+    expect(core.divergenceCount).toBe(0);
+  });
 });
 
 describe('setWeights', () => {
@@ -919,5 +990,117 @@ describe('evaluate', () => {
     expect(result.target).toBeCloseTo(0, 12);
     expect(result.predicted).toBeCloseTo(0.5 * 50 + -0.3 * -50, 12);
     expect(result.predicted).toBeCloseTo(40, 12);
+  });
+});
+
+describe('landscape moments', () => {
+  it('matches the independent L2 mean loss across random datasets', () => {
+    const rng = mulberry32(20240517);
+    const expressions = ['x1 + x2', 'x1 * x2', '2*x1 - 0.5', '1.2*x1 - 0.8*x2 + 0.3'];
+    for (let i = 0; i < 25; i += 1) {
+      const expression = expressions[Math.floor(rng() * expressions.length)] ?? 'x1 + x2';
+      const count = 1 + Math.floor(rng() * 60);
+      const bias = rng() < 0.5;
+      const core = makeCore({ expression, count, seed: 100 + i, bias });
+      if (bias) {
+        core.reset({ startB: rng() * 2 - 1 });
+      }
+      const b = core.b;
+      for (let j = 0; j < 8; j += 1) {
+        const w1 = (rng() * 2 - 1) * 5;
+        const w2 = (rng() * 2 - 1) * 5;
+        const expected = meanLoss(w1, w2, b, core.dataset, 'l2');
+        const tolerance = 1e-9 * Math.max(1, Math.abs(expected));
+        expect(Math.abs(core.landscapeLoss(w1, w2) - expected)).toBeLessThan(tolerance);
+      }
+    }
+  });
+
+  it('stays non-negative at an exact fit', () => {
+    const core = makeCore({ expression: 'x1 + x2', count: 40, seed: 7 });
+    const loss = core.landscapeLoss(1, 1);
+    expect(loss).toBeGreaterThanOrEqual(0);
+    expect(loss).toBeLessThan(1e-9);
+
+    const biased = makeCore({ expression: 'x1 + x2 + 0.5', count: 40, seed: 7, bias: true });
+    biased.reset({ startB: 0.5 });
+    const biasedLoss = biased.landscapeLoss(1, 1);
+    expect(biasedLoss).toBeGreaterThanOrEqual(0);
+    expect(biasedLoss).toBeLessThan(1e-9);
+  });
+});
+
+describe('weight domain', () => {
+  it('overrides the fitted domain and restores it with null', () => {
+    const core = makeCore({ expression: 'x1 + x2', count: 40, seed: 5 });
+    const fitted = core.domain;
+
+    core.setWeightDomain(7);
+    expect(core.domain).toBe(7);
+
+    core.setWeightDomain(null);
+    expect(core.domain).toBe(fitted);
+  });
+
+  it('clamps the manual domain to [1, 50]', () => {
+    const core = makeCore({ expression: 'x1 + x2', count: 40, seed: 5 });
+
+    core.setWeightDomain(0.5);
+    expect(core.domain).toBe(1);
+
+    core.setWeightDomain(100);
+    expect(core.domain).toBe(50);
+
+    core.setWeightDomain(25);
+    expect(core.domain).toBe(25);
+  });
+
+  it('ignores a non-finite manual domain', () => {
+    const core = makeCore({ expression: 'x1 + x2', count: 40, seed: 5 });
+    core.setWeightDomain(7);
+
+    core.setWeightDomain(Number.NaN);
+    expect(core.domain).toBe(7);
+
+    core.setWeightDomain(Number.POSITIVE_INFINITY);
+    expect(core.domain).toBe(7);
+  });
+
+  it('survives setDataset', () => {
+    const core = makeCore({ expression: 'x1 + x2', count: 40, seed: 5 });
+    core.setWeightDomain(7);
+
+    core.setDataset({ count: 10 });
+    expect(core.domain).toBe(7);
+
+    core.setWeightDomain(null);
+    expect(core.domain).toBe(5);
+  });
+
+  it('clamps setWeights to ten times the manual domain', () => {
+    const core = makeCore({ expression: 'x1 + x2', count: 40, seed: 5 });
+    core.setWeightDomain(5);
+
+    core.setWeights({ w1: 1e6 });
+    expect(core.w1).toBe(50);
+
+    core.setWeights({ w2: -1e6 });
+    expect(core.w2).toBe(-50);
+  });
+
+  it('uses the manual domain as the divergence limit', () => {
+    const core = makeCore({ expression: '25*x1', count: 40, seed: 5 });
+    expect(core.domain).toBe(20);
+
+    core.setWeights({ w1: 60, w2: 0 });
+    expect(core.w1).toBe(60);
+    core.advanceBatch(0.1);
+    expect(core.diverged).toBe(false);
+
+    core.setWeights({ w1: 60, w2: 0 });
+    core.setWeightDomain(5);
+    expect(core.domain).toBe(5);
+    core.advanceBatch(0.1);
+    expect(core.diverged).toBe(true);
   });
 });

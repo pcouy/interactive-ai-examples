@@ -42,6 +42,8 @@ const DOMAIN_MAX = 20;
 const DOMAIN_FALLBACK = 5;
 const DOMAIN_FIT_SCALE = 1.5;
 const DIVERGENCE_FACTOR = 10;
+const WEIGHT_DOMAIN_MIN = 1;
+const WEIGHT_DOMAIN_MAX = 50;
 const INPUT_DOMAIN_DEFAULT = 1;
 const INPUT_DOMAIN_MIN = 0.1;
 const INPUT_DOMAIN_MAX = 20;
@@ -117,6 +119,10 @@ export class NeuronCore {
 
   private isDiverged = false;
 
+  private stopOnDivergeEnabled = true;
+
+  private divergenceTotal = 0;
+
   private startWeight1 = 0;
 
   private startWeight2 = 0;
@@ -130,6 +136,20 @@ export class NeuronCore {
   private biasValue = 0;
 
   private currentDomain = DOMAIN_FALLBACK;
+
+  private manualWeightDomain: number | null = null;
+
+  private moments: {
+    m11: number;
+    m22: number;
+    m12: number;
+    m1: number;
+    m2: number;
+    m1t: number;
+    m2t: number;
+    mt: number;
+    mtt: number;
+  } | null = null;
 
   constructor() {
     this.setDataset();
@@ -224,12 +244,61 @@ export class NeuronCore {
     return Math.hypot(gradient.dw1, gradient.dw2);
   }
 
+  /**
+   * Returns the active weight domain: the manual override when one is set,
+   * otherwise the domain fitted from the dataset. The divergence limit and the
+   * `setWeights` clamp both use this value.
+   */
   get domain(): number {
-    return this.currentDomain;
+    return this.manualWeightDomain ?? this.currentDomain;
   }
 
   get inputDomain(): number {
     return this.currentInputDomain;
+  }
+
+  /**
+   * Returns whether divergence currently halts training. When false, a
+   * diverging move snaps the weights back and counts, but training continues.
+   */
+  get stopOnDiverge(): boolean {
+    return this.stopOnDivergeEnabled;
+  }
+
+  /** Returns how many diverging moves were counted since the last reset. */
+  get divergenceCount(): number {
+    return this.divergenceTotal;
+  }
+
+  /**
+   * Enables or disables halting on divergence. Enabling stores the flag but
+   * does not halt a training run that already latched divergence. Disabling
+   * stores the flag and clears a latched divergence, so the next move resumes
+   * training. Does not reset the epoch, weights, bias, or phase.
+   */
+  setStopOnDiverge(enabled: boolean): void {
+    this.stopOnDivergeEnabled = enabled;
+    if (!enabled) {
+      this.isDiverged = false;
+    }
+  }
+
+  /**
+   * Sets or clears a manual override of the weight domain. `null` restores the
+   * fitted domain. A finite value is clamped to [WEIGHT_DOMAIN_MIN,
+   * WEIGHT_DOMAIN_MAX]. A non-finite value is ignored and keeps the current
+   * override. The override survives `setDataset` and `setBiasEnabled`, but not
+   * a manual call to `setWeightDomain(null)`.
+   */
+  setWeightDomain(domain: number | null): void {
+    if (domain === null) {
+      this.manualWeightDomain = null;
+      return;
+    }
+    if (!Number.isFinite(domain)) {
+      return;
+    }
+    this.manualWeightDomain = Math.min(WEIGHT_DOMAIN_MAX, Math.max(WEIGHT_DOMAIN_MIN, domain));
   }
 
   get lastMove(): BallMove | null {
@@ -317,7 +386,7 @@ export class NeuronCore {
    * restarts training at the current weights.
    */
   setWeights(weights: WeightUpdate): void {
-    const limit = DIVERGENCE_FACTOR * this.currentDomain;
+    const limit = DIVERGENCE_FACTOR * this.domain;
     if (weights.w1 !== undefined && Number.isFinite(weights.w1)) {
       this.weight1 = clampAbs(weights.w1, limit);
     }
@@ -342,6 +411,7 @@ export class NeuronCore {
     this.meanGradient = null;
     this.lastBallMove = null;
     this.isDiverged = false;
+    this.divergenceTotal = 0;
   }
 
   reset(options: { startW1?: number; startW2?: number; startB?: number } = {}): void {
@@ -372,6 +442,7 @@ export class NeuronCore {
     this.meanGradient = null;
     this.lastBallMove = null;
     this.isDiverged = false;
+    this.divergenceTotal = 0;
   }
 
   advance(learningRate: number, options: { detailed?: boolean } = {}): void {
@@ -460,6 +531,24 @@ export class NeuronCore {
     if (this.examples.length === 0) {
       return 0;
     }
+    // The L2 mean loss is a quadratic form in (w1, w2, b), so the dataset
+    // moments give it in O(1) instead of one pass per example.
+    if (this.currentLossKind === 'l2' && this.moments !== null) {
+      const m = this.moments;
+      const b = this.biasOn ? this.biasValue : 0;
+      const value =
+        w1 * w1 * m.m11 +
+        w2 * w2 * m.m22 +
+        b * b +
+        m.mtt +
+        2 * w1 * w2 * m.m12 +
+        2 * w1 * b * m.m1 +
+        2 * w2 * b * m.m2 -
+        2 * w1 * m.m1t -
+        2 * w2 * m.m2t -
+        2 * b * m.mt;
+      return Math.max(0, 0.5 * value);
+    }
     let sum = 0;
     for (const example of this.examples) {
       const err =
@@ -538,7 +627,7 @@ export class NeuronCore {
   private checkDivergence(): void {
     const badW1 = this.weight1;
     const badW2 = this.weight2;
-    const limit = DIVERGENCE_FACTOR * this.currentDomain;
+    const limit = DIVERGENCE_FACTOR * this.domain;
     if (
       !Number.isFinite(this.weight1) ||
       !Number.isFinite(this.weight2) ||
@@ -547,10 +636,13 @@ export class NeuronCore {
       Math.abs(this.weight2) > limit ||
       Math.abs(this.biasValue) > limit
     ) {
+      // Always snap back to the start reference and always count the move, so
+      // the count stays meaningful when halting is disabled.
       this.weight1 = this.startWeight1;
       this.weight2 = this.startWeight2;
       this.biasValue = this.startBias;
-      this.isDiverged = true;
+      this.divergenceTotal += 1;
+      this.isDiverged = this.stopOnDivergeEnabled;
       this.lastBallMove = {
         fromA: badW1,
         fromB: badW2,
@@ -589,6 +681,51 @@ export class NeuronCore {
       }
     }
     this.examples = dataset;
+    this.computeMoments();
+  }
+
+  /**
+   * Precomputes the dataset moments (E[x1²], E[x2²], E[x1x2], E[x1], E[x2],
+   * E[x1t], E[x2t], E[t], E[t²]) so the L2 landscape loss is O(1). An empty
+   * dataset yields null and falls back to the per-example loop.
+   */
+  private computeMoments(): void {
+    const n = this.examples.length;
+    if (n === 0) {
+      this.moments = null;
+      return;
+    }
+    let m11 = 0;
+    let m22 = 0;
+    let m12 = 0;
+    let m1 = 0;
+    let m2 = 0;
+    let m1t = 0;
+    let m2t = 0;
+    let mt = 0;
+    let mtt = 0;
+    for (const example of this.examples) {
+      m11 += example.x1 * example.x1;
+      m22 += example.x2 * example.x2;
+      m12 += example.x1 * example.x2;
+      m1 += example.x1;
+      m2 += example.x2;
+      m1t += example.x1 * example.t;
+      m2t += example.x2 * example.t;
+      mt += example.t;
+      mtt += example.t * example.t;
+    }
+    this.moments = {
+      m11: m11 / n,
+      m22: m22 / n,
+      m12: m12 / n,
+      m1: m1 / n,
+      m2: m2 / n,
+      m1t: m1t / n,
+      m2t: m2t / n,
+      mt: mt / n,
+      mtt: mtt / n,
+    };
   }
 
   private computeDomain(): void {

@@ -78,6 +78,32 @@ function readCore(element: Neuron): NeuronCore {
   return (element as unknown as { core: NeuronCore }).core;
 }
 
+/**
+ * Flattens a Lit `TemplateResult` into text. The node test bench has no DOM, so
+ * the produced template is inspected instead of an actual render. Attribute
+ * bindings appear as `name=value` and boolean bindings as `?name=value`.
+ */
+function renderTemplateTextFlat(value: unknown): string {
+  if (value === null || value === undefined) {
+    return '';
+  }
+  if (Array.isArray(value)) {
+    return value.map(renderTemplateTextFlat).join('');
+  }
+  if (typeof value === 'object' && 'strings' in value && 'values' in value) {
+    const template = value as { strings: readonly string[]; values: readonly unknown[] };
+    let out = '';
+    for (let index = 0; index < template.strings.length; index += 1) {
+      out += template.strings[index];
+      if (index < template.values.length) {
+        out += renderTemplateTextFlat(template.values[index]);
+      }
+    }
+    return out.replace(/\s+/g, ' ').trim();
+  }
+  return String(value).replace(/\s+/g, ' ').trim();
+}
+
 describe('Neuron regenerateDataset', () => {
   beforeEach(() => {
     // sync() schedules a render through requestAnimationFrame.
@@ -186,6 +212,161 @@ describe('Neuron divergence', () => {
   });
 });
 
+describe('Neuron stop on diverge', () => {
+  beforeEach(() => {
+    vi.stubGlobal('requestAnimationFrame', () => 0);
+    vi.stubGlobal('cancelAnimationFrame', () => {});
+  });
+
+  afterEach(() => {
+    vi.unstubAllGlobals();
+    vi.restoreAllMocks();
+  });
+
+  it('routes stopOnDiverge without resetting training or rebuilding the field', () => {
+    const element = createNeuron();
+    const scene = fakeScene();
+    installScene(element, scene);
+    markUpdated(element);
+    const core = readCore(element);
+    const reset = vi.spyOn(core, 'reset');
+    const setHeightField = vi.mocked(scene.setHeightField);
+
+    element.stopOnDiverge = false;
+    runWillUpdate(element, 'stopOnDiverge');
+
+    expect(core.stopOnDiverge).toBe(false);
+    expect(reset).not.toHaveBeenCalled();
+    expect(setHeightField).not.toHaveBeenCalled();
+
+    element.stopOnDiverge = true;
+    runWillUpdate(element, 'stopOnDiverge');
+    expect(core.stopOnDiverge).toBe(true);
+  });
+
+  it('routes stopOnDiverge to the core on first connect', async () => {
+    const element = createNeuron();
+    (element as unknown as { stopOnDiverge: boolean }).stopOnDiverge = false;
+    Object.defineProperty(element, 'renderRoot', {
+      value: { querySelector: () => null },
+      configurable: true,
+    });
+    vi.spyOn(element as unknown as { setupScene(): Promise<void> }, 'setupScene').mockResolvedValue(
+      undefined,
+    );
+
+    await (element as unknown as { firstUpdated(): Promise<void> }).firstUpdated();
+
+    expect(readCore(element).stopOnDiverge).toBe(false);
+  });
+
+  it('emits drl-divergence per snap-back and no drl-diverged when halting is off', () => {
+    const element = createNeuron();
+    const scene = fakeScene();
+    installScene(element, scene);
+    markUpdated(element);
+    const divergences: number[] = [];
+    const diverged: boolean[] = [];
+    element.addEventListener('drl-divergence', (event) => {
+      divergences.push((event as CustomEvent<number>).detail);
+    });
+    element.addEventListener('drl-diverged', (event) => {
+      diverged.push((event as CustomEvent<boolean>).detail);
+    });
+
+    element.stopOnDiverge = false;
+    runWillUpdate(element, 'stopOnDiverge');
+    element.running = true;
+    element.learningRate = 1000;
+    element.step();
+    element.step();
+    element.step();
+
+    expect(divergences).toEqual([1, 2, 3]);
+    expect(diverged).toEqual([]);
+  });
+
+  it('emits drl-diverged only when halting is on', () => {
+    const element = createNeuron();
+    const scene = fakeScene();
+    installScene(element, scene);
+    markUpdated(element);
+    const divergences: number[] = [];
+    const diverged: boolean[] = [];
+    element.addEventListener('drl-divergence', (event) => {
+      divergences.push((event as CustomEvent<number>).detail);
+    });
+    element.addEventListener('drl-diverged', (event) => {
+      diverged.push((event as CustomEvent<boolean>).detail);
+    });
+
+    element.stopOnDiverge = true;
+    runWillUpdate(element, 'stopOnDiverge');
+    element.running = true;
+    element.learningRate = 1000;
+    let guard = 400;
+    while (!readFlag(element, 'diverged') && guard > 0) {
+      element.step();
+      guard -= 1;
+    }
+
+    expect(readFlag(element, 'diverged')).toBe(true);
+    expect(diverged).toEqual([true]);
+    expect(divergences).toEqual([]);
+  });
+
+  it('rebuilds the height field on a bias-enabled snap-back', () => {
+    const element = createNeuron();
+    const scene = fakeScene();
+    installScene(element, scene);
+    markUpdated(element);
+    const core = readCore(element);
+    core.setBiasEnabled(true);
+    core.reset();
+
+    element.stopOnDiverge = false;
+    runWillUpdate(element, 'stopOnDiverge');
+    element.running = true;
+    element.learningRate = 1000;
+    let guard = 400;
+    while (core.divergenceCount === 0 && guard > 0) {
+      element.step();
+      guard -= 1;
+    }
+
+    expect(core.divergenceCount).toBeGreaterThan(0);
+    expect(vi.mocked(scene.setHeightField)).toHaveBeenCalled();
+  });
+
+  it('does not emit a spurious drl-divergence after a reset', () => {
+    const element = createNeuron();
+    const scene = fakeScene();
+    installScene(element, scene);
+    markUpdated(element);
+    const divergences: number[] = [];
+    element.addEventListener('drl-divergence', (event) => {
+      divergences.push((event as CustomEvent<number>).detail);
+    });
+
+    element.stopOnDiverge = false;
+    runWillUpdate(element, 'stopOnDiverge');
+    element.running = true;
+    element.learningRate = 1000;
+    let guard = 400;
+    while (divergences.length === 0 && guard > 0) {
+      element.step();
+      guard -= 1;
+    }
+    expect(divergences.length).toBeGreaterThan(0);
+    const before = [...divergences];
+
+    // reset() zeroes the divergence count: that must not fire drl-divergence.
+    (element as unknown as { onReset(): void }).onReset();
+
+    expect(divergences).toEqual(before);
+  });
+});
+
 describe('Neuron height field throttle', () => {
   beforeEach(() => {
     // sync() schedules a render through requestAnimationFrame.
@@ -202,11 +383,8 @@ describe('Neuron height field throttle', () => {
     const element = createNeuron();
     const scene = fakeScene();
     installScene(element, scene);
-    const core = (
-      element as unknown as {
-        core: { setBiasEnabled(enabled: boolean): void; reset(): void };
-      }
-    ).core;
+    const core = readCore(element);
+    core.setLoss('l1');
     core.setBiasEnabled(true);
     core.reset();
 
@@ -236,6 +414,36 @@ describe('Neuron height field throttle', () => {
 
     (element as unknown as { onReset(): void }).onReset();
     expect(scene.setHeightField).toHaveBeenCalledTimes(4);
+  });
+
+  it('rebuilds the height field on every L2 play step, including a snap-back', () => {
+    const element = createNeuron();
+    const scene = fakeScene();
+    installScene(element, scene);
+    const core = readCore(element);
+    core.setBiasEnabled(true);
+    core.reset();
+
+    element.running = true;
+    element.learningRate = 0.15;
+    for (let step = 0; step < 6; step += 1) {
+      element.step();
+    }
+    // L2 keeps the surface exact, so one rebuild per play step, no throttle.
+    // The exact count pins the current RNG/batching behaviour of the core.
+    expect(scene.setHeightField).toHaveBeenCalledTimes(6);
+
+    element.learningRate = 1000;
+    const setHeightField = vi.mocked(scene.setHeightField);
+    const before = setHeightField.mock.calls.length;
+    let guard = 400;
+    while (!readFlag(element, 'diverged') && guard > 0) {
+      element.step();
+      guard -= 1;
+    }
+    expect(readFlag(element, 'diverged')).toBe(true);
+    // The snap-back step still rebuilds the surface at the restored weights.
+    expect(setHeightField.mock.calls.length).toBeGreaterThan(before);
   });
 });
 
@@ -476,6 +684,104 @@ describe('Neuron input domain', () => {
   });
 });
 
+describe('Neuron weight domain', () => {
+  beforeEach(() => {
+    vi.stubGlobal('requestAnimationFrame', () => 0);
+    vi.stubGlobal('cancelAnimationFrame', () => {});
+  });
+
+  afterEach(() => {
+    vi.unstubAllGlobals();
+    vi.restoreAllMocks();
+  });
+
+  it('routes weightDomain to the core and rebuilds the field', () => {
+    const element = createNeuron();
+    const scene = fakeScene();
+    installScene(element, scene);
+    markUpdated(element);
+
+    element.weightDomain = 5;
+    runWillUpdate(element, 'weightDomain');
+
+    const core = readCore(element);
+    expect(core.domain).toBe(5);
+    expect(element.effectiveWeightDomain).toBe(5);
+    expect(vi.mocked(scene.setHeightField)).toHaveBeenCalled();
+  });
+
+  it('restores the fitted domain when resetWeightDomain clears the override', () => {
+    const element = createNeuron();
+    const scene = fakeScene();
+    installScene(element, scene);
+    markUpdated(element);
+    const core = readCore(element);
+    const fitted = core.domain;
+
+    element.weightDomain = 5;
+    runWillUpdate(element, 'weightDomain');
+    expect(core.domain).toBe(5);
+
+    element.resetWeightDomain();
+    runWillUpdate(element, 'weightDomain');
+
+    expect(element.weightDomain).toBe(Number.NaN);
+    expect(core.domain).toBe(fitted);
+  });
+
+  it('emits drl-weight-domain on a manual write and on the restore', () => {
+    const element = createNeuron();
+    const scene = fakeScene();
+    installScene(element, scene);
+    markUpdated(element);
+    const core = readCore(element);
+    const fitted = core.domain;
+    const events: Array<{ domain: number; auto: boolean }> = [];
+    element.addEventListener('drl-weight-domain', (event) => {
+      events.push((event as CustomEvent<{ domain: number; auto: boolean }>).detail);
+    });
+
+    element.weightDomain = 5;
+    runWillUpdate(element, 'weightDomain');
+    element.resetWeightDomain();
+    runWillUpdate(element, 'weightDomain');
+
+    expect(events.at(-2)).toEqual({ domain: 5, auto: false });
+    expect(events.at(-1)).toEqual({ domain: fitted, auto: true });
+  });
+
+  it('keeps a manual weight domain across a dataset change', () => {
+    const element = createNeuron();
+    const scene = fakeScene();
+    installScene(element, scene);
+    markUpdated(element);
+    const core = readCore(element);
+
+    element.weightDomain = 5;
+    runWillUpdate(element, 'weightDomain');
+    expect(core.domain).toBe(5);
+
+    element.regenerateDataset();
+    expect(core.domain).toBe(5);
+  });
+
+  it('routes a finite weightDomain to the core on first connect', async () => {
+    const element = createNeuron();
+    (element as unknown as { weightDomain: number }).weightDomain = 5;
+    Object.defineProperty(element, 'renderRoot', {
+      value: { querySelector: () => null },
+      configurable: true,
+    });
+    vi.spyOn(element as unknown as { setupScene(): Promise<void> }, 'setupScene').mockResolvedValue(
+      undefined,
+    );
+
+    await (element as unknown as { firstUpdated(): Promise<void> }).firstUpdated();
+
+    expect(readCore(element).domain).toBe(5);
+  });
+});
+
 describe('Neuron manual weights', () => {
   beforeEach(() => {
     vi.stubGlobal('requestAnimationFrame', () => 0);
@@ -551,6 +857,153 @@ describe('Neuron manual weights', () => {
     expect(readFlag(element, 'diverged')).toBe(false);
     expect(diverged).toContain(true);
     expect(diverged.at(-1)).toBe(false);
+  });
+});
+
+describe('Neuron header weight inputs', () => {
+  beforeEach(() => {
+    vi.stubGlobal('requestAnimationFrame', () => 0);
+    vi.stubGlobal('cancelAnimationFrame', () => {});
+  });
+
+  afterEach(() => {
+    vi.unstubAllGlobals();
+    vi.restoreAllMocks();
+  });
+
+  /** Reads the protected header template of the component. */
+  function headerText(element: Neuron): string {
+    return renderTemplateTextFlat(
+      (element as unknown as { renderHeader(): unknown }).renderHeader(),
+    );
+  }
+
+  it('renders editable weight inputs and keeps the read-only tiles', () => {
+    const element = createNeuron();
+
+    const text = headerText(element);
+
+    // The inputs carry no value attribute: syncWeightInputs() fills them.
+    expect(text).toContain('id="drl-w1"');
+    expect(text).toContain('id="drl-w2"');
+    expect(text).toContain('id="drl-b"');
+    expect(text).not.toContain('value=');
+    expect(text).toContain('Loss (moyenne)');
+    expect(text).toContain('|gradient|');
+    expect(text).toContain('Itérations');
+  });
+
+  it('labels the editable weight inputs', () => {
+    const element = createNeuron();
+
+    const text = headerText(element);
+
+    expect(text).toContain('for="drl-w1"');
+    expect(text).toContain('for="drl-w2"');
+    expect(text).toContain('for="drl-b"');
+  });
+
+  /** Builds a fake shadow root whose inputs record the written values. */
+  function fakeWeightRoot(): {
+    root: {
+      activeElement: { value: string } | null;
+      querySelector: (selector: string) => { value: string } | null;
+    };
+    inputs: Record<string, { value: string }>;
+  } {
+    const inputs: Record<string, { value: string }> = {
+      'drl-w1': { value: '' },
+      'drl-w2': { value: '' },
+      'drl-b': { value: '' },
+    };
+    const root = {
+      activeElement: null,
+      querySelector: (selector: string) => inputs[selector.replace('#', '')] ?? null,
+    };
+    return { root, inputs };
+  }
+
+  it('writes the formatted weights into the header inputs', () => {
+    const element = createNeuron();
+    const internals = element as unknown as { w1: number; w2: number; b: number };
+    internals.w1 = 0.5;
+    internals.w2 = -0.25;
+    internals.b = 0.125;
+    const { root, inputs } = fakeWeightRoot();
+    Object.defineProperty(element, 'renderRoot', { value: root, configurable: true });
+
+    (element as unknown as { syncWeightInputs(): void }).syncWeightInputs();
+
+    expect(inputs['drl-w1'].value).toBe('0.5');
+    expect(inputs['drl-w2'].value).toBe('-0.25');
+    expect(inputs['drl-b'].value).toBe('0.125');
+  });
+
+  it('skips the focused input while syncing the other weights', () => {
+    const element = createNeuron();
+    const internals = element as unknown as { w1: number; w2: number; b: number };
+    internals.w1 = 0.5;
+    internals.w2 = -0.25;
+    internals.b = 0.125;
+    const { root, inputs } = fakeWeightRoot();
+    const focused = inputs['drl-w1'];
+    focused.value = '0,42';
+    root.activeElement = focused;
+    Object.defineProperty(element, 'renderRoot', { value: root, configurable: true });
+
+    (element as unknown as { syncWeightInputs(): void }).syncWeightInputs();
+
+    expect(focused.value).toBe('0,42');
+    expect(inputs['drl-w2'].value).toBe('-0.25');
+    expect(inputs['drl-b'].value).toBe('0.125');
+  });
+
+  it('marks the bias input disabled when the bias is off', () => {
+    const element = createNeuron();
+    (element as unknown as { bias: boolean }).bias = false;
+
+    const text = headerText(element);
+
+    expect(text).toContain('id="drl-b"');
+    expect(text).toContain('?disabled=true');
+    expect(text).toContain('Cochez « Biais » pour éditer b.');
+  });
+
+  it('commits a typed weight through handleWeightChange', () => {
+    const element = createNeuron();
+    const scene = fakeScene();
+    installScene(element, scene);
+    const core = readCore(element);
+    const handler = (
+      element as unknown as {
+        handleWeightChange(field: 'w1' | 'w2' | 'b'): (event: Event) => void;
+      }
+    ).handleWeightChange('w1');
+    const input = { value: '0.5' };
+
+    handler({ target: input } as unknown as Event);
+
+    expect(core.w1).toBe(0.5);
+    expect(input.value).toBe('0.5');
+  });
+
+  it('restores the current formatted value on an empty entry', () => {
+    const element = createNeuron();
+    const scene = fakeScene();
+    installScene(element, scene);
+    const core = readCore(element);
+    element.setWeights({ w1: 0.5 });
+    const handler = (
+      element as unknown as {
+        handleWeightChange(field: 'w1' | 'w2' | 'b'): (event: Event) => void;
+      }
+    ).handleWeightChange('w1');
+    const input = { value: '' };
+
+    handler({ target: input } as unknown as Event);
+
+    expect(input.value).toBe('0.5');
+    expect(core.w1).toBe(0.5);
   });
 });
 

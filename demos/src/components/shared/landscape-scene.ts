@@ -168,6 +168,57 @@ export function sampleGridHeights(
 }
 
 /**
+ * Reads one sample, treating a non-finite value as 0. The sampler stores
+ * non-finite values verbatim, but `applyHeightScale` already clamped them into
+ * the normalized array. This guard only covers a hand-crafted sample array that
+ * still contains a non-finite value.
+ */
+function finiteOrZero(value: number): number {
+  return Number.isFinite(value) ? value : 0;
+}
+
+function lerp(a: number, b: number, t: number): number {
+  return a + (b - a) * t;
+}
+
+/**
+ * Bilinearly interpolates the row-major samples at the (w1, w2) point. Callers
+ * pass either raw samples from `sampleGridHeights` or the normalized scene
+ * heights from `applyHeightScale`; the interpolation is the same. The grid
+ * spans [-domain, domain] on both axes; i maps from w1 and j maps from w2,
+ * matching the vertex layout of `buildLandscape`. Points outside the domain
+ * clamp to the nearest edge. Exported for testing.
+ */
+export function interpolateHeight(
+  samples: ArrayLike<number>,
+  res: number,
+  domain: number,
+  w1: number,
+  w2: number,
+): number {
+  const i = clamp(((w1 + domain) / (2 * domain)) * res, 0, res);
+  const j = clamp(((w2 + domain) / (2 * domain)) * res, 0, res);
+  const i0 = Math.min(Math.floor(i), res - 1);
+  const j0 = Math.min(Math.floor(j), res - 1);
+  const i1 = Math.min(i0 + 1, res);
+  const j1 = Math.min(j0 + 1, res);
+  const ti = i - i0;
+  const tj = j - j0;
+  const stride = res + 1;
+  const top = lerp(
+    finiteOrZero(samples[j0 * stride + i0]),
+    finiteOrZero(samples[j0 * stride + i1]),
+    ti,
+  );
+  const bottom = lerp(
+    finiteOrZero(samples[j1 * stride + i0]),
+    finiteOrZero(samples[j1 * stride + i1]),
+    ti,
+  );
+  return lerp(top, bottom, tj);
+}
+
+/**
  * Reduces raw grid samples to a { min, span } range. Non-finite samples are
  * skipped, a field with no finite sample reports a flat range so callers stay
  * finite, and a finite field whose span overflows also reports a flat range.
@@ -281,6 +332,10 @@ export async function createLandscapeScene(canvas: HTMLCanvasElement): Promise<L
   let heightScale = DEFAULT_HEIGHT_SCALE;
   // Raw samples of the current field, reused when only the scale changes.
   let gridRawHeights: Float64Array | null = null;
+  // The same samples already normalized to scene units. heightAt and
+  // buildLandscape read this cache so the ball and the trail sit exactly on
+  // the displayed mesh, even when a sample is non-finite.
+  let gridSceneHeights: number[] | null = null;
   let radius = cameraRadius(DEFAULT_DOMAIN, heightScale);
   let theta = CAMERA_THETA;
   let phi = CAMERA_PHI;
@@ -306,6 +361,14 @@ export async function createLandscapeScene(canvas: HTMLCanvasElement): Promise<L
   let disposed = false;
 
   function heightAt(w1: number, w2: number): number {
+    // Prefer the cached normalized samples so the ball and the trail stay on
+    // the mesh that is currently displayed. Between rebuilds the live field may
+    // change (the core's bias moves) while the mesh stays cached, which would
+    // otherwise leave the ball floating or sunk into the surface. The samples
+    // are already normalized, so no second normalizeHeight call is needed.
+    if (gridSceneHeights && Math.abs(w1) <= domain && Math.abs(w2) <= domain) {
+      return interpolateHeight(gridSceneHeights, LANDSCAPE_RES, domain, w1, w2);
+    }
     return normalizeHeight(heightFn(w1, w2), gridMin, gridSpan, heightScale);
   }
 
@@ -321,9 +384,10 @@ export async function createLandscapeScene(canvas: HTMLCanvasElement): Promise<L
     const positions = new Float32Array(count * 3);
     const colors = new Float32Array(count * 3);
 
-    const heights = gridRawHeights
-      ? applyHeightScale(gridRawHeights, gridMin, gridSpan, heightScale)
-      : null;
+    // Scene heights reuse the cached normalized samples so a scale change never
+    // re-evaluates the loss function. Before the first setHeightField the cache
+    // is null and the live field is evaluated per vertex.
+    const heights = gridSceneHeights;
 
     const low = accent.clone().lerp(new three.Color(0xffffff), 0.85);
     const high = accent.clone().multiplyScalar(0.35);
@@ -333,11 +397,10 @@ export async function createLandscapeScene(canvas: HTMLCanvasElement): Promise<L
       const b = -domain + (2 * domain * j) / res;
       for (let i = 0; i <= res; i += 1) {
         const a = -domain + (2 * domain * i) / res;
-        // Reuse the raw sample taken in setHeightField when available, so a
-        // scale change never re-evaluates the loss function.
-        const raw = gridRawHeights ? gridRawHeights[index] : heightFn(a, b);
         const height =
-          heights === null ? normalizeHeight(raw, gridMin, gridSpan, heightScale) : heights[index];
+          heights === null
+            ? normalizeHeight(heightFn(a, b), gridMin, gridSpan, heightScale)
+            : heights[index];
         positions[index * 3] = a;
         positions[index * 3 + 1] = height;
         positions[index * 3 + 2] = b;
@@ -513,6 +576,8 @@ export async function createLandscapeScene(canvas: HTMLCanvasElement): Promise<L
     const { min, span } = heightRangeFromSamples(samples);
     gridMin = min;
     gridSpan = span;
+    // Normalize once so heightAt and buildLandscape read the same scene heights.
+    gridSceneHeights = applyHeightScale(samples, gridMin, gridSpan, heightScale);
     buildLandscape();
     // Fit the camera to the domain only when it changes. Rebuilding the same
     // surface must keep the radius the user picked with the wheel.
@@ -541,6 +606,10 @@ export async function createLandscapeScene(canvas: HTMLCanvasElement): Promise<L
     // Keep the pan offset relative to the surface: the target only moves by
     // the change in surface height, instead of snapping back to the centre.
     target.y += (heightScale - previousScale) / 2;
+    // Refresh the cached normalized samples so the rebuild uses the new scale.
+    if (gridRawHeights) {
+      gridSceneHeights = applyHeightScale(gridRawHeights, gridMin, gridSpan, heightScale);
+    }
     buildLandscape();
     // Never zoom in: a taller surface needs at least as much room.
     radius = Math.max(radius, cameraRadius(domain, heightScale));
