@@ -52,9 +52,11 @@ est exclu : il est multi-étiquette, et la démo utilise une sortie softmax mono
 
 Le crochet `postinstall` ne télécharge que MNIST.
 
-Les trois convertisseurs sont idempotents. Chacun vérifie la taille et le MD5 de chaque
-fichier téléchargé. Un fichier déjà présent et valide est conservé, sauf `--force`. Un
-échec supprime le temporaire : aucun fichier tronqué ne reste sous son nom final.
+Les trois commandes sont idempotentes : elles vérifient taille et MD5, reprennent un
+téléchargement interrompu et ne réécrivent pas les fichiers existants. Chacune vérifie la
+taille et le MD5 de chaque fichier téléchargé. Un fichier déjà présent et valide est
+conservé, sauf `--force`. Un échec supprime le temporaire : aucun fichier tronqué ne reste
+sous son nom final.
 
 ## Fichiers générés
 
