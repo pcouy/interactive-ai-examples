@@ -46,8 +46,6 @@ const SHARDED_DATASET: ShardedDatasetDefinition = {
   attribution: 'test',
   kind: 'sharded',
   indexFile: 'index.json',
-  galleryFile: 'gallery.idx.gz',
-  galleryLabelsFile: 'gallery-labels.idx.gz',
   shardSize: 2,
 };
 
@@ -92,8 +90,13 @@ function assetsForIndex(index: Record<string, unknown>): Map<string, Uint8Array<
       assets.set(shard.file, gz(imageIdx(shard.count)));
     }
   }
-  assets.set('gallery.idx.gz', gz(imageIdx(6)));
-  assets.set('gallery-labels.idx.gz', gz(labelIdx([0, 0, 0, 1, 1, 1])));
+  const gallery = index.gallery as {
+    imagesFile: string;
+    labelsFile: string;
+    perClass: number;
+  };
+  assets.set(gallery.imagesFile, gz(imageIdx(6)));
+  assets.set(gallery.labelsFile, gz(labelIdx([0, 0, 0, 1, 1, 1])));
   return assets;
 }
 
@@ -391,9 +394,44 @@ describe('loadShardedSplits', () => {
     );
     expect(error.message).toContain('train-c0-s00.idx.gz');
     expect(error.message).toContain('HTTP 404');
+    expect(error.message).toContain('npm run quickdraw:data');
 
     const splits = await loadShardedSplits(SHARDED_DATASET, 100, 100);
     expect(splits.train.count).toBe(12);
+  });
+
+  it('rejects a labels file whose count differs from the split count', async () => {
+    const assets = assetsForIndex(baseIndex());
+    assets.set('train-labels.idx.gz', gz(labelIdx(TRAIN_LABELS.slice(0, 11))));
+    stubFetch(assets);
+    const { loadShardedSplits } = await loadLoader();
+
+    const error = await loadShardedSplits(SHARDED_DATASET, 100, 100).then(
+      () => {
+        throw new Error('expected the load to fail');
+      },
+      (reason: Error) => reason,
+    );
+    expect(error).toBeInstanceOf(RangeError);
+    expect(error.message).toContain('train-labels.idx.gz');
+    expect(error.message).toMatch(/11 labels, expected 12/);
+  });
+
+  it('does not share the cache across dataset ids', async () => {
+    const mock = stubFetch(assetsForIndex(baseIndex()));
+    const { loadShardedSplits } = await loadLoader();
+    const first = { ...SHARDED_DATASET, id: 'quickdraw-a' };
+    const second = { ...SHARDED_DATASET, id: 'quickdraw-b' };
+
+    await loadShardedSplits(first, 100, 100);
+    await loadShardedSplits(second, 100, 100);
+
+    const shardCalls = mock.mock.calls
+      .map((call) => String(call[0]))
+      .filter((url) => url.endsWith('train-c0-s00.idx.gz'));
+    expect(shardCalls).toHaveLength(2);
+    expect(shardCalls.some((url) => url.includes('/datasets/quickdraw-a/'))).toBe(true);
+    expect(shardCalls.some((url) => url.includes('/datasets/quickdraw-b/'))).toBe(true);
   });
 });
 
@@ -411,5 +449,37 @@ describe('loadShardedGallery', () => {
       expect(value).toBeGreaterThanOrEqual(0);
       expect(value).toBeLessThanOrEqual(1);
     }
+  });
+
+  it('fetches the gallery file names from the index', async () => {
+    const index = baseIndex();
+    const galleryIndex = index.gallery as { imagesFile: string; labelsFile: string };
+    galleryIndex.imagesFile = 'index-gallery-images.idx.gz';
+    galleryIndex.labelsFile = 'index-gallery-labels-idx1-ubyte.gz';
+    const mock = stubFetch(assetsForIndex(index));
+    const { loadShardedGallery } = await loadLoader();
+
+    const gallery = await loadShardedGallery(SHARDED_DATASET);
+    expect(gallery.count).toBe(6);
+    const urls = mock.mock.calls.map((call) => String(call[0]));
+    expect(urls.some((url) => url.endsWith('index-gallery-images.idx.gz'))).toBe(true);
+    expect(urls.some((url) => url.endsWith('index-gallery-labels-idx1-ubyte.gz'))).toBe(true);
+  });
+
+  it('rejects a gallery whose image count differs from perClass times classCount', async () => {
+    const index = baseIndex();
+    const galleryIndex = index.gallery as { perClass: number };
+    galleryIndex.perClass = 4;
+    stubFetch(assetsForIndex(index));
+    const { loadShardedGallery } = await loadLoader();
+
+    const error = await loadShardedGallery(SHARDED_DATASET).then(
+      () => {
+        throw new Error('expected the gallery load to fail');
+      },
+      (reason: Error) => reason,
+    );
+    expect(error).toBeInstanceOf(RangeError);
+    expect(error.message).toMatch(/expected 8/);
   });
 });

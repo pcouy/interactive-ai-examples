@@ -59,6 +59,9 @@ const FETCH_CONCURRENCY = 4;
 /** Répertoire public des ressources des jeux, relatif à la base Vite. */
 const DATASET_ASSET_DIRECTORY = 'datasets';
 
+/** Commande qui télécharge les fichiers QuickDraw, citée dans les erreurs. */
+const QUICKDRAW_DOWNLOAD_COMMAND = 'npm run quickdraw:data';
+
 /** Un fragment d'images d'une fraction, décrit par l'index JSON. */
 export interface ShardEntry {
   readonly file: string;
@@ -372,15 +375,23 @@ const bytesCache = new Map<string, Uint8Array>();
 const inFlightBytes = new Map<string, Promise<Uint8Array>>();
 
 /** Télécharge le texte d'une URL, avec une erreur qui nomme le fichier. */
-async function fetchText(url: string): Promise<string> {
+async function fetchText(url: string, downloadCommand: string): Promise<string> {
   let response: Response;
   try {
     response = await fetch(url);
   } catch (error) {
-    throw new Error(mnistFetchErrorMessage(url, `network error: ${(error as Error).message}`));
+    throw new Error(
+      mnistFetchErrorMessage(url, `network error: ${(error as Error).message}`, downloadCommand),
+    );
   }
   if (!response.ok) {
-    throw new Error(mnistFetchErrorMessage(url, `HTTP ${response.status} ${response.statusText}`));
+    throw new Error(
+      mnistFetchErrorMessage(
+        url,
+        `HTTP ${response.status} ${response.statusText}`,
+        downloadCommand,
+      ),
+    );
   }
   return response.text();
 }
@@ -404,7 +415,11 @@ function fetchCachedBytes(
   if (pending !== undefined) {
     return pending;
   }
-  const promise = fetchGzip(datasetAssetUrl(dataset, file), expectedMagic).then(
+  const promise = fetchGzip(
+    datasetAssetUrl(dataset, file),
+    expectedMagic,
+    QUICKDRAW_DOWNLOAD_COMMAND,
+  ).then(
     (bytes) => {
       bytesCache.set(key, bytes);
       inFlightBytes.delete(key);
@@ -433,7 +448,10 @@ export function loadShardedIndex(dataset: ShardedDatasetDefinition): Promise<Sha
   if (pending !== undefined) {
     return pending;
   }
-  const promise = fetchText(datasetAssetUrl(dataset, dataset.indexFile)).then(
+  const promise = fetchText(
+    datasetAssetUrl(dataset, dataset.indexFile),
+    QUICKDRAW_DOWNLOAD_COMMAND,
+  ).then(
     (text) => {
       const index = parseIndexJson(text);
       indexCache.set(key, index);
@@ -470,11 +488,20 @@ function imagePayload(bytes: Uint8Array, file: string, expectedCount: number): U
   return bytes.subarray(IMAGE_HEADER_BYTES);
 }
 
-/** Retire l'en-tête IDX de 8 octets d'un fichier de libellés. */
-function labelPayload(bytes: Uint8Array, file: string): Uint8Array {
+/**
+ * Retire l'en-tête IDX de 8 octets d'un fichier de libellés et vérifie que le
+ * nombre de libellés annoncé vaut `expectedCount`.
+ */
+function labelPayload(bytes: Uint8Array, file: string, expectedCount: number): Uint8Array {
   if (bytes.length < LABEL_HEADER_BYTES) {
     throw new Error(
       `sharded-assets: "${file}" is truncated, expected at least ${LABEL_HEADER_BYTES} bytes.`,
+    );
+  }
+  const count = readU32At(bytes, 4);
+  if (count !== expectedCount) {
+    throw new RangeError(
+      `sharded-assets: "${file}" declares ${count} labels, expected ${expectedCount}.`,
     );
   }
   return bytes.subarray(LABEL_HEADER_BYTES);
@@ -490,7 +517,7 @@ function buildSplit(
   if (labelsBytes === undefined) {
     throw new Error(`sharded-assets: labels file "${split.labelsFile}" was not downloaded.`);
   }
-  const labels = labelPayload(labelsBytes, split.labelsFile);
+  const labels = labelPayload(labelsBytes, split.labelsFile, split.count);
   const shardImages = entries.map((entry) => {
     const bytes = byFile.get(entry.file);
     if (bytes === undefined) {
@@ -569,15 +596,23 @@ export async function loadShardedSplits(
 /**
  * Télécharge et décode la galerie d'un jeu segmenté et la retourne sous forme
  * de `MnistSample` normalisé (`Float32` dans `[0, 1]`), via `materializeSample`.
- * La galerie contient `perClass * classCount` exemples.
+ * Les noms des fichiers viennent de l'index, qui en est la source autoritative.
+ * La galerie doit contenir `perClass * classCount` exemples.
  */
 export async function loadShardedGallery(dataset: ShardedDatasetDefinition): Promise<MnistSample> {
   const index = await loadShardedIndex(dataset);
+  const galleryIndex = index.gallery;
   const [images, labels] = await Promise.all([
-    fetchCachedBytes(dataset, dataset.galleryFile, IDX_IMAGE_MAGIC),
-    fetchCachedBytes(dataset, dataset.galleryLabelsFile, IDX_LABEL_MAGIC),
+    fetchCachedBytes(dataset, galleryIndex.imagesFile, IDX_IMAGE_MAGIC),
+    fetchCachedBytes(dataset, galleryIndex.labelsFile, IDX_LABEL_MAGIC),
   ]);
   const gallery = loadIdxDataset(images, labels, index.classNames.length);
+  const expectedCount = galleryIndex.perClass * index.classNames.length;
+  if (gallery.count !== expectedCount) {
+    throw new RangeError(
+      `sharded-assets: the gallery holds ${gallery.count} images, expected ${expectedCount} (perClass ${galleryIndex.perClass} times ${index.classNames.length} classes).`,
+    );
+  }
   const indices = new Uint32Array(gallery.count);
   for (let index = 0; index < gallery.count; index += 1) {
     indices[index] = index;

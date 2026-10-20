@@ -79,10 +79,16 @@ export function mnistFileName(url: string): string {
 
 /**
  * Message d'erreur unique et testable pour un téléchargement impossible : il
- * nomme le fichier manquant et indique la commande qui le télécharge.
+ * nomme le fichier manquant et indique la commande qui le télécharge. La
+ * commande vaut `npm run datasets:data` par défaut ; le chargeur segmenté passe
+ * `npm run quickdraw:data`.
  */
-export function mnistFetchErrorMessage(url: string, detail: string): string {
-  return `mnist-assets: could not load "${mnistFileName(url)}". Run "npm run mnist:data" to download the MNIST data files. (${detail})`;
+export function mnistFetchErrorMessage(
+  url: string,
+  detail: string,
+  downloadCommand: string = 'npm run datasets:data',
+): string {
+  return `mnist-assets: could not load "${mnistFileName(url)}". Run "${downloadCommand}" to download the data files. (${detail})`;
 }
 
 /**
@@ -138,12 +144,17 @@ function readIdxMagic(bytes: Uint8Array): number {
  * `<`) ou un magic inconnu signale un fichier corrompu ou manquant : l'erreur
  * nomme le fichier et la commande de téléchargement.
  */
-function assertIdxPayload(bytes: Uint8Array, url: string, expectedMagic: number): void {
+function assertIdxPayload(
+  bytes: Uint8Array,
+  url: string,
+  expectedMagic: number,
+  downloadCommand: string,
+): void {
   const looksLikeHtml = bytes.length > 0 && bytes[0] === 0x3c /* '<' */;
   const magic = bytes.length >= 4 ? readIdxMagic(bytes) : -1;
   if (looksLikeHtml || magic !== expectedMagic) {
     throw new Error(
-      `mnist-assets: "${mnistFileName(url)}" is not a valid IDX file (expected magic ${expectedMagic}, received ${magic}). Run "npm run mnist:data" to download the MNIST data files.`,
+      `mnist-assets: "${mnistFileName(url)}" is not a valid IDX file (expected magic ${expectedMagic}, received ${magic}). Run "${downloadCommand}" to download the data files.`,
     );
   }
 }
@@ -151,26 +162,39 @@ function assertIdxPayload(bytes: Uint8Array, url: string, expectedMagic: number)
 /**
  * Télécharge et décode un fichier `.gz` local, avec des erreurs explicites. Le
  * décodage est tolérant (voir `decodeIdxPayload`) et le payload est validé
- * avant l'analyse (voir `assertIdxPayload`).
+ * avant l'analyse (voir `assertIdxPayload`). `downloadCommand` nomme la
+ * commande qui télécharge le fichier dans les messages d'erreur.
  */
-export async function fetchGzip(url: string, expectedMagic: number): Promise<Uint8Array> {
+export async function fetchGzip(
+  url: string,
+  expectedMagic: number,
+  downloadCommand: string = 'npm run datasets:data',
+): Promise<Uint8Array> {
   let response: Response;
   try {
     response = await fetch(url);
   } catch (error) {
-    throw new Error(mnistFetchErrorMessage(url, `network error: ${(error as Error).message}`));
+    throw new Error(
+      mnistFetchErrorMessage(url, `network error: ${(error as Error).message}`, downloadCommand),
+    );
   }
   if (!response.ok) {
-    throw new Error(mnistFetchErrorMessage(url, `HTTP ${response.status} ${response.statusText}`));
+    throw new Error(
+      mnistFetchErrorMessage(
+        url,
+        `HTTP ${response.status} ${response.statusText}`,
+        downloadCommand,
+      ),
+    );
   }
   try {
     const bytes = new Uint8Array(await response.arrayBuffer());
     const decoded = await decodeIdxPayload(bytes, response.headers.get('content-encoding'));
-    assertIdxPayload(decoded, url, expectedMagic);
+    assertIdxPayload(decoded, url, expectedMagic, downloadCommand);
     return decoded;
   } catch (error) {
     throw new Error(
-      `mnist-assets: could not load "${mnistFileName(url)}". Run "npm run mnist:data" to download the MNIST data files. (${(error as Error).message})`,
+      `mnist-assets: could not load "${mnistFileName(url)}". Run "${downloadCommand}" to download the data files. (${(error as Error).message})`,
     );
   }
 }

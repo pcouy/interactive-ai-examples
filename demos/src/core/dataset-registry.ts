@@ -20,6 +20,11 @@ interface DatasetBase {
   readonly testCount: number;
   readonly defaultTrainPercent: number;
   readonly defaultValidationPercent: number;
+  /**
+   * Pourcentage maximal de fragments chargé dans le navigateur, pour limiter
+   * la mémoire utilisée. `undefined` vaut 100 : aucun plafond supplémentaire.
+   */
+  readonly maxPercent?: number;
   readonly license: string;
   readonly attribution: string;
   readonly kind: DatasetKind;
@@ -40,14 +45,13 @@ export interface IdxDatasetDefinition extends DatasetBase {
 }
 
 /**
- * Jeu segmenté : un index de fragments, une galerie d'images compressée et ses
- * étiquettes compressées servis sous `public/datasets/<id>/`.
+ * Jeu segmenté : un index de fragments servi sous `public/datasets/<id>/`. Les
+ * noms des fichiers de la galerie et des fragments viennent de l'index, qui en
+ * est la source autoritative.
  */
 export interface ShardedDatasetDefinition extends DatasetBase {
   readonly kind: 'sharded';
   readonly indexFile: string;
-  readonly galleryFile: string;
-  readonly galleryLabelsFile: string;
   readonly shardSize: number;
 }
 
@@ -119,9 +123,8 @@ const QUICKDRAW: ShardedDatasetDefinition = {
   trainCount: 490571,
   testCount: 122645,
   indexFile: 'index.json',
-  galleryFile: 'gallery.idx.gz',
-  galleryLabelsFile: 'gallery-labels.idx.gz',
   shardSize: 1000,
+  maxPercent: 10,
   defaultTrainPercent: 2,
   defaultValidationPercent: 2,
   license: 'CC BY 4.0',

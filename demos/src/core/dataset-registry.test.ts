@@ -31,6 +31,12 @@ describe('dataset-registry', () => {
     }
   });
 
+  it('caps QuickDraw at ten percent and leaves the IDX datasets uncapped', () => {
+    expect(getDataset('quickdraw').maxPercent).toBe(10);
+    expect(getDataset('mnist').maxPercent).toBeUndefined();
+    expect(getDataset('fashion-mnist').maxPercent).toBeUndefined();
+  });
+
   it('narrows MNIST and Fashion-MNIST to four distinct IDX file names', () => {
     for (const id of ['mnist', 'fashion-mnist']) {
       const dataset = getDataset(id);
@@ -48,7 +54,7 @@ describe('dataset-registry', () => {
     }
   });
 
-  it('narrows QuickDraw to five classes, sharded files and 2 / 2 defaults', () => {
+  it('narrows QuickDraw to five classes, an index file and 2 / 2 defaults', () => {
     const quickdraw = getDataset('quickdraw');
     expect(quickdraw.kind).toBe('sharded');
     if (quickdraw.kind !== 'sharded') {
@@ -56,8 +62,6 @@ describe('dataset-registry', () => {
     }
     expect(quickdraw.classNames).toEqual(['livre', 'lune', 'chat', 'parapluie', 'gâteau']);
     expect(quickdraw.indexFile).toBe('index.json');
-    expect(quickdraw.galleryFile).toBe('gallery.idx.gz');
-    expect(quickdraw.galleryLabelsFile).toBe('gallery-labels.idx.gz');
     expect(quickdraw.shardSize).toBe(1000);
     expect(quickdraw.defaultTrainPercent).toBe(2);
     expect(quickdraw.defaultValidationPercent).toBe(2);

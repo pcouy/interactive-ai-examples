@@ -228,7 +228,7 @@ describe('loadMnistSplits', () => {
       },
       (reason: Error) => reason,
     );
-    expect(error.message).toMatch(/npm run mnist:data/);
+    expect(error.message).toMatch(/npm run datasets:data/);
     expect(error.message).toMatch(/train-images-idx3-ubyte\.gz/);
     expect(error.message).toMatch(/offline/);
 
@@ -240,7 +240,7 @@ describe('loadMnistSplits', () => {
     stubFetch(new Map());
     const { loadMnistSplits } = await loadLoader();
     await expect(loadMnistSplits()).rejects.toThrow(/HTTP 404/);
-    await expect(loadMnistSplits()).rejects.toThrow(/npm run mnist:data/);
+    await expect(loadMnistSplits()).rejects.toThrow(/npm run datasets:data/);
   });
 
   it('raises an actionable error for an HTML error page', async () => {
@@ -258,7 +258,7 @@ describe('loadMnistSplits', () => {
       },
       (reason: Error) => reason,
     );
-    expect(error.message).toContain('npm run mnist:data');
+    expect(error.message).toContain('npm run datasets:data');
     expect(error.message).toMatch(/train-images-idx3-ubyte\.gz|t10k-labels-idx1-ubyte\.gz/);
   });
 });
@@ -324,8 +324,14 @@ describe('mnistFetchErrorMessage', () => {
       'network error: offline',
     );
     expect(message).toContain('train-images-idx3-ubyte.gz');
-    expect(message).toContain('npm run mnist:data');
+    expect(message).toContain('npm run datasets:data');
     expect(message).toContain('offline');
+    const custom = mnistFetchErrorMessage(
+      '/datasets/quickdraw/index.json',
+      'HTTP 404',
+      'npm run quickdraw:data',
+    );
+    expect(custom).toContain('npm run quickdraw:data');
     expect(mnistFileName('https://example.test/a/b/t10k-labels-idx1-ubyte.gz?v=1')).toBe(
       't10k-labels-idx1-ubyte.gz',
     );
@@ -503,7 +509,7 @@ describe('fetchMnistCnnManifest', () => {
       (reason: Error) => reason,
     );
     expect(error.message).toContain('model-v1.json');
-    expect(error.message).toContain('npm run mnist:data');
+    expect(error.message).toContain('npm run datasets:data');
     expect(error.message).toContain('HTTP 404');
   });
 
