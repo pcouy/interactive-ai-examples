@@ -50,6 +50,7 @@ function makeRequest(overrides: Partial<MnistRunRequest> = {}): MnistRunRequest 
     filters: FILTERS,
     learningRate: 0.003,
     batchSize: 64,
+    activation: 'sigmoid',
     seed: 42,
     epochs: 1,
     trainPercent: 10,
@@ -161,6 +162,8 @@ class FakePorts implements MnistTrainingPorts {
   loadSplitsError: Error | null = null;
   /** Configuration du prochain entraîneur créé. */
   nextTrainerHoldRun = false;
+  /** Configuration passée au dernier entraîneur créé. */
+  lastTrainerConfig: MnistCnnTrainingConfig | null = null;
   nextTrainerCancelResolvesRun = true;
   nextTrainerTrainError: Error | null = null;
   /** Crochet appelé dans `createTrainer` (abandon pendant la préparation). */
@@ -173,7 +176,8 @@ class FakePorts implements MnistTrainingPorts {
     return { train: makeDataset(100), test: makeDataset(50) };
   }
 
-  async createTrainer(_config: MnistCnnTrainingConfig): Promise<MnistCnnTfjsTrainer> {
+  async createTrainer(config: MnistCnnTrainingConfig): Promise<MnistCnnTfjsTrainer> {
+    this.lastTrainerConfig = config;
     this.createTrainerHook?.();
     const trainer = new FakeTrainer();
     trainer.holdRun = this.nextTrainerHoldRun;
@@ -309,6 +313,20 @@ describe('MnistTrainingController.startRun', () => {
     await controller.startRun(makeRequest({ epochs: 7 }));
     const trainOptions = ports.trainers[0].trainOptions[0] as { epochs: number };
     expect(trainOptions.epochs).toBe(7);
+  });
+
+  it('forwards the requested activation to the trainer', async () => {
+    const ports = new FakePorts();
+    const controller = new MnistTrainingController(ports);
+    await controller.startRun(makeRequest({ activation: 'tanh' }));
+    expect(ports.lastTrainerConfig?.activation).toBe('tanh');
+  });
+
+  it('forwards the sigmoid activation to the trainer', async () => {
+    const ports = new FakePorts();
+    const controller = new MnistTrainingController(ports);
+    await controller.startRun(makeRequest());
+    expect(ports.lastTrainerConfig?.activation).toBe('sigmoid');
   });
 
   it('reports counts after selection with the requested fractions', async () => {

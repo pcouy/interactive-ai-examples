@@ -4,15 +4,18 @@ import { customElement, state } from 'lit/decorators.js';
 import { repeat } from 'lit/directives/repeat.js';
 import '../../ui/drl-slider.js';
 import {
+  activationDomain,
   CONV_KERNEL_SIZE,
   CONV_LAYER_NAMES,
   DEFAULT_FILTER_COUNTS,
+  DEFAULT_MNIST_CNN_ACTIVATION,
   forwardMnistCnn,
   initializeMnistCnnWeights,
   MAX_FILTER_COUNT,
   MIN_FILTER_COUNT,
   MNIST_INPUT_LENGTH,
   MNIST_INPUT_SIZE,
+  type MnistCnnActivation,
   type MnistCnnFeatureMap,
   type MnistCnnFilters,
   type MnistCnnForwardResult,
@@ -395,6 +398,11 @@ export function filterPanelSubtitle(selection: WeightSelection): string {
     : `${mean} La toile du couple sélectionné montre le noyau 3×3 exact.`;
 }
 
+/** Légende d'un canal de sortie : numéro et biais à trois décimales. */
+export function filterBiasCaption(channel: number, bias: number): string {
+  return `sortie ${channel + 1} · b = ${formatValue(bias, 3)}`;
+}
+
 /**
  * Sélecteurs des deux toiles de filtres reliées par une liaison : la toile amont
  * est le canal de sortie `inputChannel` de la couche précédente, la toile aval le
@@ -492,18 +500,35 @@ export function mixRgb(
 }
 
 /**
- * Couleur d'une activation sigmoïde : rouge à 0, gris neutre à 0,5, bleu à 1.
- * La valeur est bornée dans `[0, 1]` avant le mélange, donc une entrée hors
- * bornes prend la couleur de l'extrémité la plus proche.
+ * Couleur d'une activation : rouge à la borne basse, gris neutre au milieu,
+ * bleu à la borne haute. Sigmoïde : `[0, 1]`, milieu 0,5. Tanh : `[-1, 1]`,
+ * milieu 0. La valeur est bornée dans le domaine avant le mélange.
  */
-export function activationRgb(value: number): readonly [number, number, number] {
-  const t = clamp(value, 0, 1);
+export function activationRgb(
+  value: number,
+  activation: MnistCnnActivation = DEFAULT_MNIST_CNN_ACTIVATION,
+): readonly [number, number, number] {
+  const { min, max } = activationDomain(activation);
+  const t = (clamp(value, min, max) - min) / (max - min);
   if (t === 0.5) {
     return ACTIVATION_MID_RGB;
   }
   return t < 0.5
     ? mixRgb(ACTIVATION_LOW_RGB, ACTIVATION_MID_RGB, t * 2)
     : mixRgb(ACTIVATION_MID_RGB, ACTIVATION_HIGH_RGB, (t - 0.5) * 2);
+}
+
+/** Étiquettes des trois repères de l'échelle, dans le domaine de l'activation. */
+export function activationScaleLabels(
+  activation: MnistCnnActivation,
+): readonly [string, string, string] {
+  return activation === 'tanh' ? ['-1', '0', '1'] : ['0', '0,5', '1'];
+}
+
+/** Libellé accessible de l'échelle divergente pour une activation. */
+export function activationScaleAriaLabel(activation: MnistCnnActivation): string {
+  const [low, mid, high] = activationScaleLabels(activation);
+  return `Échelle des cartes : rouge à ${low}, gris à ${mid}, bleu à ${high}`;
 }
 
 /**
@@ -541,6 +566,8 @@ export interface TrainingRunInput {
   readonly validationPercent: number;
   readonly epochs: number;
   readonly weights: MnistCnnWeights;
+  /** Fonction d'activation des convolutions et de la couche dense cachée. */
+  readonly activation: MnistCnnActivation;
 }
 
 /**
@@ -559,6 +586,7 @@ export function trainingRunRequest(input: TrainingRunInput): MnistRunRequest {
     trainPercent: input.trainPercent,
     validationPercent: input.validationPercent,
     initialWeights: input.weights,
+    activation: input.activation,
   };
 }
 
@@ -817,6 +845,14 @@ export class MnistCnn extends LitElement {
       .drl-field-label {
         color: var(--drl-muted);
         font-size: 0.85em;
+      }
+
+      .drl-activation-field {
+        display: flex;
+        flex-direction: column;
+        gap: var(--drl-space-1);
+        margin-bottom: var(--drl-space-2);
+        max-width: 16rem;
       }
 
       select {
@@ -1134,6 +1170,10 @@ export class MnistCnn extends LitElement {
   @state()
   private filterCounts: MnistCnnFilters = DEFAULT_FILTER_COUNTS;
 
+  /** Fonction d'activation des convolutions et de la couche dense cachée. */
+  @state()
+  private activation: MnistCnnActivation = DEFAULT_MNIST_CNN_ACTIVATION;
+
   @state()
   private weights: MnistCnnWeights = initializeMnistCnnWeights(
     { filters: DEFAULT_FILTER_COUNTS },
@@ -1350,6 +1390,7 @@ export class MnistCnn extends LitElement {
   private get manifestMatches(): boolean {
     return (
       this.pretrainedAssets !== null &&
+      this.activation === 'sigmoid' &&
       sameFilters(this.pretrainedAssets.config.filters, this.filterCounts)
     );
   }
@@ -1544,8 +1585,7 @@ export class MnistCnn extends LitElement {
       const assets = parseMnistCnnManifestJson(text);
       this.pretrainedAssets = assets;
       this.manifestError = null;
-      const matches = sameFilters(assets.config.filters, this.filterCounts);
-      this.controller.notifyManifestChanged(matches);
+      this.controller.notifyManifestChanged(this.manifestMatches);
       if (this.trainingState === 'pretrained') {
         this.applyPretrainedWeights();
       }
@@ -1561,6 +1601,9 @@ export class MnistCnn extends LitElement {
    * manifeste ne doit jamais écraser des poids modifiés à la main.
    */
   private applyPretrainedWeights(): void {
+    if (this.activation !== 'sigmoid') {
+      return;
+    }
     if (this.weightsEdited) {
       return;
     }
@@ -1647,6 +1690,7 @@ export class MnistCnn extends LitElement {
       validationPercent: this.validationPercent,
       epochs,
       weights: this.weights,
+      activation: this.activation,
     });
     void this.controller
       .startRun(request)
@@ -1693,6 +1737,7 @@ export class MnistCnn extends LitElement {
   /** Poids à afficher pour l'architecture courante : pré-entraînés si possible. */
   private weightsForCurrentFilters(): MnistCnnWeights {
     if (
+      this.activation === 'sigmoid' &&
       this.pretrainedAssets !== null &&
       sameFilters(this.pretrainedAssets.config.filters, this.filterCounts)
     ) {
@@ -1744,6 +1789,28 @@ export class MnistCnn extends LitElement {
       return;
     }
     this.filterCounts = next;
+    this.weights = this.weightsForCurrentFilters();
+    this.clearSelection();
+    this.runInference();
+    this.resetMetrics();
+    void this.controller.notifySliderChanged(this.manifestMatches, true);
+  }
+
+  /** Change la fonction d'activation : arrête la run et reconstruit le modèle. */
+  private readonly handleActivationChange = (event: Event): void => {
+    const target = event.currentTarget;
+    if (!(target instanceof HTMLSelectElement)) {
+      return;
+    }
+    this.setActivation(target.value === 'tanh' ? 'tanh' : 'sigmoid');
+  };
+
+  /** Applique l'activation choisie et repart des poids déterministes. */
+  private setActivation(activation: MnistCnnActivation): void {
+    if (activation === this.activation) {
+      return;
+    }
+    this.activation = activation;
     this.weights = this.weightsForCurrentFilters();
     this.clearSelection();
     this.runInference();
@@ -1852,6 +1919,7 @@ export class MnistCnn extends LitElement {
   private runInference(): void {
     this.result = forwardMnistCnn(this.inputPixels, this.weights, {
       filters: this.filterCounts,
+      activation: this.activation,
     });
     this.canvasesDirty = true;
   }
@@ -2179,6 +2247,17 @@ export class MnistCnn extends LitElement {
     context.stroke();
   }
 
+  /** Biais d'un canal de sortie de la couche de convolution donnée. */
+  private filterBias(layer: number, channel: number): number {
+    const convWeights: readonly MnistCnnLayerWeights[] = [
+      this.weights.conv1,
+      this.weights.conv2,
+      this.weights.conv3,
+      this.weights.conv4,
+    ];
+    return convWeights[layer].bias[channel];
+  }
+
   private drawFilterCanvas(canvas: HTMLCanvasElement, layer: number, channel: number): void {
     const context = canvas.getContext('2d');
     if (!context) {
@@ -2244,7 +2323,10 @@ export class MnistCnn extends LitElement {
     }
     const image = scratch.createImageData(featureMap.width, featureMap.height);
     for (let index = 0; index < featureMap.width * featureMap.height; index += 1) {
-      const rgb = activationRgb(featureMap.values[index * featureMap.channels + channel]);
+      const rgb = activationRgb(
+        featureMap.values[index * featureMap.channels + channel],
+        this.activation,
+      );
       image.data[index * 4] = rgb[0];
       image.data[index * 4 + 1] = rgb[1];
       image.data[index * 4 + 2] = rgb[2];
@@ -2658,8 +2740,25 @@ export class MnistCnn extends LitElement {
         <div class="drl-filter-counts-body">
           <p class="drl-panel-subtitle">
             Chaque curseur arrête l'entraînement et reconstruit le modèle : poids pré-entraînés
-            (manifeste) si le tuple correspond, poids déterministes (graine ${SEED}) sinon.
+            (manifeste) si le tuple correspond, poids déterministes (graine ${SEED}) sinon. Le
+            choix de la fonction d'activation arrête aussi la run et reconstruit le modèle ; le
+            manifeste pré-entraîné ne s'applique qu'avec la sigmoïde, toute autre activation
+            repart des poids déterministes.
           </p>
+          <div class="drl-activation-field">
+            <label class="drl-field-label" for="drl-mnist-cnn-activation">
+              Fonction d'activation
+            </label>
+            <select
+              id="drl-mnist-cnn-activation"
+              aria-label="Fonction d'activation des convolutions et de la couche cachée"
+              .value=${this.activation}
+              @change=${this.handleActivationChange}
+            >
+              <option value="sigmoid">Sigmoïde</option>
+              <option value="tanh">tanh</option>
+            </select>
+          </div>
           <div
             class="drl-sliders"
             role="group"
@@ -2710,10 +2809,12 @@ export class MnistCnn extends LitElement {
                               width=${FILTER_CANVAS_SIZE}
                               height=${FILTER_CANVAS_SIZE}
                               role="img"
-                              aria-label="Filtre ${name}, canal de sortie ${channel + 1}"
+                              aria-label=${`Filtre ${name}, canal de sortie ${channel + 1}, biais ${formatValue(this.filterBias(layer, channel), 3)}`}
                               @pointerdown=${this.handleFilterCellClick}
                             ></canvas>
-                            <figcaption>sortie ${channel + 1}</figcaption>
+                            <figcaption>
+                              ${filterBiasCaption(channel, this.filterBias(layer, channel))}
+                            </figcaption>
                           </figure>
                         `,
                       )}
@@ -2729,16 +2830,16 @@ export class MnistCnn extends LitElement {
         <section class="drl-panel" aria-label="Cartes de caractéristiques">
           <h4 class="drl-panel-title">Cartes de caractéristiques</h4>
           <p class="drl-panel-subtitle">
-            Activations après sigmoïde ; rouge = 0, gris = 0,5, bleu = 1. Tailles : 26, 13, 11 puis 5.
+            Activations après ${this.activation === 'tanh' ? 'tanh' : 'sigmoïde'} ; rouge = ${activationScaleLabels(this.activation)[0]}, gris = ${activationScaleLabels(this.activation)[1]}, bleu = ${activationScaleLabels(this.activation)[2]}. Tailles : 26, 13, 11 puis 5.
           </p>
           <div
             class="drl-activation-scale"
             role="img"
-            aria-label="Échelle des cartes : rouge à 0, gris à 0,5, bleu à 1"
+            aria-label=${activationScaleAriaLabel(this.activation)}
           >
             <span class="drl-activation-scale-bar"></span>
             <span class="drl-activation-scale-labels" aria-hidden="true">
-              <span>0</span><span>0,5</span><span>1</span>
+              ${activationScaleLabels(this.activation).map((label) => html`<span>${label}</span>`)}
             </span>
           </div>
           ${

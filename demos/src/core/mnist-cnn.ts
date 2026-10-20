@@ -13,8 +13,17 @@
 
 export type MnistCnnFilters = readonly [number, number, number, number];
 
+/** Fonction d'activation des couches de convolution et de la couche cachée. */
+export type MnistCnnActivation = 'sigmoid' | 'tanh';
+
 export interface MnistCnnConfig {
   readonly filters: MnistCnnFilters;
+  /**
+   * Fonction d'activation des convolutions et de la couche dense cachée.
+   * La valeur par défaut est `DEFAULT_MNIST_CNN_ACTIVATION`. La couche de
+   * logits reste linéaire dans les deux cas.
+   */
+  readonly activation?: MnistCnnActivation;
 }
 
 /** Poids d'une couche : noyau à plat plus biais. */
@@ -43,7 +52,7 @@ export interface MnistCnnFeatureMap {
 
 export interface MnistCnnForwardResult {
   readonly featureMaps: readonly MnistCnnFeatureMap[];
-  /** Activations de la couche dense cachée (après sigmoïde), longueur 8. */
+  /** Activations de la couche dense cachée (après la fonction choisie), longueur 8. */
   readonly hidden: Float32Array;
   readonly logits: Float32Array;
   readonly probabilities: Float32Array;
@@ -92,6 +101,22 @@ function sigmoid(value: number): number {
   return 1 / (1 + Math.exp(-value));
 }
 
+/** Fonction d'activation par défaut, celle des poids pré-entraînés du manifeste. */
+export const DEFAULT_MNIST_CNN_ACTIVATION: MnistCnnActivation = 'sigmoid';
+
+/** Bornes de sortie d'une fonction d'activation. */
+export function activationDomain(activation: MnistCnnActivation): {
+  readonly min: number;
+  readonly max: number;
+} {
+  return activation === 'tanh' ? { min: -1, max: 1 } : { min: 0, max: 1 };
+}
+
+/** Applique la fonction d'activation choisie à une pré-activation. */
+export function applyMnistActivation(value: number, activation: MnistCnnActivation): number {
+  return activation === 'tanh' ? Math.tanh(value) : sigmoid(value);
+}
+
 /** Taille de sortie d'une convolution : floor((n + 2·p − k) / s) + 1. */
 export function convOutputLength(inputLength: number, stride: number, padding: number): number {
   return Math.floor((inputLength + 2 * padding - CONV_KERNEL_SIZE) / stride) + 1;
@@ -115,6 +140,15 @@ export function validateFilterCounts(filters: MnistCnnFilters): void {
 function validateConfig(config: MnistCnnConfig): void {
   if (config === null || typeof config !== 'object') {
     throw new TypeError('MNIST CNN config with a filters tuple is required.');
+  }
+  if (
+    config.activation !== undefined &&
+    config.activation !== 'sigmoid' &&
+    config.activation !== 'tanh'
+  ) {
+    throw new RangeError(
+      `MNIST CNN activation must be "sigmoid" or "tanh", received ${String(config.activation)}.`,
+    );
   }
 }
 
@@ -413,13 +447,15 @@ export function contributingTaps(
 }
 
 /**
- * Convolution 3×3 + sigmoïde sur une carte carrée NHWC. Le remplissage est
- * traité implicitement : les coordonnées hors carte contribuent zéro.
+ * Convolution 3×3 + fonction d'activation choisie sur une carte carrée NHWC.
+ * Le remplissage est traité implicitement : les coordonnées hors carte
+ * contribuent zéro.
  */
 function convolve(
   input: Float32Array,
   plan: ConvLayerPlan,
   layer: MnistCnnLayerWeights,
+  activation: MnistCnnActivation,
 ): Float32Array {
   const { inputSize, outputSize, inputChannels, outputChannels, stride, padding } = plan;
   const values = new Float32Array(outputSize * outputSize * outputChannels);
@@ -444,19 +480,25 @@ function convolve(
             }
           }
         }
-        values[(oy * outputSize + ox) * outputChannels + oc] = sigmoid(sum);
+        values[(oy * outputSize + ox) * outputChannels + oc] = applyMnistActivation(
+          sum,
+          activation,
+        );
       }
     }
   }
   return values;
 }
 
-/** Couche entièrement connectée à plat [inputFeature][outputFeature]. */
+/**
+ * Couche entièrement connectée à plat [inputFeature][outputFeature].
+ * `activation` nul laisse la sortie linéaire (couche de logits).
+ */
 function denseLayer(
   input: Float32Array,
   layer: MnistCnnLayerWeights,
   outputCount: number,
-  applySigmoid: boolean,
+  activation: MnistCnnActivation | null,
 ): Float32Array {
   const output = new Float32Array(outputCount);
   for (let o = 0; o < outputCount; o += 1) {
@@ -464,7 +506,7 @@ function denseLayer(
     for (let i = 0; i < input.length; i += 1) {
       sum += layer.kernel[i * outputCount + o] * input[i];
     }
-    output[o] = applySigmoid ? sigmoid(sum) : sum;
+    output[o] = activation === null ? sum : applyMnistActivation(sum, activation);
   }
   return output;
 }
@@ -569,7 +611,8 @@ export function mnistCnnParameterCount(filters: MnistCnnFilters = DEFAULT_FILTER
 /**
  * Passage forward complet sur une image 28×28×1 (Float32Array de 784 valeurs
  * en ordre row-major, normalisée). Retourne les cartes de caractéristiques de
- * chaque convolution (après sigmoïde), les activations cachées (8), les logits
+ * chaque convolution et les activations cachées (8), toutes deux après la
+ * fonction d'activation choisie (sigmoïde par défaut), les logits linéaires
  * (10) et les probabilités softmax (10).
  */
 export function forwardMnistCnn(
@@ -580,6 +623,7 @@ export function forwardMnistCnn(
   validateConfig(config);
   validateInput(input);
   validateWeights(weights, config.filters);
+  const selectedActivation = config.activation ?? DEFAULT_MNIST_CNN_ACTIVATION;
   const plans = convLayerPlans(config.filters);
   const convLayers: readonly MnistCnnLayerWeights[] = [
     weights.conv1,
@@ -591,7 +635,7 @@ export function forwardMnistCnn(
   let activation: Float32Array = input;
   for (let layer = 0; layer < plans.length; layer += 1) {
     const plan = plans[layer];
-    const values = convolve(activation, plan, convLayers[layer]);
+    const values = convolve(activation, plan, convLayers[layer], selectedActivation);
     featureMaps.push({
       name: plan.name,
       height: plan.outputSize,
@@ -601,7 +645,7 @@ export function forwardMnistCnn(
     });
     activation = values;
   }
-  const hidden = denseLayer(activation, weights.dense1, HIDDEN_DENSE_SIZE, true);
-  const logits = denseLayer(hidden, weights.dense2, LOGIT_COUNT, false);
+  const hidden = denseLayer(activation, weights.dense1, HIDDEN_DENSE_SIZE, selectedActivation);
+  const logits = denseLayer(hidden, weights.dense2, LOGIT_COUNT, null);
   return { featureMaps, hidden, logits, probabilities: softmax(logits) };
 }
