@@ -550,6 +550,27 @@ describe('cancellation', () => {
     expect(result.validationLoss).toBeNull();
     expect(result.validationAccuracy).toBeNull();
   });
+
+  it('skips the epoch-end flush when cancellation arrives before the end of the epoch', async () => {
+    const trainer = await makeTrainer(SMALL_FILTERS, { batchSize: 2 });
+    // `lossSampleEvery: 3` : la fenêtre n'est jamais pleine pendant le seul lot
+    // traité avant l'annulation. Avant la correction, la vidange de fin d'époque
+    // remplaçait la perte indéfinie par la moyenne de la fenêtre partielle.
+    const result = await trainer.train({
+      train: makeSource(10),
+      epochs: 1,
+      lossSampleEvery: 3,
+      progressIntervalMs: 0,
+      onProgress: (progress) => {
+        if (progress.status === 'running' && progress.batchesProcessed === 1) {
+          void trainer.cancel();
+        }
+      },
+    });
+    expect(result.status).toBe('cancelled');
+    expect(result.batchesProcessed).toBe(1);
+    expect(Number.isNaN(result.loss)).toBe(true);
+  });
 });
 
 describe('reset and disposal', () => {

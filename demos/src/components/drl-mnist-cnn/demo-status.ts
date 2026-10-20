@@ -113,7 +113,9 @@ export function statusLine(input: DemoStatusInput): string {
       `lots : ${input.batchesProcessed}`,
       `perte : ${formatLoss(input.loss)}`,
       `précision validation (sous-ensemble) : ${
-        input.validationAccuracy === null ? '–' : formatPercent(input.validationAccuracy * 100)
+        input.validationAccuracy === null || !Number.isFinite(input.validationAccuracy)
+          ? '–'
+          : formatPercent(input.validationAccuracy * 100)
       }`,
       `temps : ${formatSeconds(input.elapsedMs)}`,
     );

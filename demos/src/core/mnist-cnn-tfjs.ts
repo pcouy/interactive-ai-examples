@@ -699,10 +699,18 @@ export class MnistCnnTfjsTrainer {
             next += 1;
           }
         }
+        // Une annulation pendant l'époque saute la vidange de la fenêtre de perte,
+        // la validation, l'incrément d'époque et l'évènement de fin d'époque : le
+        // bloc `finally` libère la fenêtre en attente. Une annulation pendant
+        // `await this.readPendingLoss()` de la vidange est rattrapée par la
+        // vérification qui suit celle-ci.
+        if (this.cancelled) {
+          status = 'cancelled';
+          break;
+        }
         // Fin d'époque : on vide la fenêtre de perte, on valide sur le sous-ensemble
         // tenu à l'écart, puis on émet un évènement qui porte les trois mesures de
-        // l'époque — même si l'intervalle n'est pas écoulé. Une annulation pendant
-        // la validation laisse l'époque non achevée : ni validation, ni incrément.
+        // l'époque — même si l'intervalle n'est pas écoulé.
         const windowBatches = this.pendingCosts.length;
         const epochEndLoss = await this.readPendingLoss();
         if (epochEndLoss !== null) {
