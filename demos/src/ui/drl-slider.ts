@@ -29,6 +29,7 @@ export class DrlSlider extends LitElement {
       input[type='range'] {
         accent-color: var(--drl-accent);
         flex: 1;
+        min-width: 0;
       }
 
       .drl-slider-value {

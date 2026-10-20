@@ -117,6 +117,12 @@ export {
  * affichent la perte d'entraînement et la précision de validation, un point par
  * époque achevée.
  *
+ * Mise en page : la colonne de gauche réunit le dessin, la galerie et le panneau
+ * d'entraînement ; la colonne de droite réunit les probabilités par classe et les
+ * deux courbes. Les curseurs de nombre de filtres vivent dans une section
+ * repliable au-dessus des panneaux de filtres et de cartes de caractéristiques,
+ * qui passent côte à côte au-delà de 920 px.
+ *
  * La machine à états de l'entraînement vit dans `training-state.ts` : toute
  * transition qui met fin à une run fait retomber le badge sur un état inactif.
  * La sélection de l'éditeur de poids — geste, vue des toiles, libellé, valeur du
@@ -592,11 +598,66 @@ export class MnistCnn extends LitElement {
         }
       }
 
+      .drl-mnist-left {
+        display: grid;
+        gap: var(--drl-space-3);
+        align-content: start;
+        min-width: 0;
+      }
+
+      .drl-filter-counts {
+        margin-top: var(--drl-space-3);
+        padding: var(--drl-space-3);
+        background: var(--drl-bg);
+        border: 1px solid var(--drl-border);
+        border-radius: var(--drl-radius);
+      }
+
+      .drl-filter-counts > summary {
+        display: flex;
+        align-items: center;
+        gap: var(--drl-space-2);
+        cursor: pointer;
+        list-style: none;
+        padding: 0;
+      }
+
+      .drl-filter-counts > summary::-webkit-details-marker {
+        display: none;
+      }
+
+      .drl-filter-counts > summary::before {
+        content: '▸';
+        display: inline-block;
+        color: var(--drl-muted);
+        transition: transform 120ms ease;
+      }
+
+      .drl-filter-counts[open] > summary {
+        margin-bottom: var(--drl-space-2);
+      }
+
+      .drl-filter-counts[open] > summary::before {
+        transform: rotate(90deg);
+      }
+
+      .drl-filter-counts-body {
+        display: grid;
+        gap: var(--drl-space-2);
+        align-content: start;
+      }
+
       .drl-panels-row {
         display: grid;
-        grid-template-columns: repeat(auto-fit, minmax(240px, minmax(0, 1fr)));
+        grid-template-columns: repeat(2, minmax(0, 1fr));
         gap: var(--drl-space-3);
         margin-top: var(--drl-space-3);
+      }
+
+      @media (max-width: 920px) {
+        .drl-panels-row {
+          grid-template-columns: minmax(0, 1fr);
+        }
       }
 
       .drl-panel {
@@ -2155,80 +2216,163 @@ export class MnistCnn extends LitElement {
     const result = this.result;
     return html`
       <div class="drl-mnist-layout">
-        <section class="drl-panel" aria-label="Zone de dessin et choix de l'entrée">
-          <h4 class="drl-panel-title">Dessin 28×28</h4>
-          <canvas
-            class="drl-canvas drl-canvas--input"
-            width=${INPUT_CANVAS_SIZE}
-            height=${INPUT_CANVAS_SIZE}
-            role="img"
-            aria-label="Surface de dessin 28 par 28 pixels pour un chiffre MNIST"
-            @pointerdown=${this.onDrawPointerDown}
-            @pointermove=${this.onDrawPointerMove}
-            @pointerup=${this.onDrawPointerUp}
-            @pointercancel=${this.onDrawPointerUp}
-          ></canvas>
-          <p class="drl-hint">${this.inputHint}</p>
-          <div class="drl-field">
-            <label class="drl-field-label" for="drl-mnist-cnn-sample">Exemple MNIST</label>
-            <select
-              id="drl-mnist-cnn-sample"
-              aria-label="Choisir un exemple MNIST de la galerie"
-              @click=${this.handleSampleSelectorOpen}
-              @change=${this.handleGallerySelect}
-            >
+        <div class="drl-mnist-left">
+          <section class="drl-panel" aria-label="Zone de dessin et choix de l'entrée">
+            <h4 class="drl-panel-title">Dessin 28×28</h4>
+            <canvas
+              class="drl-canvas drl-canvas--input"
+              width=${INPUT_CANVAS_SIZE}
+              height=${INPUT_CANVAS_SIZE}
+              role="img"
+              aria-label="Surface de dessin 28 par 28 pixels pour un chiffre MNIST"
+              @pointerdown=${this.onDrawPointerDown}
+              @pointermove=${this.onDrawPointerMove}
+              @pointerup=${this.onDrawPointerUp}
+              @pointercancel=${this.onDrawPointerUp}
+            ></canvas>
+            <p class="drl-hint">${this.inputHint}</p>
+            <div class="drl-field">
+              <label class="drl-field-label" for="drl-mnist-cnn-sample">Exemple MNIST</label>
+              <select
+                id="drl-mnist-cnn-sample"
+                aria-label="Choisir un exemple MNIST de la galerie"
+                @click=${this.handleSampleSelectorOpen}
+                @change=${this.handleGallerySelect}
+              >
+                ${
+                  this.galleryLoading
+                    ? html`<option>Chargement de la galerie…</option>`
+                    : this.gallerySample === null
+                      ? html`<option value="">Charger la galerie MNIST…</option>`
+                      : repeat(
+                          Array.from({ length: MNIST_CLASS_COUNT }, (_unused, digit) => digit),
+                          (digit) => digit,
+                          (digit) =>
+                            html`<option value=${digit} ?selected=${digit === this.galleryClass}>
+                              Chiffre ${digit}
+                            </option>`,
+                        )
+                }
+              </select>
               ${
-                this.galleryLoading
-                  ? html`<option>Chargement de la galerie…</option>`
-                  : this.gallerySample === null
-                    ? html`<option value="">Charger la galerie MNIST…</option>`
-                    : repeat(
-                        Array.from({ length: MNIST_CLASS_COUNT }, (_unused, digit) => digit),
-                        (digit) => digit,
-                        (digit) =>
-                          html`<option value=${digit} ?selected=${digit === this.galleryClass}>
-                            Chiffre ${digit}
-                          </option>`,
-                      )
+                this.galleryError !== null
+                  ? html`<p class="drl-hint">Galerie indisponible : ${this.galleryError}</p>`
+                  : nothing
               }
-            </select>
-            ${
-              this.galleryError !== null
-                ? html`<p class="drl-hint">Galerie indisponible : ${this.galleryError}</p>`
-                : nothing
-            }
-          </div>
-          <div
-            class="drl-toolbar"
-            role="group"
-            aria-label="Parcourir les exemples du chiffre choisi"
-          >
-            <button
-              type="button"
-              class="drl-button"
-              ?disabled=${this.galleryLoading}
-              @click=${this.handleGalleryPrevious}
+            </div>
+            <div
+              class="drl-toolbar"
+              role="group"
+              aria-label="Parcourir les exemples du chiffre choisi"
             >
-              ← Précédent
-            </button>
-            <span class="drl-gallery-counter">${this.galleryCounterText}</span>
-            <button
-              type="button"
-              class="drl-button"
-              ?disabled=${this.galleryLoading}
-              @click=${this.handleGalleryNext}
-            >
-              Suivant →
-            </button>
-          </div>
-          <div class="drl-toolbar">
-            <button type="button" class="drl-button" @click=${this.handleClearDrawing}>
-              Effacer
-            </button>
-          </div>
-        </section>
+              <button
+                type="button"
+                class="drl-button"
+                ?disabled=${this.galleryLoading}
+                @click=${this.handleGalleryPrevious}
+              >
+                ← Précédent
+              </button>
+              <span class="drl-gallery-counter">${this.galleryCounterText}</span>
+              <button
+                type="button"
+                class="drl-button"
+                ?disabled=${this.galleryLoading}
+                @click=${this.handleGalleryNext}
+              >
+                Suivant →
+              </button>
+            </div>
+            <div class="drl-toolbar">
+              <button type="button" class="drl-button" @click=${this.handleClearDrawing}>
+                Effacer
+              </button>
+            </div>
+          </section>
 
-        <section class="drl-panel" aria-label="Probabilités et réglages du modèle">
+          <section class="drl-panel" aria-label="Entraînement du modèle">
+            <h4 class="drl-panel-title">Entraînement</h4>
+            <p class="drl-panel-subtitle">
+              TensorFlow.js est chargé au premier clic sur un bouton d'entraînement, ainsi que les
+              exemples MNIST locaux. L'entraînement repart toujours des poids affichés :
+              pré-entraînés, aléatoires ou modifiés à la main. « Entraîner 1 époque » fait une
+              passe ; « Entraîner en boucle » enchaîne les époques jusqu'à Pause. La précision
+              affichée est celle du sous-ensemble de validation tenu à l'écart, pas celle du jeu
+              complet.
+            </p>
+            <div class="drl-toolbar" role="group" aria-label="Lancer et contrôler l'entraînement">
+              <button
+                type="button"
+                class="drl-button drl-primary"
+                ?disabled=${isTrainingActive(this.trainingState)}
+                @click=${this.handleStartTraining}
+              >
+                Entraîner 1 époque
+              </button>
+              <button
+                type="button"
+                class="drl-button"
+                ?disabled=${isTrainingActive(this.trainingState)}
+                @click=${this.handleStartLoopTraining}
+              >
+                Entraîner en boucle
+              </button>
+              <button
+                type="button"
+                class="drl-button"
+                ?disabled=${!isTrainingActive(this.trainingState)}
+                @click=${this.handlePauseTraining}
+              >
+                Pause
+              </button>
+              <button type="button" class="drl-button" @click=${this.handleResetWeights}>
+                Réinitialiser les poids
+              </button>
+              <button type="button" class="drl-button" @click=${this.handleRandomResetWeights}>
+                Poids aléatoires
+              </button>
+            </div>
+            <div
+              class="drl-sliders"
+              role="group"
+              aria-label="Fraction des jeux d'entraînement et de validation, taux d'apprentissage"
+            >
+              <drl-slider
+                label="Données d'entraînement"
+                min=${MIN_PERCENT}
+                max=${MAX_PERCENT}
+                step="1"
+                .value=${this.trainPercent}
+                @drl-input=${(event: CustomEvent<number>) => this.setTrainPercent(event.detail)}
+              ></drl-slider>
+              <drl-slider
+                label="Validation"
+                min=${MIN_PERCENT}
+                max=${MAX_PERCENT}
+                step="1"
+                .value=${this.validationPercent}
+                @drl-input=${(event: CustomEvent<number>) => this.setValidationPercent(event.detail)}
+              ></drl-slider>
+              <drl-slider
+                label="Taux d'apprentissage"
+                min=${MIN_LEARNING_RATE}
+                max=${MAX_LEARNING_RATE}
+                step="0.0005"
+                .value=${this.learningRate}
+                @drl-input=${(event: CustomEvent<number>) => this.setLearningRate(event.detail)}
+              ></drl-slider>
+            </div>
+            <p class="drl-hint">
+              ${
+                this.trainingError !== null
+                  ? html`Erreur d'entraînement : ${this.trainingError}`
+                  : "Les curseurs de pourcentage et le taux ne prennent effet qu'au prochain entraînement."
+              }
+            </p>
+          </section>
+        </div>
+
+        <section class="drl-panel" aria-label="Probabilités et courbes d'entraînement">
           <h4 class="drl-panel-title">Résultats</h4>
           <div class="drl-stats">
             <div class="drl-stat">
@@ -2274,7 +2418,16 @@ export class MnistCnn extends LitElement {
             }
           </div>
 
-          <h4 class="drl-panel-title">Filtres par couche</h4>
+          <div class="drl-charts">
+            ${this.renderTrainingChart(this.lossLayout, 'drl-chart-line--loss')}
+            ${this.renderTrainingChart(this.accuracyLayout, 'drl-chart-line--accuracy')}
+          </div>
+        </section>
+      </div>
+
+      <details class="drl-filter-counts" open>
+        <summary><h4 class="drl-panel-title">Filtres par couche</h4></summary>
+        <div class="drl-filter-counts-body">
           <p class="drl-panel-subtitle">
             Chaque curseur arrête l'entraînement et reconstruit le modèle : poids pré-entraînés
             (manifeste) si le tuple correspond, poids déterministes (graine ${SEED}) sinon.
@@ -2300,91 +2453,8 @@ export class MnistCnn extends LitElement {
               `,
             )}
           </div>
-
-          <h4 class="drl-panel-title">Entraînement</h4>
-          <p class="drl-panel-subtitle">
-            TensorFlow.js est chargé au premier clic sur un bouton d'entraînement, ainsi que les
-            exemples MNIST locaux. L'entraînement repart toujours des poids affichés :
-            pré-entraînés, aléatoires ou modifiés à la main. « Entraîner 1 époque » fait une
-            passe ; « Entraîner en boucle » enchaîne les époques jusqu'à Pause. La précision
-            affichée est celle du sous-ensemble de validation tenu à l'écart, pas celle du jeu
-            complet.
-          </p>
-          <div class="drl-toolbar">
-            <button
-              type="button"
-              class="drl-button drl-primary"
-              ?disabled=${isTrainingActive(this.trainingState)}
-              @click=${this.handleStartTraining}
-            >
-              Entraîner 1 époque
-            </button>
-            <button
-              type="button"
-              class="drl-button"
-              ?disabled=${isTrainingActive(this.trainingState)}
-              @click=${this.handleStartLoopTraining}
-            >
-              Entraîner en boucle
-            </button>
-            <button
-              type="button"
-              class="drl-button"
-              ?disabled=${!isTrainingActive(this.trainingState)}
-              @click=${this.handlePauseTraining}
-            >
-              Pause
-            </button>
-            <button type="button" class="drl-button" @click=${this.handleResetWeights}>
-              Réinitialiser les poids
-            </button>
-            <button type="button" class="drl-button" @click=${this.handleRandomResetWeights}>
-              Poids aléatoires
-            </button>
-          </div>
-          <div class="drl-charts">
-            ${this.renderTrainingChart(this.lossLayout, 'drl-chart-line--loss')}
-            ${this.renderTrainingChart(this.accuracyLayout, 'drl-chart-line--accuracy')}
-          </div>
-          <div
-            class="drl-sliders"
-            role="group"
-            aria-label="Fraction des jeux d'entraînement et de validation, taux d'apprentissage"
-          >
-            <drl-slider
-              label="Données d'entraînement"
-              min=${MIN_PERCENT}
-              max=${MAX_PERCENT}
-              step="1"
-              .value=${this.trainPercent}
-              @drl-input=${(event: CustomEvent<number>) => this.setTrainPercent(event.detail)}
-            ></drl-slider>
-            <drl-slider
-              label="Validation"
-              min=${MIN_PERCENT}
-              max=${MAX_PERCENT}
-              step="1"
-              .value=${this.validationPercent}
-              @drl-input=${(event: CustomEvent<number>) => this.setValidationPercent(event.detail)}
-            ></drl-slider>
-            <drl-slider
-              label="Taux d'apprentissage"
-              min=${MIN_LEARNING_RATE}
-              max=${MAX_LEARNING_RATE}
-              step="0.0005"
-              .value=${this.learningRate}
-              @drl-input=${(event: CustomEvent<number>) => this.setLearningRate(event.detail)}
-            ></drl-slider>
-          </div>
-          <p class="drl-hint">
-            ${
-              this.trainingError !== null
-                ? html`Erreur d'entraînement : ${this.trainingError}`
-                : "Les curseurs de pourcentage et le taux ne prennent effet qu'au prochain entraînement."
-            }
-          </p>
-        </section>
-      </div>
+        </div>
+      </details>
 
       <div class="drl-panels-row">
         <section class="drl-panel drl-panel--filters" aria-label="Filtres de convolution">
