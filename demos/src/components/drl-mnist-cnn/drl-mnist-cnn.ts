@@ -432,6 +432,11 @@ export function denseLayerTitle(index: number, total: number, units: number): st
   return index === total - 1 ? `Sortie — ${units} classes` : `Dense ${index + 1} — ${units} unités`;
 }
 
+/** Colonnes d'un paquet d'activations pour rester compact quelle que soit sa taille. */
+export function densePackColumns(size: number): number {
+  return Math.max(4, Math.ceil(Math.sqrt(size * 2)));
+}
+
 /** Libellé du curseur de largeur d'une couche dense cachée. */
 export function denseSizeLabel(layer: number): string {
   return `Unités de la couche dense ${layer + 1}`;
@@ -1152,7 +1157,6 @@ export class MnistCnn extends LitElement {
 
       .drl-dense-pack {
         display: grid;
-        grid-template-columns: repeat(4, 1fr);
         gap: 2px;
         width: 8rem;
         margin: 0;
@@ -2711,7 +2715,12 @@ export class MnistCnn extends LitElement {
           return html`
             <div class="drl-dense-layer">
               <p class="drl-dense-title">${title}</p>
-              <ul class="drl-dense-pack" role="list" aria-label=${`Activations de ${title}`}>
+              <ul
+                class="drl-dense-pack"
+                role="list"
+                aria-label=${`Activations de ${title}`}
+                style=${`grid-template-columns: repeat(${densePackColumns(values.length)}, 1fr)`}
+              >
                 ${Array.from(values, (value, unit) => {
                   const rgb = rgbOf(value);
                   return html`
@@ -2996,7 +3005,7 @@ export class MnistCnn extends LitElement {
             modèle ; le manifeste pré-entraîné ne s'applique qu'à la profondeur de référence (quatre
             convolutions, deux couches denses) et avec la sigmoïde, toute autre configuration repart
             des poids déterministes. Les curseurs de largeur règlent les unités de chaque couche dense
-            cachée (1 à 32) et arrêtent la run ; le manifeste exige la largeur de référence, soit une
+            cachée (1 à 128) et arrêtent la run ; le manifeste exige la largeur de référence, soit une
             couche cachée de 8 unités.
           </p>
           <div class="drl-sliders" role="group" aria-label="Profondeur du réseau">

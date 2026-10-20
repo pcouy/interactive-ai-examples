@@ -15,6 +15,7 @@ import {
   convLayerGeometry,
   denseCellLabel,
   denseLayerTitle,
+  densePackColumns,
   denseSizeLabel,
   describeLinkLabel,
   describeWeightSelection,
@@ -298,6 +299,15 @@ describe('dense size labels', () => {
   it('shows the chosen width in the layer title', () => {
     expect(denseLayerTitle(0, 3, 7)).toBe('Dense 1 — 7 unités');
     expect(denseLayerTitle(2, 3, 10)).toBe('Sortie — 10 classes');
+  });
+});
+
+describe('dense pack columns', () => {
+  it('scales the column count with the pack size', () => {
+    expect(densePackColumns(1)).toBe(4);
+    expect(densePackColumns(8)).toBe(4);
+    expect(densePackColumns(32)).toBe(8);
+    expect(densePackColumns(128)).toBe(16);
   });
 });
 
