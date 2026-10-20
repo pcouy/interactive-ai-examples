@@ -72,9 +72,9 @@ Un jeu segmenté écrit :
 - `<split>-c<C>-s<NN>.idx.gz`, les images par classe et par fragment de 1 000 ;
 - `gallery.idx.gz` et `gallery-labels-idx1-ubyte.gz`, la galerie.
 
-Tous ces fichiers sont générés par les commandes ci-dessus. Les archives `.gz` et le
-dossier `.cache/` sont ignorés par Git. Le descripteur `index.json` est généré lui aussi ;
-seul celui de QuickDraw est aujourd'hui versionné.
+Tous ces fichiers sont générés par les trois commandes ci-dessus. Les fichiers `.gz` et
+chaque `index.json` sont ignorés par Git, tout comme le dossier `.cache/`. La source de
+vérité sur un clone est la commande, pas les fichiers.
 
 ## Chargement dans le navigateur
 
