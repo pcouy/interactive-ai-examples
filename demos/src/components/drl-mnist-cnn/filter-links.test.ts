@@ -58,9 +58,32 @@ describe('enumerateLinks', () => {
     expect(links[7]).toEqual({ boundary: 2, inputChannel: 1, outputChannel: 2 });
   });
 
+  it('enumerates the maximum filter count on every boundary', () => {
+    const links = enumerateLinks([8, 8, 8, 8]);
+    // Trois frontières actives, chacune 8 canaux d'entrée × 8 de sortie = 64.
+    // Total 64 + 64 + 64 = 192.
+    expect(links).toHaveLength(192);
+    expect(links.filter((link) => link.boundary === 1)).toHaveLength(64);
+    expect(links.filter((link) => link.boundary === 2)).toHaveLength(64);
+    expect(links.filter((link) => link.boundary === 3)).toHaveLength(64);
+    expect(links[0]).toEqual({ boundary: 1, inputChannel: 0, outputChannel: 0 });
+    expect(links[64]).toEqual({ boundary: 2, inputChannel: 0, outputChannel: 0 });
+    expect(links[191]).toEqual({ boundary: 3, inputChannel: 7, outputChannel: 7 });
+  });
+
+  it('stops at the active depth for the maximum filter count', () => {
+    const links = enumerateLinks([8, 8, 8, 8], 2);
+    // Deux couches actives : seule la frontière 1 reste, 8 × 8 = 64.
+    expect(links).toHaveLength(64);
+    expect(links.filter((link) => link.boundary === 1)).toHaveLength(64);
+    expect(links.some((link) => link.boundary === 2)).toBe(false);
+    expect(links[0]).toEqual({ boundary: 1, inputChannel: 0, outputChannel: 0 });
+    expect(links[63]).toEqual({ boundary: 1, inputChannel: 7, outputChannel: 7 });
+  });
+
   it('rejects an invalid filter tuple', () => {
     expect(() => enumerateLinks([0, 3, 3, 3] as MnistCnnFilters)).toThrow(RangeError);
-    expect(() => enumerateLinks([3, 3, 3, 5] as MnistCnnFilters)).toThrow(RangeError);
+    expect(() => enumerateLinks([9, 3, 3, 3] as MnistCnnFilters)).toThrow(RangeError);
     expect(() => enumerateLinks([3, 3, 3] as unknown as MnistCnnFilters)).toThrow(RangeError);
   });
 

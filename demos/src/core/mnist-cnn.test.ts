@@ -15,6 +15,8 @@ import {
   LOGIT_COUNT,
   MAX_CONV_LAYERS,
   MAX_DENSE_LAYERS,
+  MAX_FILTER_COUNT,
+  MIN_FILTER_COUNT,
   MNIST_INPUT_LENGTH,
   MNIST_INPUT_SIZE,
   type MnistCnnConfig,
@@ -24,6 +26,7 @@ import {
   mnistCnnParameterCount,
   softmax,
   validateDenseSizes,
+  validateFilterCounts,
   withKernelWeight,
 } from './mnist-cnn.js';
 
@@ -295,9 +298,35 @@ describe('initializeMnistCnnWeights', () => {
     ).toBe(true);
   });
 
+  it('accepts the maximum filter count of every layer', () => {
+    const config = configWith([
+      MAX_FILTER_COUNT,
+      MAX_FILTER_COUNT,
+      MAX_FILTER_COUNT,
+      MAX_FILTER_COUNT,
+    ]);
+    const weights = initializeMnistCnnWeights(config, 1);
+    expect(weights.conv).toHaveLength(4);
+    expect(weights.conv.map((layer) => layer.bias)).toEqual([
+      new Float32Array(MAX_FILTER_COUNT),
+      new Float32Array(MAX_FILTER_COUNT),
+      new Float32Array(MAX_FILTER_COUNT),
+      new Float32Array(MAX_FILTER_COUNT),
+    ]);
+    // Quatre convolutions, pas et remplissage du planning de référence :
+    // 28 -> 26 -> 13 -> 11 -> 5. Canaux 1 -> 8 -> 8 -> 8 -> 8.
+    // conv : (9·1·8+8) + (9·8·8+8) + (9·8·8+8) + (9·8·8+8)
+    //      = 80 + 584 + 584 + 584 = 1832.
+    // dense : entrée 5·5·8 = 200 ; 200·8+8 + 8·10+10 = 1608 + 90 = 1698.
+    // total : 1832 + 1698 = 3530.
+    expect(mnistCnnParameterCount(config)).toBe(3530);
+  });
+
   it('rejects invalid filter counts', () => {
     expect(() => initializeMnistCnnWeights(configWith([0, 3, 3, 3]), 1)).toThrow(/filter count/i);
-    expect(() => initializeMnistCnnWeights(configWith([3, 3, 3, 5]), 1)).toThrow(/filter count/i);
+    expect(() => initializeMnistCnnWeights(configWith([MAX_FILTER_COUNT + 1, 3, 3, 3]), 1)).toThrow(
+      /filter count/i,
+    );
     expect(() => initializeMnistCnnWeights(configWith([2.5, 3, 3, 3]), 1)).toThrow(/integer/i);
     expect(() =>
       initializeMnistCnnWeights(configWith([3, 3, 3] as unknown as MnistCnnFilters), 1),
@@ -305,6 +334,14 @@ describe('initializeMnistCnnWeights', () => {
     expect(() => initializeMnistCnnWeights(undefined as unknown as MnistCnnConfig, 1)).toThrow(
       TypeError,
     );
+  });
+
+  it('validates the filter count bounds directly', () => {
+    expect(MIN_FILTER_COUNT).toBe(1);
+    expect(MAX_FILTER_COUNT).toBe(8);
+    expect(() => validateFilterCounts([8, 8, 8, 8])).not.toThrow();
+    expect(() => validateFilterCounts([9, 3, 3, 3])).toThrow(RangeError);
+    expect(() => validateFilterCounts([1, 1, 1, 1])).not.toThrow();
   });
 
   it('rejects layer counts outside the supported ranges', () => {
@@ -1081,7 +1118,7 @@ describe('validation', () => {
     expect(() => forwardMnistCnn(constantInput(0.5), weights, mismatched)).toThrow(
       /conv1 kernel must have 9/,
     );
-    expect(() => forwardMnistCnn(constantInput(0.5), weights, configWith([3, 3, 3, 5]))).toThrow(
+    expect(() => forwardMnistCnn(constantInput(0.5), weights, configWith([3, 3, 3, 9]))).toThrow(
       /filter count/i,
     );
     expect(() =>

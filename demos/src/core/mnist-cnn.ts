@@ -87,7 +87,7 @@ export const DEFAULT_DENSE_SIZES: readonly [number, number] = [
 ];
 
 export const MIN_FILTER_COUNT = 1;
-export const MAX_FILTER_COUNT = 4;
+export const MAX_FILTER_COUNT = 8;
 
 export const DEFAULT_FILTER_COUNTS: MnistCnnFilters = [3, 3, 3, 3];
 
