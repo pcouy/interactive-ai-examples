@@ -4,7 +4,8 @@
  * 0 à 4 convolutions 3×3 suivies de la fonction d'activation choisie
  * (sigmoïde par défaut, `tanh` possible ; pas et remplissage tirés de
  * `CONV_SCHEDULES`), puis dropout 0.2, aplatissement, puis 1 à 3 couches
- * denses (8 unités pour chaque couche cachée, la dernière donnant dix logits).
+ * denses (8 unités pour chaque couche cachée, la dernière donnant le nombre de
+ * classes de sortie demandé, dix par défaut).
  * L'architecture par défaut reste celle de référence : quatre convolutions et
  * deux couches denses. Perte d'entropie croisée softmax, optimiseur Adam au
  * pas 3e-3.
@@ -98,6 +99,11 @@ export interface MnistCnnTrainingConfig {
    * au-delà du nombre de couches cachées sont ignorées.
    */
   readonly denseSizes?: readonly number[];
+  /**
+   * Nombre de classes de sortie, de 2 à `MAX_OUTPUT_CLASSES`. Défaut :
+   * `core.LOGIT_COUNT` (10).
+   */
+  readonly outputClasses?: number;
   /** Graine optionnelle : même graine et même configuration donnent les mêmes poids. */
   readonly seed?: number;
 }
@@ -262,6 +268,7 @@ function assertConfig(config: MnistCnnTrainingConfig, core: CoreModule): void {
     );
   }
   core.validateDenseSizes(config.denseSizes);
+  core.resolveOutputClasses(config);
   if (!Number.isFinite(config.learningRate) || config.learningRate <= 0) {
     throw new RangeError(
       `MNIST TFJS learning rate must be a positive finite number, received ${String(config.learningRate)}.`,
@@ -284,7 +291,12 @@ function assertConfig(config: MnistCnnTrainingConfig, core: CoreModule): void {
   }
 }
 
-function assertSample(sample: MnistSample, label: string, core: CoreModule): void {
+function assertSample(
+  sample: MnistSample,
+  label: string,
+  core: CoreModule,
+  classCount: number,
+): void {
   if (sample === null || typeof sample !== 'object') {
     throw new TypeError(`MNIST TFJS ${label} sample is required.`);
   }
@@ -313,9 +325,9 @@ function assertSample(sample: MnistSample, label: string, core: CoreModule): voi
   }
   for (let index = 0; index < sample.labels.length; index += 1) {
     const value = sample.labels[index];
-    if (!Number.isInteger(value) || value < 0 || value > core.LOGIT_COUNT - 1) {
+    if (!Number.isInteger(value) || value < 0 || value >= classCount) {
       throw new RangeError(
-        `MNIST TFJS ${label} labels must be integers from 0 to ${core.LOGIT_COUNT - 1}, received ${value} at index ${index}.`,
+        `MNIST TFJS ${label} labels must be integers from 0 to ${classCount - 1}, received ${value} at index ${index}.`,
       );
     }
   }
@@ -374,9 +386,10 @@ function readSourceBatch(
   end: number,
   label: string,
   core: CoreModule,
+  classCount: number,
 ): MnistSample {
   const batch = source.readBatch(start, end);
-  assertSample(batch, label, core);
+  assertSample(batch, label, core, classCount);
   if (batch.count !== end - start) {
     throw new RangeError(
       `MNIST TFJS ${label} source readBatch(${start}, ${end}) returned ${batch.count} examples, expected ${end - start}.`,
@@ -444,7 +457,13 @@ function buildModel(tf: TfModule, core: CoreModule, config: MnistCnnTrainingConf
       }),
     );
   }
-  model.add(tf.layers.dense({ units: core.LOGIT_COUNT, kernelInitializer, biasInitializer }));
+  model.add(
+    tf.layers.dense({
+      units: core.resolveOutputClasses(config),
+      kernelInitializer,
+      biasInitializer,
+    }),
+  );
   return model;
 }
 
@@ -580,6 +599,8 @@ export class MnistCnnTfjsTrainer {
 
   private readonly config: MnistCnnTrainingConfig;
 
+  private readonly outputClasses: number;
+
   private readonly seed: number;
 
   private model: Sequential | null = null;
@@ -607,6 +628,7 @@ export class MnistCnnTfjsTrainer {
     this.tf = tf;
     this.core = core;
     this.config = config;
+    this.outputClasses = core.resolveOutputClasses(config);
     this.seed = config.seed ?? DEFAULT_TRAINING_SEED;
   }
 
@@ -933,12 +955,12 @@ export class MnistCnnTfjsTrainer {
   }
 
   /**
-   * Retourne les probabilités softmax (count × 10, ligne-major) pour
-   * l'affichage. Le dropout est désactivé.
+   * Retourne les probabilités softmax (count × classes de sortie, ligne-major)
+   * pour l'affichage. Le dropout est désactivé.
    */
   async predict(sample: MnistSample): Promise<Float32Array> {
     this.assertUsable();
-    assertSample(sample, 'predict', this.core);
+    assertSample(sample, 'predict', this.core, this.outputClasses);
     const model = this.ensureModel();
     const images = this.tf.tensor4d(sample.images, [
       sample.count,
@@ -990,7 +1012,7 @@ export class MnistCnnTfjsTrainer {
     start: number,
     end: number,
   ): MaterializedBatch {
-    const sample = readSourceBatch(source, start, end, 'train', this.core);
+    const sample = readSourceBatch(source, start, end, 'train', this.core, this.outputClasses);
     const images = this.tf.tensor4d(sample.images, [
       sample.count,
       this.core.MNIST_INPUT_SIZE,
@@ -1020,7 +1042,7 @@ export class MnistCnnTfjsTrainer {
     batch: MaterializedBatch,
   ): Tensor | null {
     const tf = this.tf;
-    const yBatch = tf.oneHot(batch.labels, this.core.LOGIT_COUNT);
+    const yBatch = tf.oneHot(batch.labels, this.outputClasses);
     // Le `finally` libère le one-hot du lot même si la mise à jour échoue.
     try {
       return optimizer.minimize(
@@ -1092,7 +1114,14 @@ export class MnistCnnTfjsTrainer {
     let correct = 0;
     for (let start = 0; start < total; start += MNIST_VALIDATION_CHUNK_SIZE) {
       const end = Math.min(start + MNIST_VALIDATION_CHUNK_SIZE, total);
-      const chunk = readSourceBatch(source, start, end, 'training accuracy', this.core);
+      const chunk = readSourceBatch(
+        source,
+        start,
+        end,
+        'training accuracy',
+        this.core,
+        this.outputClasses,
+      );
       const images = tf.tensor4d(chunk.images, [
         chunk.count,
         this.core.MNIST_INPUT_SIZE,
@@ -1137,7 +1166,14 @@ export class MnistCnnTfjsTrainer {
     let correct = 0;
     for (let start = 0; start < source.count; start += MNIST_VALIDATION_CHUNK_SIZE) {
       const end = Math.min(start + MNIST_VALIDATION_CHUNK_SIZE, source.count);
-      const chunk = readSourceBatch(source, start, end, 'validation', this.core);
+      const chunk = readSourceBatch(
+        source,
+        start,
+        end,
+        'validation',
+        this.core,
+        this.outputClasses,
+      );
       const images = tf.tensor4d(chunk.images, [
         chunk.count,
         this.core.MNIST_INPUT_SIZE,
@@ -1148,7 +1184,7 @@ export class MnistCnnTfjsTrainer {
       try {
         tf.tidy(() => {
           const logits = model.apply(images, { training: false }) as Tensor;
-          const oneHot = tf.oneHot(labels, this.core.LOGIT_COUNT);
+          const oneHot = tf.oneHot(labels, this.outputClasses);
           lossSum +=
             tf.losses.softmaxCrossEntropy(oneHot, logits).mean().dataSync()[0] * chunk.count;
           const predictions = logits.argMax(1);

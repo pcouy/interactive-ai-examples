@@ -104,6 +104,11 @@ export interface MnistRunRequest {
    * Défaut : `[8, 8]`.
    */
   readonly denseSizes?: readonly number[];
+  /**
+   * Nombre de classes de sortie, de 2 à `MAX_OUTPUT_CLASSES`. Défaut :
+   * `LOGIT_COUNT` (10).
+   */
+  readonly outputClasses?: number;
   /** Graine d'entraînement. */
   readonly seed: number;
   /** Nombre d'époques. */
@@ -200,6 +205,7 @@ export class MnistTrainingController {
         convLayers: request.convLayers,
         denseLayers: request.denseLayers,
         denseSizes: request.denseSizes,
+        outputClasses: request.outputClasses,
         seed: request.seed,
       });
       createdTrainer = trainer;

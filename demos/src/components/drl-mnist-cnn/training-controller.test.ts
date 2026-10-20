@@ -342,6 +342,13 @@ describe('MnistTrainingController.startRun', () => {
     expect(ports.lastTrainerConfig?.denseSizes).toEqual([3, 7]);
   });
 
+  it('forwards the requested output classes to the trainer', async () => {
+    const ports = new FakePorts();
+    const controller = new MnistTrainingController(ports);
+    await controller.startRun(makeRequest({ outputClasses: 20 }));
+    expect(ports.lastTrainerConfig?.outputClasses).toBe(20);
+  });
+
   it('reports counts after selection with the requested fractions', async () => {
     const ports = new FakePorts();
     const controller = new MnistTrainingController(ports);
