@@ -777,9 +777,10 @@ export function createGameComponent<S, M>(
 
     /**
      * Relance une partie terminée dès qu'un humain est en jeu. On ne passe pas
-     * par reset() : il couperait la boucle et effacerait la série. Le premier
-     * joueur humain arrête la boucle ; un agent la relance sur la nouvelle
-     * partie.
+     * par reset() : il couperait la boucle et effacerait la série. La boucle
+     * reste active pendant que l'humain réfléchit, afin que le tour de l'agent
+     * avance dès que l'humain a joué (startTurn() a créé `pending`, il ne
+     * manque que le prochain step()).
      */
     protected override onPlay(): void {
       if (this.outcome === null) {
@@ -795,7 +796,7 @@ export function createGameComponent<S, M>(
         state: this.currentState as S,
       });
       this.requestUpdate();
-      this.running = kinds[0] !== 'human';
+      this.running = true;
     }
 
     private resetSeries(): void {
