@@ -588,7 +588,7 @@ export class MnistCnn extends LitElement {
 
       .drl-mnist-layout {
         display: grid;
-        grid-template-columns: minmax(280px, 340px) minmax(0, 1fr);
+        grid-template-columns: minmax(280px, 460px) minmax(0, 1fr);
         gap: var(--drl-space-3);
       }
 
@@ -687,6 +687,7 @@ export class MnistCnn extends LitElement {
 
       canvas.drl-canvas {
         display: block;
+        width: 100%;
         background: var(--drl-surface);
         border: 1px solid var(--drl-border);
         border-radius: calc(var(--drl-radius) / 2);
@@ -807,7 +808,7 @@ export class MnistCnn extends LitElement {
 
       .drl-stats {
         display: grid;
-        grid-template-columns: repeat(auto-fit, minmax(110px, minmax(0, 1fr)));
+        grid-template-columns: repeat(4, auto);
         gap: var(--drl-space-2);
       }
 
@@ -951,8 +952,8 @@ export class MnistCnn extends LitElement {
       }
 
       .drl-cells-grid {
-        display: flex;
-        flex-wrap: wrap;
+        display: grid;
+        grid-template-columns: repeat(4, auto);
         gap: var(--drl-space-1);
       }
 
@@ -961,6 +962,7 @@ export class MnistCnn extends LitElement {
         gap: 2px;
         justify-items: center;
         margin: 0;
+        width: 100%
       }
 
       .drl-cell figcaption {
