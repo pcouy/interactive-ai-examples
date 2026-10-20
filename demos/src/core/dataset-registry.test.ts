@@ -1,11 +1,25 @@
 import { describe, expect, it } from 'vitest';
 import { DATASET_IDS, DATASETS, datasetClassCount, getDataset } from './dataset-registry.js';
 
+/** Identifiants des sept jeux MedMNIST, dans l'ordre d'affichage. */
+const MEDMNIST_IDS = [
+  'octmnist',
+  'pneumoniamnist',
+  'breastmnist',
+  'tissuemnist',
+  'organamnist',
+  'organcmnist',
+  'organsmnist',
+];
+
+/** Nombre de classes de chaque jeu MedMNIST, dans le même ordre. */
+const MEDMNIST_CLASS_COUNTS = [4, 2, 2, 8, 11, 11, 11];
+
 describe('dataset-registry', () => {
-  it('lists three datasets and starts with MNIST', () => {
-    expect(DATASETS).toHaveLength(3);
+  it('lists ten datasets in display order and starts with MNIST', () => {
+    expect(DATASETS).toHaveLength(10);
     expect(DATASETS[0].id).toBe('mnist');
-    expect(DATASET_IDS).toEqual(['mnist', 'fashion-mnist', 'quickdraw']);
+    expect(DATASET_IDS).toEqual(['mnist', 'fashion-mnist', 'quickdraw', ...MEDMNIST_IDS]);
   });
 
   it('gives each dataset a unique lowercase id without slash', () => {
@@ -16,8 +30,13 @@ describe('dataset-registry', () => {
     }
   });
 
-  it('reports the class counts 10, 10 then 5', () => {
-    expect(DATASETS.map((dataset) => datasetClassCount(dataset))).toEqual([10, 10, 5]);
+  it('reports the class counts 10, 10, 5 then the MedMNIST counts', () => {
+    expect(DATASETS.map((dataset) => datasetClassCount(dataset))).toEqual([
+      10,
+      10,
+      5,
+      ...MEDMNIST_CLASS_COUNTS,
+    ]);
   });
 
   it('gives each dataset positive counts and defaults between 1 and 100', () => {
@@ -31,8 +50,11 @@ describe('dataset-registry', () => {
     }
   });
 
-  it('caps QuickDraw at ten percent and leaves the IDX datasets uncapped', () => {
+  it('caps QuickDraw and every MedMNIST game at ten percent, leaves the IDX datasets uncapped', () => {
     expect(getDataset('quickdraw').maxPercent).toBe(10);
+    for (const id of MEDMNIST_IDS) {
+      expect(getDataset(id).maxPercent).toBe(10);
+    }
     expect(getDataset('mnist').maxPercent).toBeUndefined();
     expect(getDataset('fashion-mnist').maxPercent).toBeUndefined();
   });
@@ -65,12 +87,70 @@ describe('dataset-registry', () => {
     expect(quickdraw.shardSize).toBe(1000);
     expect(quickdraw.defaultTrainPercent).toBe(2);
     expect(quickdraw.defaultValidationPercent).toBe(2);
+    expect(quickdraw.downloadCommand).toBe('npm run quickdraw:data');
+  });
+
+  it('narrows each MedMNIST game to a sharded index with 10 / 10 defaults', () => {
+    for (const id of MEDMNIST_IDS) {
+      const dataset = getDataset(id);
+      expect(dataset.kind).toBe('sharded');
+      if (dataset.kind !== 'sharded') {
+        throw new Error('expected a sharded dataset');
+      }
+      expect(dataset.indexFile).toBe('index.json');
+      expect(dataset.shardSize).toBe(1000);
+      expect(dataset.defaultTrainPercent).toBe(10);
+      expect(dataset.defaultValidationPercent).toBe(10);
+      expect(dataset.license).toBe('CC BY 4.0');
+      expect(dataset.attribution).toBe('MedMNIST (Zenodo 10519652)');
+      expect(dataset.downloadCommand).toBe('npm run medmnist:data');
+    }
+  });
+
+  it('gives each MedMNIST game the official class count and class names', () => {
+    for (const [index, id] of MEDMNIST_IDS.entries()) {
+      const dataset = getDataset(id);
+      expect(datasetClassCount(dataset)).toBe(MEDMNIST_CLASS_COUNTS[index]);
+      expect(dataset.classNames).toHaveLength(MEDMNIST_CLASS_COUNTS[index]);
+      for (const name of dataset.classNames) {
+        expect(name.length).toBeGreaterThan(0);
+      }
+    }
+  });
+
+  it('names the MedMNIST games and the eleven organ classes once', () => {
+    expect(MEDMNIST_IDS.map((id) => getDataset(id).name)).toEqual([
+      'OCTMNIST',
+      'PneumoniaMNIST',
+      'BreastMNIST',
+      'TissueMNIST',
+      'OrganAMNIST',
+      'OrganCMNIST',
+      'OrganSMNIST',
+    ]);
+    for (const id of ['organamnist', 'organcmnist', 'organsmnist']) {
+      expect(getDataset(id).classNames).toEqual([
+        'bladder',
+        'femur-left',
+        'femur-right',
+        'heart',
+        'kidney-left',
+        'kidney-right',
+        'liver',
+        'lung-left',
+        'lung-right',
+        'pancreas',
+        'spleen',
+      ]);
+    }
   });
 
   it('resolves a known id and rejects an unknown id', () => {
     expect(getDataset('mnist').name).toBe('MNIST');
     expect(getDataset('fashion-mnist').name).toBe('Fashion-MNIST');
     expect(getDataset('quickdraw').name).toBe('QuickDraw');
+    expect(getDataset('octmnist').name).toBe('OCTMNIST');
+    expect(getDataset('organsmnist').name).toBe('OrganSMNIST');
     expect(() => getDataset('nope')).toThrow(/unknown dataset/i);
   });
 });

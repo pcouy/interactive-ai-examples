@@ -12,8 +12,9 @@
  * Fashion-MNIST, les tailles et les MD5 ont été vérifiés octet par octet contre
  * les fichiers téléchargés depuis le dépôt `zalandoresearch/fashion-mnist`.
  *
- * QuickDraw n'est pas dans `DATASET_SOURCES` : son convertisseur
- * `convert-quickdraw.mjs` télécharge les cinq fichiers `.npy` directement.
+ * QuickDraw et MedMNIST ne sont pas dans `DATASET_SOURCES` : leurs
+ * convertisseurs `convert-quickdraw.mjs` et `convert-medmnist.mjs` téléchargent
+ * leurs fichiers directement.
  */
 
 import { MNIST_BASE_URL, MNIST_FILES } from './mnist-data-manifest.mjs';
@@ -57,6 +58,59 @@ export const QUICKDRAW_FILES = [
   { name: 'cat.npy', size: 96590448, md5: 'e4bb2f2c14813c33b9bcc21e06eacb43' },
   { name: 'umbrella.npy', size: 97281936, md5: '04dd435714b9c2068f7f799111ef4e35' },
   { name: 'cake.npy', size: 97925600, md5: 'e816ab482b45ef6302a92f4a7f20cf2c' },
+];
+
+/** URL de base des fichiers MedMNIST sur Zenodo, dossier `files/`. */
+export const MEDMNIST_BASE_URL = 'https://zenodo.org/records/10519652/files/';
+
+/**
+ * Les sept archives MedMNIST `.npz`, avec leur taille en octets et leur MD5.
+ * MedMNIST n'est pas dans `DATASET_SOURCES` : son convertisseur
+ * `convert-medmnist.mjs` télécharge les archives directement depuis Zenodo.
+ */
+export const MEDMNIST_FILES = [
+  {
+    dataset: 'octmnist',
+    name: 'octmnist.npz',
+    size: 54938180,
+    md5: 'c68d92d5b585d8d81f7112f81e2d0842',
+  },
+  {
+    dataset: 'pneumoniamnist',
+    name: 'pneumoniamnist.npz',
+    size: 4170669,
+    md5: '28209eda62fecd6e6a2d98b1501bb15f',
+  },
+  {
+    dataset: 'breastmnist',
+    name: 'breastmnist.npz',
+    size: 559580,
+    md5: '750601b1f35ba3300ea97c75c52ff8f6',
+  },
+  {
+    dataset: 'tissuemnist',
+    name: 'tissuemnist.npz',
+    size: 124962739,
+    md5: 'ebe78ee8b05294063de985d821c1c34b',
+  },
+  {
+    dataset: 'organamnist',
+    name: 'organamnist.npz',
+    size: 38247708,
+    md5: '68e3f8846a6bd62f0c9bf841c0d9eacc',
+  },
+  {
+    dataset: 'organcmnist',
+    name: 'organcmnist.npz',
+    size: 15526411,
+    md5: 'b9ceb9546e10131b32923c5bbeaea2b1',
+  },
+  {
+    dataset: 'organsmnist',
+    name: 'organsmnist.npz',
+    size: 16528359,
+    md5: '9ab87b696fb54e2a387ebe992d6ed5f1',
+  },
 ];
 
 /**

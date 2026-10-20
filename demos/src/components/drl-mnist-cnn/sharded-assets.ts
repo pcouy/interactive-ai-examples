@@ -59,9 +59,6 @@ const FETCH_CONCURRENCY = 4;
 /** Répertoire public des ressources des jeux, relatif à la base Vite. */
 const DATASET_ASSET_DIRECTORY = 'datasets';
 
-/** Commande qui télécharge les fichiers QuickDraw, citée dans les erreurs. */
-const QUICKDRAW_DOWNLOAD_COMMAND = 'npm run quickdraw:data';
-
 /** Un fragment d'images d'une fraction, décrit par l'index JSON. */
 export interface ShardEntry {
   readonly file: string;
@@ -418,7 +415,7 @@ function fetchCachedBytes(
   const promise = fetchGzip(
     datasetAssetUrl(dataset, file),
     expectedMagic,
-    QUICKDRAW_DOWNLOAD_COMMAND,
+    dataset.downloadCommand,
   ).then(
     (bytes) => {
       bytesCache.set(key, bytes);
@@ -450,7 +447,7 @@ export function loadShardedIndex(dataset: ShardedDatasetDefinition): Promise<Sha
   }
   const promise = fetchText(
     datasetAssetUrl(dataset, dataset.indexFile),
-    QUICKDRAW_DOWNLOAD_COMMAND,
+    dataset.downloadCommand,
   ).then(
     (text) => {
       const index = parseIndexJson(text);

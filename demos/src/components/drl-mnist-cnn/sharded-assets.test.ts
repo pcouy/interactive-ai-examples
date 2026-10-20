@@ -47,6 +47,7 @@ const SHARDED_DATASET: ShardedDatasetDefinition = {
   kind: 'sharded',
   indexFile: 'index.json',
   shardSize: 2,
+  downloadCommand: 'npm run quickdraw:data',
 };
 
 const TRAIN_LABELS = [0, 0, 0, 0, 0, 0, 1, 1, 1, 1, 1, 1];
@@ -368,7 +369,7 @@ describe('loadShardedSplits', () => {
     expect(maxActive).toBeLessThanOrEqual(4);
   });
 
-  it('names the shard file on a 404 and allows a retry', async () => {
+  it('names the shard file and the dataset download command on a 404, and allows a retry', async () => {
     const assets = assetsForIndex(baseIndex());
     let failures = 1;
     const mock = vi.fn(async (input: RequestInfo | URL): Promise<Response> => {
@@ -394,7 +395,7 @@ describe('loadShardedSplits', () => {
     );
     expect(error.message).toContain('train-c0-s00.idx.gz');
     expect(error.message).toContain('HTTP 404');
-    expect(error.message).toContain('npm run quickdraw:data');
+    expect(error.message).toContain(SHARDED_DATASET.downloadCommand);
 
     const splits = await loadShardedSplits(SHARDED_DATASET, 100, 100);
     expect(splits.train.count).toBe(12);

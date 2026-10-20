@@ -3,7 +3,13 @@ import { mkdtemp, readdir, readFile, rm } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { afterEach, describe, expect, it } from 'vitest';
-import { DATASET_SOURCE_IDS, DATASET_SOURCES, QUICKDRAW_FILES } from './dataset-sources.mjs';
+import {
+  DATASET_SOURCE_IDS,
+  DATASET_SOURCES,
+  MEDMNIST_BASE_URL,
+  MEDMNIST_FILES,
+  QUICKDRAW_FILES,
+} from './dataset-sources.mjs';
 import { buildTargetPath, describePlan, main, parseArgs } from './fetch-datasets.mjs';
 
 const MD5_PATTERN = /^[0-9a-f]{32}$/;
@@ -82,6 +88,44 @@ describe('QUICKDRAW_FILES', () => {
   it('is not part of DATASET_SOURCES', () => {
     expect(Object.hasOwn(DATASET_SOURCES, 'quickdraw')).toBe(false);
     expect(DATASET_SOURCE_IDS).toEqual(['mnist', 'fashion-mnist']);
+  });
+});
+
+describe('MEDMNIST_FILES', () => {
+  it('lists the seven MedMNIST files with unique ids, names, positive sizes and 32-hex MD5s', () => {
+    expect(MEDMNIST_FILES).toHaveLength(7);
+    const ids = MEDMNIST_FILES.map((file) => file.dataset);
+    expect(new Set(ids).size).toBe(ids.length);
+    expect(ids).toEqual([
+      'octmnist',
+      'pneumoniamnist',
+      'breastmnist',
+      'tissuemnist',
+      'organamnist',
+      'organcmnist',
+      'organsmnist',
+    ]);
+    const names = MEDMNIST_FILES.map((file) => file.name);
+    expect(new Set(names).size).toBe(names.length);
+    for (const file of MEDMNIST_FILES) {
+      expect(file.size).toBeGreaterThan(0);
+      expect(file.md5).toMatch(MD5_PATTERN);
+    }
+  });
+
+  it('serves the `.npz` archives from the Zenodo record', () => {
+    expect(MEDMNIST_BASE_URL).toBe('https://zenodo.org/records/10519652/files/');
+    for (const file of MEDMNIST_FILES) {
+      expect(file.name.endsWith('.npz')).toBe(true);
+      expect(`${MEDMNIST_BASE_URL}${file.name}`).toMatch(/^https:\/\/zenodo\.org\//);
+    }
+  });
+
+  it('is not part of DATASET_SOURCES', () => {
+    for (const file of MEDMNIST_FILES) {
+      expect(Object.hasOwn(DATASET_SOURCES, file.dataset)).toBe(false);
+      expect(DATASET_SOURCE_IDS).not.toContain(file.dataset);
+    }
   });
 });
 
