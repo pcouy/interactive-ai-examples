@@ -45,6 +45,9 @@ export const DEFAULT_TRAINING_SEED = 42;
 /** Taille des blocs lus sur la source de validation (accumulation par blocs). */
 export const MNIST_VALIDATION_CHUNK_SIZE = 512;
 
+/** Nombre maximal d'exemples lus pour mesurer l'exactitude d'entraînement d'une époque. */
+export const MNIST_TRAIN_ACCURACY_SAMPLE_SIZE = 1024;
+
 /** Profondeur de préchargement par défaut (lots matérialisés d'avance). */
 export const DEFAULT_PREFETCH_DEPTH = 3;
 
@@ -90,6 +93,11 @@ export interface MnistTrainingProgress {
   readonly loss: number;
   /** Perte d'entraînement moyenne de la dernière époque achevée, ou `null`. */
   readonly epochLoss: number | null;
+  /**
+   * Exactitude d'entraînement de la dernière époque achevée dans `[0, 1]`, ou
+   * `null` avant la première époque achevée.
+   */
+  readonly epochTrainAccuracy: number | null;
   /** Nombre d'époques achevées depuis le début de l'entraînement. */
   readonly completedEpochs: number;
   /** Perte de validation, ou `null` si aucun jeu de validation n'est fourni. */
@@ -618,6 +626,7 @@ export class MnistCnnTfjsTrainer {
     let completedEpochs = 0;
     let validationLoss: number | null = null;
     let validationAccuracy: number | null = null;
+    let epochTrainAccuracy: number | null = null;
     let status: MnistTrainingStatus = 'completed';
     let lastProgressAt = startedAt;
 
@@ -627,6 +636,7 @@ export class MnistCnnTfjsTrainer {
         batchesProcessed,
         loss,
         epochLoss,
+        epochTrainAccuracy,
         completedEpochs,
         validationLoss,
         validationAccuracy,
@@ -727,6 +737,15 @@ export class MnistCnnTfjsTrainer {
           validationLoss = metrics.loss;
           validationAccuracy = metrics.accuracy;
         }
+        epochTrainAccuracy = await this.measureAccuracy(
+          model,
+          options.train,
+          MNIST_TRAIN_ACCURACY_SAMPLE_SIZE,
+        );
+        if (this.cancelled) {
+          status = 'cancelled';
+          break;
+        }
         epochLoss = epochBatches > 0 ? epochLossSum / epochBatches : null;
         completedEpochs += 1;
         const epochEndedAt = Date.now();
@@ -744,6 +763,7 @@ export class MnistCnnTfjsTrainer {
       batchesProcessed,
       loss,
       epochLoss,
+      epochTrainAccuracy,
       completedEpochs,
       validationLoss,
       validationAccuracy,
@@ -990,6 +1010,50 @@ export class MnistCnnTfjsTrainer {
       cost.dispose();
     }
     this.pendingCosts = [];
+  }
+
+  /**
+   * Exactitude d'entraînement sur un préfixe borné de la source, dropout
+   * désactivé. Une seule lecture asynchrone par bloc, jamais `dataSync` : la
+   * mesure ne vide pas la file GPU. Retourne `NaN` sans exemple.
+   */
+  private async measureAccuracy(
+    model: Sequential,
+    source: MnistTrainSource,
+    limit: number,
+  ): Promise<number> {
+    const tf = this.tf;
+    const total = Math.min(source.count, limit);
+    if (total <= 0) {
+      return Number.NaN;
+    }
+    let correct = 0;
+    for (let start = 0; start < total; start += MNIST_VALIDATION_CHUNK_SIZE) {
+      const end = Math.min(start + MNIST_VALIDATION_CHUNK_SIZE, total);
+      const chunk = readSourceBatch(source, start, end, 'training accuracy', this.core);
+      const images = tf.tensor4d(chunk.images, [
+        chunk.count,
+        this.core.MNIST_INPUT_SIZE,
+        this.core.MNIST_INPUT_SIZE,
+        1,
+      ]);
+      const labels = tf.tensor1d(chunk.labels, 'int32');
+      try {
+        const correctTensor = tf.tidy(() => {
+          const logits = model.apply(images, { training: false }) as Tensor;
+          return logits.argMax(1).equal(labels).sum();
+        }) as Tensor;
+        try {
+          correct += (await correctTensor.data())[0];
+        } finally {
+          correctTensor.dispose();
+        }
+      } finally {
+        images.dispose();
+        labels.dispose();
+      }
+    }
+    return correct / total;
   }
 
   /**

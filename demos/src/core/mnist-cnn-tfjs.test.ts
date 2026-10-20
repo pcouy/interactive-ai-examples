@@ -455,6 +455,105 @@ describe('bounded training', () => {
   });
 });
 
+describe('training accuracy', () => {
+  it('reports the training accuracy of the completed epoch', async () => {
+    const trainer = await makeTrainer(SMALL_FILTERS, { batchSize: 2 });
+    const batch = makeSample(2);
+    const result = await trainer.train({
+      train: sourceOfBatch(batch),
+      epochs: 1,
+    });
+    expect(result.status).toBe('completed');
+    // Référence calculée indépendamment sur les mêmes poids finaux : l'argmax des
+    // probabilités softmax est l'argmax des logits.
+    const probabilities = await trainer.predict(batch);
+    let correct = 0;
+    for (let index = 0; index < batch.count; index += 1) {
+      let best = 0;
+      for (let column = 1; column < LOGIT_COUNT; column += 1) {
+        if (
+          probabilities[index * LOGIT_COUNT + column] > probabilities[index * LOGIT_COUNT + best]
+        ) {
+          best = column;
+        }
+      }
+      if (best === batch.labels[index]) {
+        correct += 1;
+      }
+    }
+    expect(result.epochTrainAccuracy).toBeCloseTo(correct / batch.count, 6);
+  });
+
+  it('keeps the training accuracy null before the first completed epoch and finite at each epoch end', async () => {
+    const trainer = await makeTrainer(SMALL_FILTERS, { batchSize: 2 });
+    const events: MnistTrainingProgress[] = [];
+    const result = await trainer.train({
+      train: makeSource(4),
+      epochs: 3,
+      progressIntervalMs: 0,
+      onProgress: (progress) => events.push(progress),
+    });
+    expect(result.status).toBe('completed');
+    expect(result.completedEpochs).toBe(3);
+    // Avec `progressIntervalMs: 0`, un évènement est aussi émis après chaque lot :
+    // il porte `completedEpochs` au numéro de l'époque *précédente*. Seul un
+    // évènement de fin d'époque l'incrémente : on ne retient donc que les événements
+    // qui font avancer `completedEpochs` par rapport à l'évènement précédent.
+    const epochEnds: MnistTrainingProgress[] = [];
+    let lastCompletedEpochs = 0;
+    for (const event of events) {
+      if (event.status !== 'running' || event.completedEpochs <= lastCompletedEpochs) {
+        continue;
+      }
+      epochEnds.push(event);
+      lastCompletedEpochs = event.completedEpochs;
+    }
+    expect(epochEnds.map((event) => event.completedEpochs)).toEqual([1, 2, 3]);
+    // Avant la fin de la première époque, l'exactitude d'entraînement n'est pas
+    // encore mesurée : elle reste nulle.
+    for (const event of events) {
+      if (event.status === 'running' && event.completedEpochs === 0) {
+        expect(event.epochTrainAccuracy).toBeNull();
+      }
+    }
+    for (const event of epochEnds) {
+      expect(Number.isFinite(event.epochTrainAccuracy)).toBe(true);
+      expect(event.epochTrainAccuracy).toBeGreaterThanOrEqual(0);
+      expect(event.epochTrainAccuracy).toBeLessThanOrEqual(1);
+    }
+    expect(Number.isFinite(result.epochTrainAccuracy)).toBe(true);
+    expect(result.epochTrainAccuracy).toBeGreaterThanOrEqual(0);
+    expect(result.epochTrainAccuracy).toBeLessThanOrEqual(1);
+  });
+
+  it('disposes the accuracy tensors after completion and cancellation', async () => {
+    const trainer = await makeTrainer(SMALL_FILTERS, { batchSize: 2 });
+    await trainer.exportWeights();
+    await trainer.train({ train: makeSource(20, 1), epochs: 1 });
+    const baseline = tf.memory().numTensors;
+
+    const completed = await trainer.train({
+      train: makeSource(20, 2),
+      epochs: 1,
+    });
+    expect(completed.status).toBe('completed');
+    expect(tf.memory().numTensors).toBe(baseline);
+
+    const cancelled = await trainer.train({
+      train: makeSource(20, 3),
+      epochs: 1,
+      progressIntervalMs: 0,
+      onProgress: (progress) => {
+        if (progress.batchesProcessed === 1) {
+          void trainer.cancel();
+        }
+      },
+    });
+    expect(cancelled.status).toBe('cancelled');
+    expect(tf.memory().numTensors).toBe(baseline);
+  });
+});
+
 describe('cancellation', () => {
   it('stops before the next batch and releases tensors', async () => {
     const trainer = await makeTrainer(SMALL_FILTERS, { batchSize: 1 });
@@ -630,13 +729,17 @@ describe('train source', () => {
     });
     expect(result.status).toBe('completed');
     expect(result.batchesProcessed).toBe(3);
-    expect(ranges).toHaveLength(3);
-    for (const [start, end] of ranges) {
+    // La mesure d'exactitude d'entraînement lit le préfixe borné de la source en
+    // dernier ; les lots d'entraînement restants restent bornés et couvrent le jeu.
+    expect(ranges).toHaveLength(4);
+    expect(ranges.at(-1)).toEqual([0, sample.count]);
+    const batchRanges = ranges.slice(0, -1);
+    for (const [start, end] of batchRanges) {
       expect(end - start).toBeGreaterThan(0);
       expect(end - start).toBeLessThanOrEqual(4);
       expect(end - start).toBeLessThan(sample.count);
     }
-    const sorted = [...ranges].sort((a, b) => a[0] - b[0]);
+    const sorted = [...batchRanges].sort((a, b) => a[0] - b[0]);
     let cursor = 0;
     for (const [start, end] of sorted) {
       expect(start).toBe(cursor);
@@ -738,8 +841,12 @@ describe('prefetch', () => {
     });
     expect(result.status).toBe('completed');
     expect(result.batchesProcessed).toBe(10);
-    expect(ranges).toHaveLength(10);
-    expect(new Set(ranges.map(([start, end]) => `${start}-${end}`)).size).toBe(10);
+    // La mesure d'exactitude d'entraînement lit le préfixe borné de la source en
+    // dernier, en dehors de la boucle de lots.
+    expect(ranges).toHaveLength(11);
+    expect(ranges.at(-1)).toEqual([0, sample.count]);
+    const batchRanges = ranges.slice(0, -1);
+    expect(new Set(batchRanges.map(([start, end]) => `${start}-${end}`)).size).toBe(10);
     expect(Math.max(...outstanding)).toBe(prefetchDepth);
   });
 
@@ -816,8 +923,9 @@ describe('loss sampling', () => {
       expect(Number.isFinite(result.loss)).toBe(true);
       // Aucune lecture synchrone : la file GPU n'est jamais vidée par lot.
       expect(dataSyncCalls).toBe(0);
-      // Une seule lecture par fenêtre : 16 lots / 4 = 4 lectures.
-      expect(dataCalls).toBe(4);
+      // Une seule lecture par fenêtre : 16 lots / 4 = 4 lectures, plus la lecture
+      // de l'exactitude d'entraînement de l'époque (un bloc pour 32 exemples).
+      expect(dataCalls).toBe(5);
     } finally {
       prototype.data = originalData;
       prototype.dataSync = originalDataSync;
