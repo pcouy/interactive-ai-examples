@@ -7,6 +7,7 @@ import {
   easeSmoothstep,
   gridIndex,
   heightRangeFromSamples,
+  interpolateHeight,
   normalizeHeight,
   sampleGridHeights,
   sampleHeightRange,
@@ -223,6 +224,59 @@ describe('sampleGridHeights', () => {
   it('returns one sample per grid vertex', () => {
     const samples = sampleGridHeights(() => 0, 3, 2);
     expect(samples).toHaveLength(16);
+  });
+});
+
+describe('interpolateHeight', () => {
+  // Row-major grid for res=2, domain=1 and the field w1*10 + w2. The index is
+  // j*(res+1)+i, so index 0 is (-1,-1) and index 8 is (1,1).
+  const samples = [-11, -1, 9, -10, 0, 10, -9, 1, 11];
+
+  it('returns the exact sample at each grid vertex', () => {
+    expect(interpolateHeight(samples, 2, 1, -1, -1)).toBe(samples[0]);
+    expect(interpolateHeight(samples, 2, 1, 1, 1)).toBe(samples[8]);
+    expect(interpolateHeight(samples, 2, 1, 1, -1)).toBe(samples[2]);
+    expect(interpolateHeight(samples, 2, 1, -1, 1)).toBe(samples[6]);
+  });
+
+  it('returns the exact sample at a vertex sampled from a real field', () => {
+    const field = (w1: number, w2: number) => w1 * 10 + w2;
+    const grid = sampleGridHeights(field, 2, 1);
+    expect(interpolateHeight(grid, 2, 1, 1, -1)).toBeCloseTo(field(1, -1), 12);
+    expect(interpolateHeight(grid, 2, 1, -1, 1)).toBeCloseTo(field(-1, 1), 12);
+  });
+
+  it('interpolates a linear field at a cell centre to the average of its corners', () => {
+    const field = (w1: number, w2: number) => w1 + w2;
+    const grid = sampleGridHeights(field, 1, 1);
+    const average = (grid[0] + grid[1] + grid[2] + grid[3]) / 4;
+    expect(interpolateHeight(grid, 1, 1, 0, 0)).toBeCloseTo(average, 12);
+    expect(interpolateHeight(grid, 1, 1, 0, 0)).toBeCloseTo(field(0, 0), 12);
+  });
+
+  it('clamps a point outside the domain to the nearest edge', () => {
+    const field = (w1: number, w2: number) => w1 + w2;
+    const grid = sampleGridHeights(field, 1, 1);
+    expect(interpolateHeight(grid, 1, 1, 2, 0)).toBeCloseTo(field(1, 0), 12);
+    expect(interpolateHeight(grid, 1, 1, -3, 0)).toBeCloseTo(field(-1, 0), 12);
+  });
+
+  it('matches the mesh for a mixed field with an Infinity vertex', () => {
+    // The finite samples set the range; the Infinity corner clamps to the top,
+    // exactly like buildLandscape does for the mesh vertex.
+    const heightFn = (w1: number) => (w1 > 0 ? Number.POSITIVE_INFINITY : w1);
+    const res = 2;
+    const domain = 1;
+    const { min, span } = sampleHeightRange(heightFn, res, domain);
+    const raw = sampleGridHeights(heightFn, res, domain);
+    const normalized = applyHeightScale(raw, min, span, DEFAULT_HEIGHT_SCALE);
+
+    // For res=2, domain=1 the (w1=1, w2=1) vertex is index 8. It is the
+    // +Infinity corner, so it clamps to the top of the range.
+    expect(normalized[8]).toBeCloseTo(DEFAULT_HEIGHT_SCALE, 12);
+    // heightAt interpolates this same normalized array, so it returns the mesh
+    // vertex height, not 0.
+    expect(interpolateHeight(normalized, res, domain, 1, 1)).toBeCloseTo(normalized[8], 12);
   });
 });
 
