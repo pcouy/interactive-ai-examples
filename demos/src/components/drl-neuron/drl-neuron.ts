@@ -119,6 +119,70 @@ export function gridCenter(index: number, domain: number): number {
   return -domain + ((2 * index + 1) / GRID_RES) * domain;
 }
 
+/**
+ * Maps a click position in client pixels to the SVG viewBox coordinates. The
+ * plane fills the viewBox, so the mapping is a plain linear rescale. The rect is
+ * the border box from getBoundingClientRect(); `border` removes the CSS border
+ * so the mapping uses the content box that the viewBox actually covers.
+ */
+export function screenToViewBox(
+  clientX: number,
+  clientY: number,
+  rect: { left: number; top: number; width: number; height: number },
+  border: { left: number; top: number; right: number; bottom: number } = {
+    left: 0,
+    top: 0,
+    right: 0,
+    bottom: 0,
+  },
+): { x: number; y: number } {
+  const width = rect.width - border.left - border.right;
+  const height = rect.height - border.top - border.bottom;
+  return {
+    x: ((clientX - rect.left - border.left) / width) * 640,
+    y: ((clientY - rect.top - border.top) / height) * 360,
+  };
+}
+
+/**
+ * Maps a viewBox position back to input data coordinates on the [-domain,
+ * domain]² square. Returns null outside the plane, so a click on the legend or
+ * the axis area does not create a test point.
+ */
+export function planeToData(
+  viewX: number,
+  viewY: number,
+  domain: number,
+): { x1: number; x2: number } | null {
+  const fx = (viewX - PLANE_X) / PLANE_SIZE;
+  const fy = (viewY - PLANE_Y) / PLANE_SIZE;
+  if (fx < 0 || fx > 1 || fy < 0 || fy > 1) return null;
+  return { x1: -domain + fx * 2 * domain, x2: domain - fy * 2 * domain };
+}
+
+/**
+ * True when a test point lies inside the input square [-domain, domain]². A
+ * point outside the square has no position on the plane, so its marker stays
+ * hidden. Exported for testing.
+ */
+export function isTestPointVisible(
+  point: { x1: number; x2: number } | null,
+  domain: number,
+): point is { x1: number; x2: number } {
+  return point !== null && Math.abs(point.x1) <= domain && Math.abs(point.x2) <= domain;
+}
+
+/** True when two optional test points hold the same coordinates. */
+function samePoint(
+  a: { x1: number; x2: number } | null,
+  b: { x1: number; x2: number } | null,
+): boolean {
+  if (a === null || b === null) {
+    return a === b;
+  }
+  return a.x1 === b.x1 && a.x2 === b.x2;
+}
+
 @customElement('drl-neuron')
 export class Neuron extends DemoElement {
   static override styles = [
@@ -263,6 +327,15 @@ export class Neuron extends DemoElement {
       .drl-legend-high {
         stop-color: var(--drl-accent-2);
       }
+
+      /* The test point marker: a ring plus a cross, drawn in the accent-2
+         color so it stays distinct from the blue/violet target points. */
+      .drl-test-point {
+        fill: none;
+        stroke: var(--drl-accent-2);
+        stroke-width: 2;
+        pointer-events: none;
+      }
     `,
   ];
 
@@ -296,6 +369,14 @@ export class Neuron extends DemoElement {
   @property({ type: Number, attribute: 'height-scale' })
   heightScale = 1.5;
 
+  /**
+   * Which cached height field the 3D scene displays. The page mirrors this
+   * property with the surface radios; a 'test' value without a test point falls
+   * back to 'global' in setSurface.
+   */
+  @property({ type: String, attribute: 'surface' })
+  surface: 'global' | 'test' = 'global';
+
   @state()
   private webglError = false;
 
@@ -328,6 +409,10 @@ export class Neuron extends DemoElement {
   @state()
   private exampleNumber = 0;
 
+  /** The input point the test landscape is built from. Null until a click. */
+  @state()
+  private testPoint: { x1: number; x2: number } | null = null;
+
   private readonly core = new NeuronCore();
 
   private scene: LandscapeScene | null = null;
@@ -348,6 +433,8 @@ export class Neuron extends DemoElement {
 
   private halo: SingleSelection<SVGCircleElement> | null = null;
 
+  private testPointGroup: SingleSelection<SVGGElement> | null = null;
+
   private fieldDomain = Number.NaN;
 
   private fieldDataset: readonly NeuronExample[] | null = null;
@@ -359,6 +446,12 @@ export class Neuron extends DemoElement {
   private fieldB = Number.NaN;
 
   private fieldRebuiltAt = 0;
+
+  /** The test point the cached test field was sampled from. */
+  private fieldTestPoint: { x1: number; x2: number } | null = null;
+
+  /** The height-field kind the scene currently displays. */
+  private fieldSurface: 'global' | 'test' = 'global';
 
   private colorScale: ScaleLinear<string, string> | null = null;
 
@@ -380,6 +473,7 @@ export class Neuron extends DemoElement {
       this.gridGroup = root.select<SVGGElement>('.drl-grid');
       this.pointsGroup = root.select<SVGGElement>('.drl-points');
       this.halo = root.select<SVGCircleElement>('.drl-halo');
+      this.testPointGroup = root.select<SVGGElement>('.drl-test-point');
       const gridGroup = this.gridGroup;
       const cells: GridCell[] = [];
       for (let j = 0; j < GRID_RES; j += 1) {
@@ -446,7 +540,7 @@ export class Neuron extends DemoElement {
         return;
       }
       this.scene = scene;
-      this.rebuildHeightField();
+      this.rebuildHeightFields();
       scene.setHeightScale(sanitizeHeightScale(this.heightScale));
       scene.moveBall(this.core.w1, this.core.w2);
       scene.render();
@@ -481,7 +575,7 @@ export class Neuron extends DemoElement {
       this.core.advance(this.learningRate, { detailed: true });
       scene?.moveBall(this.core.w1, this.core.w2);
     }
-    this.rebuildHeightField(!this.running);
+    this.rebuildHeightFields(!this.running);
     this.sync();
     this.draw();
   }
@@ -500,7 +594,7 @@ export class Neuron extends DemoElement {
     });
     this.dispatchTargetError();
     this.scene?.clearTrail();
-    this.rebuildHeightField(true);
+    this.rebuildHeightFields(true);
     this.scene?.moveBall(this.core.w1, this.core.w2);
     this.sync();
     this.draw();
@@ -511,7 +605,7 @@ export class Neuron extends DemoElement {
     this.scene?.clearTween();
     this.core.reset();
     this.scene?.clearTrail();
-    this.rebuildHeightField(true);
+    this.rebuildHeightFields(true);
     this.scene?.moveBall(this.core.w1, this.core.w2);
     this.sync();
     this.draw();
@@ -527,11 +621,78 @@ export class Neuron extends DemoElement {
     this.scene?.clearTween();
     this.scene?.clearTrail();
     this.core.setWeights(weights);
-    this.rebuildHeightField(true);
+    this.rebuildHeightFields(true);
     this.scene?.moveBall(this.core.w1, this.core.w2);
     this.sync();
     this.draw();
   }
+
+  /**
+   * Places the test point on the input square and shows the test landscape.
+   * A non-finite or unchanged point is ignored, so the page can call this from
+   * the probe inputs without dispatching a loop of events. The event carries
+   * the evaluation of the point, so the page can fill its probe fields.
+   */
+  setTestPoint(x1: number, x2: number): void {
+    if (!Number.isFinite(x1) || !Number.isFinite(x2)) {
+      return;
+    }
+    const current = this.testPoint;
+    if (current !== null && current.x1 === x1 && current.x2 === x2) {
+      return;
+    }
+    this.testPoint = { x1, x2 };
+    this.surface = 'test';
+    this.rebuildHeightFields();
+    this.sync();
+    this.draw();
+    this.dispatchEvent(
+      new CustomEvent<NeuronEvaluation>('drl-test-point', {
+        detail: this.core.evaluate(x1, x2),
+        bubbles: true,
+        composed: true,
+      }),
+    );
+  }
+
+  /**
+   * Switches the displayed landscape between the global loss and the single
+   * test point. A 'test' request without a test point stays 'global'.
+   */
+  setSurface(mode: 'global' | 'test'): void {
+    const next = mode === 'test' && this.testPoint === null ? 'global' : mode;
+    if (next === this.surface) {
+      return;
+    }
+    this.surface = next;
+    this.rebuildHeightFields();
+    this.sync();
+    this.draw();
+  }
+
+  /**
+   * Converts a click on the SVG plane into a test point. The click target is
+   * the SVG root; getBoundingClientRect() returns the border box, so the CSS
+   * border is removed before the rect maps onto the 640×360 viewBox.
+   */
+  private handleMapClick = (event: MouseEvent): void => {
+    const target = event.currentTarget as SVGSVGElement | null;
+    if (target === null) {
+      return;
+    }
+    const rect = target.getBoundingClientRect();
+    const border = {
+      left: target.clientLeft,
+      top: target.clientTop,
+      right: rect.width - target.clientLeft - target.clientWidth,
+      bottom: rect.height - target.clientTop - target.clientHeight,
+    };
+    const view = screenToViewBox(event.clientX, event.clientY, rect, border);
+    const point = planeToData(view.x, view.y, this.core.inputDomain);
+    if (point !== null) {
+      this.setTestPoint(point.x1, point.x2);
+    }
+  };
 
   /**
    * Commits a weight or bias typed in the header. An empty or non-finite entry
@@ -608,7 +769,7 @@ export class Neuron extends DemoElement {
   protected override willUpdate(changed: PropertyValues<this>): void {
     super.willUpdate(changed);
     if (changed.has('running') && !this.running) {
-      this.rebuildHeightField(true);
+      this.rebuildHeightFields(true);
     }
     if (!this.hasUpdated) {
       return;
@@ -618,6 +779,13 @@ export class Neuron extends DemoElement {
     // full height-field rebuild.
     if (changed.has('heightScale')) {
       this.scene?.setHeightScale(sanitizeHeightScale(this.heightScale));
+    }
+    // The test point rebuilds the single-point field; the surface only swaps
+    // which cached field the scene displays. Neither resets training.
+    if (changed.has('testPoint' as unknown as keyof Neuron) || changed.has('surface')) {
+      this.rebuildHeightFields();
+      this.sync();
+      this.draw();
     }
     let reconfigured = false;
     if (changed.has('expression') || changed.has('inputDomain')) {
@@ -654,7 +822,7 @@ export class Neuron extends DemoElement {
     // so it rebuilds the field but never resets the training run.
     if (changed.has('weightDomain')) {
       this.core.setWeightDomain(Number.isFinite(this.weightDomain) ? this.weightDomain : null);
-      this.rebuildHeightField();
+      this.rebuildHeightFields();
       this.sync();
       this.draw();
     }
@@ -667,7 +835,7 @@ export class Neuron extends DemoElement {
     if (!reconfigured) {
       return;
     }
-    this.rebuildHeightField(true);
+    this.rebuildHeightFields(true);
     this.scene?.clearTrail();
     this.sync();
     this.scene?.moveBall(this.core.w1, this.core.w2);
@@ -789,6 +957,20 @@ export class Neuron extends DemoElement {
     } else {
       halo.attr('visibility', 'hidden');
     }
+
+    // The test point marker sits at the clicked input coordinates. A point
+    // outside the input square has no position on the plane, so it stays hidden.
+    const testPoint = this.testPoint;
+    const testPointGroup = this.testPointGroup;
+    if (testPointGroup) {
+      if (isTestPointVisible(testPoint, d)) {
+        testPointGroup
+          .attr('transform', `translate(${dataX(testPoint.x1, d)}, ${dataY(testPoint.x2, d)})`)
+          .attr('visibility', 'visible');
+      } else {
+        testPointGroup.attr('visibility', 'hidden');
+      }
+    }
   }
 
   /**
@@ -825,41 +1007,93 @@ export class Neuron extends DemoElement {
     this.colorDataset = this.core.dataset;
   }
 
-  private rebuildHeightField(force = false): void {
+  /**
+   * Decides whether one height field needs a rebuild. A structural change or a
+   * forced rebuild always passes; an unchanged field passes nothing. A
+   * bias-only change is throttled for L1 globally and for both loss kinds on
+   * the test field: the single-point loss is static in (w1, w2), so per-step
+   * exactness is not needed. A large bias step or the time window always
+   * rebuilds.
+   */
+  private fieldRebuildAllowed(
+    force: boolean,
+    structural: boolean,
+    bChanged: boolean,
+    throttle: boolean,
+  ): boolean {
+    if (force || structural) {
+      return true;
+    }
+    if (!bChanged) {
+      return false;
+    }
+    if (!throttle) {
+      return true;
+    }
+    const stepped = Math.abs(this.core.b - this.fieldB) >= FIELD_B_STEP;
+    const due = performance.now() - this.fieldRebuiltAt >= FIELD_REBUILD_INTERVAL_MS;
+    return stepped || due;
+  }
+
+  private rebuildHeightFields(force = false): void {
     const scene = this.scene;
     if (!scene) {
       return;
     }
     const { domain, dataset, lossKind, biasEnabled, b } = this.core;
-    const structural =
+    const testPoint = this.testPoint;
+    // A 'test' surface without a test point has no field to show: fall back to
+    // the global one so the scene never activates an empty test field.
+    const effectiveSurface =
+      this.surface === 'test' && testPoint === null ? 'global' : this.surface;
+
+    // The surface only swaps which cached field the scene displays; it never
+    // rebuilds the samples, so it is synced even when no rebuild runs below.
+    if (effectiveSurface !== this.fieldSurface) {
+      this.fieldSurface = effectiveSurface;
+      scene.setActiveHeightField(effectiveSurface);
+    }
+
+    const sharedStructural =
       domain !== this.fieldDomain ||
       dataset !== this.fieldDataset ||
       lossKind !== this.fieldLoss ||
       biasEnabled !== this.fieldBias;
     const bChanged = b !== this.fieldB;
-    if (!force && !structural && !bChanged) {
+    const testStructural = sharedStructural || !samePoint(testPoint, this.fieldTestPoint);
+    if (!force && !sharedStructural && !bChanged && !testStructural) {
       return;
     }
-    // During play the bias moves on every batch. For L1 the loss is not a
-    // smooth quadratic, so rebuilding the whole surface each frame is wasteful
-    // and a bias-only change is throttled. For L2 the loss is a smooth
-    // quadratic with O(1) moments, so rebuilding is cheap and the surface can
-    // stay exact, so a bias-only change always rebuilds. A forced rebuild
-    // (pause, reset, reconfigure) restores exactness for L1.
-    if (!force && !structural && bChanged && lossKind === 'l1') {
-      const stepped = Math.abs(b - this.fieldB) >= FIELD_B_STEP;
-      const due = performance.now() - this.fieldRebuiltAt >= FIELD_REBUILD_INTERVAL_MS;
-      if (!stepped && !due) {
-        return;
-      }
+
+    const globalAllowed = this.fieldRebuildAllowed(
+      force,
+      sharedStructural,
+      bChanged,
+      lossKind === 'l1',
+    );
+    const testAllowed = this.fieldRebuildAllowed(force, testStructural, bChanged, true);
+    if (!globalAllowed && !testAllowed) {
+      return;
     }
+
+    const now = performance.now();
     this.fieldDomain = domain;
     this.fieldDataset = dataset;
     this.fieldLoss = lossKind;
     this.fieldBias = biasEnabled;
     this.fieldB = b;
-    this.fieldRebuiltAt = performance.now();
-    scene.setHeightField((w1, w2) => this.core.landscapeLoss(w1, w2), domain);
+    this.fieldRebuiltAt = now;
+
+    if (globalAllowed) {
+      scene.setHeightField((w1, w2) => this.core.landscapeLoss(w1, w2), domain);
+    }
+    if (testAllowed && testPoint !== null) {
+      this.fieldTestPoint = { x1: testPoint.x1, x2: testPoint.x2 };
+      scene.setTestHeightField(
+        (w1, w2) => this.core.landscapeLossForPoint(w1, w2, testPoint.x1, testPoint.x2),
+        domain,
+      );
+    }
   }
 
   private dispatchTargetError(): void {
@@ -995,6 +1229,7 @@ export class Neuron extends DemoElement {
           viewBox="0 0 640 360"
           role="img"
           aria-label="Nuage d'exemples et grille de prédictions du neurone"
+          @click=${this.handleMapClick}
         >
           <defs>
             <clipPath id="drl-neuron-plane">
@@ -1034,6 +1269,13 @@ export class Neuron extends DemoElement {
             stroke-opacity="0.7"
             visibility="hidden"
           ></circle>
+          <g class="drl-test-point" visibility="hidden">
+            <circle r="9" fill="none" stroke="var(--drl-accent-2)" stroke-width="2"></circle>
+            <line x1="-13" y1="0" x2="-5" y2="0" stroke="var(--drl-accent-2)" stroke-width="2"></line>
+            <line x1="5" y1="0" x2="13" y2="0" stroke="var(--drl-accent-2)" stroke-width="2"></line>
+            <line x1="0" y1="-13" x2="0" y2="-5" stroke="var(--drl-accent-2)" stroke-width="2"></line>
+            <line x1="0" y1="5" x2="0" y2="13" stroke="var(--drl-accent-2)" stroke-width="2"></line>
+          </g>
           <text class="drl-axis" x="40" y="356" text-anchor="start">${this.axisLabel('x₁')}</text>
           <text class="drl-axis" x="34" y="14" text-anchor="end">x₂</text>
           <rect
@@ -1085,6 +1327,8 @@ export class Neuron extends DemoElement {
     this.fieldLoss = null;
     this.fieldBias = null;
     this.fieldB = Number.NaN;
+    this.fieldTestPoint = null;
+    this.fieldSurface = 'global';
     // The next sync() must re-broadcast the weights, so drop the change cache.
     this.lastWeights = null;
     this.lastDivergenceCount = 0;

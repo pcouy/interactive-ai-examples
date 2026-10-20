@@ -6,9 +6,17 @@
  * and the 3D scene is replaced by a fake. Only the component logic is tested.
  */
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
-import type { NeuronCore } from '../../core/neuron.js';
+import type { NeuronCore, NeuronEvaluation } from '../../core/neuron.js';
 import type { LandscapeScene } from '../shared/landscape-scene.js';
-import { dataX, dataY, gridCenter, Neuron } from './drl-neuron.js';
+import {
+  dataX,
+  dataY,
+  gridCenter,
+  isTestPointVisible,
+  Neuron,
+  planeToData,
+  screenToViewBox,
+} from './drl-neuron.js';
 
 /**
  * The scene factory is mocked at module level so no WebGL context is ever
@@ -39,6 +47,8 @@ function fakeScene(): LandscapeScene {
     camera: {} as never,
     renderer: {} as never,
     setHeightField: vi.fn(),
+    setTestHeightField: vi.fn(),
+    setActiveHeightField: vi.fn(),
     setHeightScale: vi.fn(),
     moveBall: vi.fn(),
     tweenBall: vi.fn(),
@@ -445,6 +455,58 @@ describe('Neuron height field throttle', () => {
     // The snap-back step still rebuilds the surface at the restored weights.
     expect(setHeightField.mock.calls.length).toBeGreaterThan(before);
   });
+});
+
+describe('Neuron test-field throttle', () => {
+  beforeEach(() => {
+    // sync() schedules a render through requestAnimationFrame.
+    vi.stubGlobal('requestAnimationFrame', () => 0);
+    vi.stubGlobal('cancelAnimationFrame', () => {});
+  });
+
+  afterEach(() => {
+    vi.unstubAllGlobals();
+    vi.restoreAllMocks();
+  });
+
+  it.each(['l1', 'l2'] as const)(
+    'throttles bias-only test-field rebuilds within the window (loss=%s)',
+    (loss) => {
+      const element = createNeuron();
+      const scene = fakeScene();
+      installScene(element, scene);
+      const core = readCore(element);
+      core.setLoss(loss);
+      core.setBiasEnabled(true);
+      core.reset();
+
+      let now = 1000;
+      vi.spyOn(performance, 'now').mockImplementation(() => now);
+
+      element.setTestPoint(0.5, -0.25);
+      const testCalls = vi.mocked(scene.setTestHeightField).mock.calls.length;
+
+      element.running = true;
+      element.learningRate = 0.05;
+      for (let step = 0; step < 6; step += 1) {
+        element.step();
+      }
+      // The bias moves by less than 0.1 per step and the 200 ms window has not
+      // elapsed, so the test field is not rebuilt.
+      expect(vi.mocked(scene.setTestHeightField).mock.calls.length).toBe(testCalls);
+
+      // The window elapses: the next step rebuilds the test field.
+      now = 1201;
+      element.step();
+      expect(vi.mocked(scene.setTestHeightField).mock.calls.length).toBe(testCalls + 1);
+
+      // A bias step of at least 0.1 rebuilds the test field outside the window.
+      element.learningRate = 3;
+      element.step();
+      expect(readFlag(element, 'diverged')).toBe(false);
+      expect(vi.mocked(scene.setTestHeightField).mock.calls.length).toBe(testCalls + 2);
+    },
+  );
 });
 
 describe('Neuron scene setup guard', () => {
@@ -1076,5 +1138,263 @@ describe('Neuron evaluate', () => {
     expect(result.predicted).toBeCloseTo(0.58, 12);
     expect(result.loss).toBeCloseTo(Math.abs(result.predicted - result.target), 12);
     expect(result.loss).toBeCloseTo(0.18, 12);
+  });
+});
+
+/** Reads the private `@state()` test point of the component. */
+function readTestPoint(element: Neuron): { x1: number; x2: number } | null {
+  return (element as unknown as { testPoint: { x1: number; x2: number } | null }).testPoint;
+}
+
+/** Writes the private `@state()` test point of the component. */
+function writeTestPoint(element: Neuron, point: { x1: number; x2: number }): void {
+  (element as unknown as { testPoint: { x1: number; x2: number } | null }).testPoint = point;
+}
+
+describe('Neuron test point', () => {
+  beforeEach(() => {
+    // setTestPoint and regenerateDataset call sync() -> requestRender().
+    vi.stubGlobal('requestAnimationFrame', () => 0);
+    vi.stubGlobal('cancelAnimationFrame', () => {});
+  });
+
+  afterEach(() => {
+    vi.unstubAllGlobals();
+    vi.restoreAllMocks();
+  });
+
+  it('builds the test field, switches the surface and dispatches drl-test-point', () => {
+    const element = createNeuron();
+    const scene = fakeScene();
+    installScene(element, scene);
+    const core = readCore(element);
+    const events: NeuronEvaluation[] = [];
+    element.addEventListener('drl-test-point', (event) => {
+      events.push((event as CustomEvent<NeuronEvaluation>).detail);
+    });
+
+    element.setTestPoint(0.5, -0.25);
+
+    expect(readTestPoint(element)).toEqual({ x1: 0.5, x2: -0.25 });
+    expect(element.surface).toBe('test');
+    expect(scene.setTestHeightField).toHaveBeenCalledOnce();
+    expect(scene.setActiveHeightField).toHaveBeenCalledWith('test');
+    expect(events).toHaveLength(1);
+    expect(events[0].x1).toBe(0.5);
+    expect(events[0].x2).toBe(-0.25);
+    expect(events[0].predicted).toBeCloseTo(core.w1 * 0.5 + core.w2 * -0.25 + core.b, 12);
+    expect(events[0].target).toBeCloseTo(0.5 + -0.25, 12);
+  });
+
+  it('treats a repeated test point as a no-op', () => {
+    const element = createNeuron();
+    const scene = fakeScene();
+    installScene(element, scene);
+    const events: NeuronEvaluation[] = [];
+    element.addEventListener('drl-test-point', (event) => {
+      events.push((event as CustomEvent<NeuronEvaluation>).detail);
+    });
+
+    element.setTestPoint(0.5, -0.25);
+    const testCalls = vi.mocked(scene.setTestHeightField).mock.calls.length;
+    const activeCalls = vi.mocked(scene.setActiveHeightField).mock.calls.length;
+    const globalCalls = vi.mocked(scene.setHeightField).mock.calls.length;
+
+    element.setTestPoint(0.5, -0.25);
+
+    expect(events).toHaveLength(1);
+    expect(vi.mocked(scene.setTestHeightField).mock.calls.length).toBe(testCalls);
+    expect(vi.mocked(scene.setActiveHeightField).mock.calls.length).toBe(activeCalls);
+    expect(vi.mocked(scene.setHeightField).mock.calls.length).toBe(globalCalls);
+  });
+
+  it('ignores a non-finite test point', () => {
+    const element = createNeuron();
+    const scene = fakeScene();
+    installScene(element, scene);
+
+    element.setTestPoint(Number.NaN, 0.5);
+
+    expect(readTestPoint(element)).toBeNull();
+    expect(scene.setTestHeightField).not.toHaveBeenCalled();
+  });
+
+  it('switches the displayed surface back to global', () => {
+    const element = createNeuron();
+    const scene = fakeScene();
+    installScene(element, scene);
+    element.setTestPoint(0.5, -0.25);
+    vi.mocked(scene.setActiveHeightField).mockClear();
+
+    element.setSurface('global');
+
+    expect(element.surface).toBe('global');
+    expect(scene.setActiveHeightField).toHaveBeenCalledWith('global');
+  });
+
+  it('keeps the global surface when no test point exists', () => {
+    const element = createNeuron();
+    const scene = fakeScene();
+    installScene(element, scene);
+
+    element.setSurface('test');
+
+    expect(element.surface).toBe('global');
+    expect(scene.setActiveHeightField).not.toHaveBeenCalledWith('test');
+  });
+
+  it('rebuilds the test field on a testPoint update', () => {
+    const element = createNeuron();
+    const scene = fakeScene();
+    installScene(element, scene);
+    markUpdated(element);
+    writeTestPoint(element, { x1: 0.5, x2: -0.25 });
+
+    runWillUpdate(element, 'testPoint');
+
+    expect(scene.setTestHeightField).toHaveBeenCalledOnce();
+  });
+
+  it('keeps the test point across regenerateDataset', () => {
+    const element = createNeuron();
+    const scene = fakeScene();
+    installScene(element, scene);
+    element.setTestPoint(0.5, -0.25);
+
+    element.regenerateDataset();
+
+    expect(readTestPoint(element)).toEqual({ x1: 0.5, x2: -0.25 });
+    expect(scene.setTestHeightField).toHaveBeenCalled();
+  });
+
+  it('keeps the test point and the test surface across reset, setWeights and step', () => {
+    const element = createNeuron();
+    const scene = fakeScene();
+    installScene(element, scene);
+
+    element.setTestPoint(0.5, -0.25);
+
+    (element as unknown as { onReset(): void }).onReset();
+    expect(readTestPoint(element)).toEqual({ x1: 0.5, x2: -0.25 });
+    expect(element.surface).toBe('test');
+    expect(scene.setActiveHeightField).toHaveBeenCalledWith('test');
+
+    element.setWeights({ w1: 0.5 });
+    expect(readTestPoint(element)).toEqual({ x1: 0.5, x2: -0.25 });
+    expect(element.surface).toBe('test');
+
+    element.step();
+    expect(readTestPoint(element)).toEqual({ x1: 0.5, x2: -0.25 });
+    expect(element.surface).toBe('test');
+  });
+
+  it('sets the test surface and activates the test field when a point exists', () => {
+    const element = createNeuron();
+    const scene = fakeScene();
+    installScene(element, scene);
+
+    element.setTestPoint(0.5, -0.25);
+    element.setSurface('global');
+    vi.mocked(scene.setActiveHeightField).mockClear();
+
+    element.setSurface('test');
+
+    expect(element.surface).toBe('test');
+    expect(scene.setActiveHeightField).toHaveBeenCalledWith('test');
+  });
+
+  it('converts a map click into a test point', () => {
+    const element = createNeuron();
+    installScene(element, fakeScene());
+    const setTestPoint = vi.spyOn(element, 'setTestPoint');
+    const target = {
+      clientLeft: 0,
+      clientTop: 0,
+      clientWidth: 640,
+      clientHeight: 360,
+      getBoundingClientRect: () => ({ left: 0, top: 0, width: 640, height: 360 }),
+    };
+    const event = { clientX: 210, clientY: 180, currentTarget: target } as unknown as MouseEvent;
+
+    (element as unknown as { handleMapClick(event: MouseEvent): void }).handleMapClick(event);
+
+    expect(setTestPoint).toHaveBeenCalledWith(0, 0);
+  });
+
+  it('ignores a click outside the plane', () => {
+    const element = createNeuron();
+    installScene(element, fakeScene());
+    const setTestPoint = vi.spyOn(element, 'setTestPoint');
+    const target = {
+      clientLeft: 0,
+      clientTop: 0,
+      clientWidth: 640,
+      clientHeight: 360,
+      getBoundingClientRect: () => ({ left: 0, top: 0, width: 640, height: 360 }),
+    };
+    const event = { clientX: 450, clientY: 180, currentTarget: target } as unknown as MouseEvent;
+
+    (element as unknown as { handleMapClick(event: MouseEvent): void }).handleMapClick(event);
+
+    expect(setTestPoint).not.toHaveBeenCalled();
+  });
+});
+
+describe('isTestPointVisible', () => {
+  it('shows a point inside the input square', () => {
+    expect(isTestPointVisible({ x1: 0.5, x2: -0.25 }, 1)).toBe(true);
+    expect(isTestPointVisible({ x1: 1, x2: -1 }, 1)).toBe(true);
+  });
+
+  it('hides a point outside the input square', () => {
+    expect(isTestPointVisible({ x1: 1.5, x2: 0 }, 1)).toBe(false);
+    expect(isTestPointVisible({ x1: 0, x2: -1.25 }, 1)).toBe(false);
+  });
+
+  it('hides a null point', () => {
+    expect(isTestPointVisible(null, 1)).toBe(false);
+  });
+});
+
+describe('screenToViewBox', () => {
+  const rect = { left: 100, top: 50, width: 640, height: 360 };
+
+  it('maps the corners onto the viewBox', () => {
+    expect(screenToViewBox(100, 50, rect)).toEqual({ x: 0, y: 0 });
+    expect(screenToViewBox(740, 50, rect)).toEqual({ x: 640, y: 0 });
+    expect(screenToViewBox(100, 410, rect)).toEqual({ x: 0, y: 360 });
+    expect(screenToViewBox(740, 410, rect)).toEqual({ x: 640, y: 360 });
+  });
+
+  it('maps the centre of the element', () => {
+    expect(screenToViewBox(420, 230, rect)).toEqual({ x: 320, y: 180 });
+  });
+
+  it('maps the content box when the element has a border', () => {
+    const border = { left: 1, top: 1, right: 1, bottom: 1 };
+    // The rect is the border box; the content starts one pixel inside it.
+    expect(screenToViewBox(101, 51, rect, border)).toEqual({ x: 0, y: 0 });
+    expect(screenToViewBox(739, 409, rect, border)).toEqual({ x: 640, y: 360 });
+    expect(screenToViewBox(420, 230, rect, border)).toEqual({ x: 320, y: 180 });
+  });
+});
+
+describe('planeToData', () => {
+  it('maps the plane corners onto the input square', () => {
+    expect(planeToData(40, 10, 2)).toEqual({ x1: -2, x2: 2 });
+    expect(planeToData(380, 10, 2)).toEqual({ x1: 2, x2: 2 });
+    expect(planeToData(40, 350, 2)).toEqual({ x1: -2, x2: -2 });
+    expect(planeToData(380, 350, 2)).toEqual({ x1: 2, x2: -2 });
+  });
+
+  it('maps the plane centre to the origin', () => {
+    expect(planeToData(210, 180, 2)).toEqual({ x1: 0, x2: 0 });
+  });
+
+  it('returns null outside the plane', () => {
+    expect(planeToData(39, 180, 2)).toBeNull();
+    expect(planeToData(210, 9, 2)).toBeNull();
+    expect(planeToData(381, 180, 2)).toBeNull();
+    expect(planeToData(210, 351, 2)).toBeNull();
   });
 });
