@@ -4,6 +4,9 @@
   // servers; in this repo the relevant one is `typescript` (demos/ has a
   // tsconfig.json and a `typescript` dependency in demos/package.json).
   "lsp": true,
+  "experimental": {
+      "subagent_depth": 2
+  },
 
   // Model aliases for the `opencode-go` provider (the OpenCode Go subscription).
   // Agents reference `opencode-go/weak` and `opencode-go/strong`, so changing a
