@@ -106,6 +106,11 @@ export function formatBound(value: number): string {
   return formatScore(value);
 }
 
+/** Formate la profondeur certifiée d'une entrée de table : chiffres ou '∞'. */
+export function formatEntryDepth(value: number): string {
+  return Number.isFinite(value) ? String(value) : '∞';
+}
+
 /**
  * Libellé neutre du panneau α/β quand le nœud dessiné n'a pas de coupure.
  * Afficher un texte de longueur comparable garde une hauteur de panneau stable.

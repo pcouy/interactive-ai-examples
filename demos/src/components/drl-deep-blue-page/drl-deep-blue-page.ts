@@ -3,6 +3,7 @@ import { css, html, LitElement, nothing } from 'lit';
 import { customElement, property, state } from 'lit/decorators.js';
 import type { Connect4Move } from '../../core/games/connect4.js';
 import type { TicTacToeMove } from '../../core/games/tic-tac-toe.js';
+import { createReadOnlyOverlay } from '../../core/search/transposition.js';
 import type { TreeModel } from '../../core/search/tree-model.js';
 import '../drl-connect4/drl-connect4.js';
 import '../drl-tic-tac-toe/drl-tic-tac-toe.js';
@@ -566,15 +567,20 @@ export class DrlDeepBluePage extends LitElement {
     }
     const samples = this.rolloutSamples;
     const discount = sanitizeDiscount(this.discount, 1);
-    // L'agent rejoué ignore les entrées du tour courant : ce qui vient d'être
-    // déployé par la recherche jouée apparaît donc déplié dans l'arbre.
+    // Le rejoué lit la table partagée en lecture seule et écrit dans sa propre
+    // table temporaire : la table réelle n'est jamais polluée par le rejoué.
+    const realTable = game?.transpositionTable;
+    // L'overlay n'est construit que si la transposition est active : sinon on
+    // passe `undefined` et le rejoué n'utilise aucune table.
+    const replayTable =
+      this.transposition && realTable !== undefined ? createReadOnlyOverlay(realTable) : undefined;
     if (this.activeGameId === 'connect4') {
       const agent = createGameAgent(CONNECT4_GAME_CONFIG.game, {
         mode: parseEvaluatorMode(this.evaluator),
         depth: this.depth ?? CONNECT4_GAME_CONFIG.defaultDepth,
         fallbackDepth: CONNECT4_GAME_CONFIG.defaultDepth,
         transposition: this.transposition,
-        transpositionTable: game?.transpositionTable,
+        transpositionTable: replayTable,
         prune: this.pruning,
         strictPruning: this.strictPruning,
         recorder: tree.recorder,
@@ -582,7 +588,6 @@ export class DrlDeepBluePage extends LitElement {
         samples,
         discount,
         rng: Math.random,
-        probeTurns: 'previous',
       });
       tree.startSearch<Connect4Move>(agent, state);
       return;
@@ -592,7 +597,7 @@ export class DrlDeepBluePage extends LitElement {
       depth: this.depth ?? TIC_TAC_TOE_GAME_CONFIG.defaultDepth,
       fallbackDepth: TIC_TAC_TOE_GAME_CONFIG.defaultDepth,
       transposition: this.transposition,
-      transpositionTable: game?.transpositionTable,
+      transpositionTable: replayTable,
       prune: this.pruning,
       strictPruning: this.strictPruning,
       recorder: tree.recorder,
@@ -600,7 +605,6 @@ export class DrlDeepBluePage extends LitElement {
       samples,
       discount,
       rng: Math.random,
-      probeTurns: 'previous',
     });
     tree.startSearch<TicTacToeMove>(agent, state);
   }

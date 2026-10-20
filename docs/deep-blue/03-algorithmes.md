@@ -208,11 +208,15 @@ alpha-beta (indépendamment de `prune`) :
 d'une part la clause « à profondeur égale » de `isEntryUsable` (une entrée du
 tour courant est réutilisable, une entrée d'un tour antérieur doit être
 strictement plus profonde), d'autre part l'option
-`MinimaxOptions.probeTurns === 'previous'` — l'agent **rejoué** dans l'arbre
-refuse alors les entrées stockées pendant le tour courant (il veut ré-explorer
-à l'écran ce qui vient d'être joué) et ne consomme que celles des tours
-antérieurs. La consommation par défaut (`'all'`) n'ajoute pas ce refus : seule
-la clause de profondeur égale dépend du tour.
+`MinimaxOptions.probeTurns === 'previous'` : quand elle est fournie, l'agent
+refuse en plus les entrées stockées pendant le tour courant et ne consomme que
+celles des tours antérieurs. Cette option reste disponible, mais le rejoué
+Deep Blue ne l'utilise pas : il applique la politique par défaut (`'all'`) et
+s'appuie sur une table en lecture seule par-dessus la table partagée
+(`createReadOnlyOverlay`). Le rejoué lit donc la table réelle sans jamais
+l'écrire ; il stocke ses propres entrées dans une table temporaire privée, qui
+porte ses propres entrées du tour courant. Seule la clause de profondeur égale
+dépend du tour.
 
 **Pédagogie visée** : « deux positions différentes mènent au même sous-arbre ;
 on ne le calcule qu'une fois » — visible dans la viz via le compteur

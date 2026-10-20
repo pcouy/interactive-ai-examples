@@ -76,6 +76,74 @@ export function createTranspositionTable(): TranspositionTable {
   };
 }
 
+/**
+ * Table de transposition en lecture seule par-dessus une table réelle.
+ * WHY: le rejoué dans l'arbre doit montrer exactement la recherche qui a mené
+ * au dernier coup, sans jamais polluer la table partagée. Il écrit donc ses
+ * propres entrées dans une table temporaire privée ; la table réelle n'est lue
+ * qu'en lecture.
+ * - `store` n'écrit que dans la table temporaire ;
+ * - `probe` et `snapshot` préfèrent l'entrée la plus profonde : la table
+ *   temporaire quand elle est au moins aussi profonde que l'entrée réelle,
+ *   sinon l'entrée réelle avec `turn: -1` ; à profondeur égale, l'entrée
+ *   temporaire l'emporte. Une entrée réelle à profondeur égale n'est donc
+ *   jamais traitée comme du tour courant (seule une entrée strictement plus
+ *   profonde reste consommable) ;
+ * - `currentTurn` / `beginTurn` / `clear` ne pilotent que la table temporaire.
+ */
+export function createReadOnlyOverlay(real: TranspositionTable): TranspositionTable {
+  const temp = createTranspositionTable();
+  return {
+    store(key: string, entry: TranspositionEntry): void {
+      temp.store(key, entry);
+    },
+    probe(key: string): ProbedEntry | null {
+      const own = temp.probe(key);
+      const fromReal = real.probe(key);
+      if (own === null) {
+        return fromReal === null ? null : { ...fromReal, turn: -1 };
+      }
+      if (fromReal === null) {
+        return own;
+      }
+      // À profondeur égale, l'entrée temporaire (du tour courant) l'emporte.
+      return own.depth >= fromReal.depth ? own : { ...fromReal, turn: -1 };
+    },
+    snapshot(): readonly TranspositionSnapshotEntry[] {
+      const merged = new Map<string, TranspositionSnapshotEntry>();
+      for (const entry of real.snapshot()) {
+        merged.set(entry.key, { ...entry, turn: -1 });
+      }
+      for (const entry of temp.snapshot()) {
+        const existing = merged.get(entry.key);
+        if (existing === undefined || entry.depth >= existing.depth) {
+          merged.set(entry.key, entry);
+        }
+      }
+      return [...merged.values()].sort((a, b) => (a.key < b.key ? -1 : a.key > b.key ? 1 : 0));
+    },
+    beginTurn(): void {
+      temp.beginTurn();
+    },
+    currentTurn(): number {
+      return temp.currentTurn();
+    },
+    clear(): void {
+      temp.clear();
+    },
+    size(): number {
+      const keys = new Set<string>();
+      for (const entry of temp.snapshot()) {
+        keys.add(entry.key);
+      }
+      for (const entry of real.snapshot()) {
+        keys.add(entry.key);
+      }
+      return keys.size;
+    },
+  };
+}
+
 export function isEntryUsable(
   entry: ProbedEntry,
   remainingDepth: number,

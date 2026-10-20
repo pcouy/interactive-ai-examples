@@ -20,6 +20,7 @@ import { connect4Heuristic, ticTacToeHeuristic } from './evaluators/heuristic.js
 import { createRandomRolloutEvaluator } from './evaluators/random-rollout.js';
 import { createMinimaxAgent } from './minimax.js';
 import {
+  createReadOnlyOverlay,
   createTranspositionTable,
   SOLVED_DEPTH,
   type TranspositionTable,
@@ -834,6 +835,51 @@ describe('createMinimaxAgent', () => {
     expect(finalRootScore(shorter.values, rootKeyOf(shorter.visits))).toBe(
       finalRootScore(deeper.values, rootKeyOf(deeper.visits)),
     );
+  });
+
+  it('replays through a read-only overlay: same-turn hits appear and the real table is untouched', () => {
+    const state = [4, 0, 2, 6].reduce(
+      (current, index) => ticTacToe.apply(current, { index }),
+      ticTacToe.initialState(),
+    );
+    // Recherche jouée au tour courant : elle peuple la table réelle d'entrées
+    // estampillées du tour courant.
+    const real = createTranspositionTable();
+    recordSearch(
+      (recorder) =>
+        createTicTacToeAgent(recorder, 4, true, ticTacToeHeuristic, { transposition: real }),
+      state,
+    );
+    const realBefore = real.snapshot();
+    // Rejoué : options par défaut (probeTurns 'all'), table en lecture seule
+    // par-dessus la réelle. Ses propres touches du tour courant apparaissent
+    // comme tt-hit dans l'arbre.
+    const overlay = createReadOnlyOverlay(real);
+    const replay = recordSearch(
+      (recorder) =>
+        createTicTacToeAgent(recorder, 4, true, ticTacToeHeuristic, { transposition: overlay }),
+      state,
+    );
+    expect(replay.agent.stats().ttHits).toBeGreaterThan(0);
+    const ttHitVisit = replay.visits.find((visit) => visit.kind === 'tt-hit');
+    if (ttHitVisit === undefined) {
+      throw new Error('expected a tt-hit visit in the replay');
+    }
+    const entryDepth = ttHitVisit.entryDepth;
+    expect(entryDepth).toBeDefined();
+    // La profondeur certifiée de l'entrée consommée est celle stockée en table.
+    const consumed = overlay
+      .snapshot()
+      .find((entry) => entry.key === ticTacToe.stateKey(ttHitVisit.state));
+    expect(consumed?.depth).toBe(entryDepth);
+    // Le tour 0 prouve que la profondeur provient de l'entrée temporaire de
+    // l'overlay (du tour courant), pas de l'entrée réelle (toujours turn -1).
+    expect(consumed?.turn).toBe(0);
+    // L'évènement de valeur du même nœud porte la même profondeur.
+    const matchingValue = replay.values.find((value) => value.nodeKey === ttHitVisit.nodeKey);
+    expect(matchingValue?.entryDepth).toBe(entryDepth);
+    // La table réelle n'a jamais été écrite par le rejoué.
+    expect(real.snapshot()).toEqual(realBefore);
   });
 
   // Contrat de la table partagée : les entrées sont intrinsèques à l'état

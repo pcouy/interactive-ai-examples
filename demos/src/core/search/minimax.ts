@@ -40,9 +40,9 @@ export interface MinimaxOptions<S, M> {
    * ne tire pas (premier coup visité retenu), pour rester reproductible à
    * l'identique quand on compare deux arbres. */
   readonly rng?: () => number;
-  /** Politique de consommation de la table : 'previous' est configuré pour
-   * l'agent rejoué dans l'arbre — il ignore les entrées du tour courant, déjà
-   * déployées à l'écran, et ne consomme que les entrées des tours antérieurs. */
+  /** Politique de consommation de la table : 'previous' refuse les entrées
+   * estampillées du tour courant (un agent rejoué peut ainsi ré-explorer à
+   * l'écran ce qui vient d'être joué) ; 'all' (défaut) les consomme aussi. */
   readonly probeTurns?: 'all' | 'previous';
   /** Élagage strict : la coupure n'a lieu que sur un dépassement STRICT de la
    * borne (max : > β, min : < α) et les coups à valeur exactement égale sont
@@ -113,6 +113,7 @@ export function createMinimaxAgent<S, M>(
   const tieBreak = options.rng ?? (prune === false || strictPruning ? () => Math.random() : null);
   // Politique de consommation des entrées : 'previous' refuse les entrées
   // estampillées du tour courant, pour que le rejoué les ré-explore.
+  // 'all' (défaut) les consomme aussi : les tt-hit du tour courant apparaissent.
   const probeTurns = options.probeTurns ?? 'all';
   // Nombre de tirages par évaluation d'un évaluateur stochastic-échantillonné
   // (indéfini pour un évaluateur déterministe : le cache-feuille reste inerte).
@@ -197,7 +198,11 @@ export function createMinimaxAgent<S, M>(
       beta: frame.beta,
     });
 
-    const visitEvent = (frame: Frame<S, M>, kind: VisitKind): VisitEvent<S> => ({
+    const visitEvent = (
+      frame: Frame<S, M>,
+      kind: VisitKind,
+      entryDepth?: number,
+    ): VisitEvent<S> => ({
       nodeKey: frame.key,
       parentKey: frame.parentKey,
       move: frame.move,
@@ -205,6 +210,9 @@ export function createMinimaxAgent<S, M>(
       depth: frame.depth,
       kind,
       window: windowOf(frame),
+      // La profondeur certifiée de l'entrée de table n'existe que sur un
+      // tt-hit ; on ne l'attache jamais aux autres sortes de visite.
+      ...(entryDepth === undefined ? {} : { entryDepth }),
     });
 
     const visitNode = (frame: Frame<S, M>): NodeResolution => {
@@ -297,13 +305,14 @@ export function createMinimaxAgent<S, M>(
             )
           ) {
             ttHits += 1;
-            emitVisit(visitEvent(frame, 'tt-hit'));
+            emitVisit(visitEvent(frame, 'tt-hit', entry.depth));
             emitValue({
               nodeKey: frame.key,
               score: visibleScore,
               depth: frame.remaining,
               exact: entry.exact,
               window: windowOf(frame),
+              entryDepth: entry.depth,
             });
             return { expanded: false, score: visibleScore, exact: entry.exact, depth: entry.depth };
           }

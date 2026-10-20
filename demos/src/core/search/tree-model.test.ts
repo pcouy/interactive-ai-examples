@@ -13,7 +13,7 @@ function visit(
   depth: number,
   kind: VisitKind = 'expand',
   stateId = nodeKey,
-  bounds: { window?: SearchWindow; cut?: CutInfo } = {},
+  bounds: { window?: SearchWindow; cut?: CutInfo; entryDepth?: number } = {},
 ): VisitEvent<FakeState> {
   return {
     nodeKey,
@@ -155,6 +155,24 @@ describe('TreeModel applyValue', () => {
     expect(model.has('ghost')).toBe(true);
     expect(model.node('ghost')?.score).toBe(0.3);
   });
+
+  it('stores the certified entry depth when it creates the node from scratch', () => {
+    const model = new TreeModel<FakeState>();
+    model.applyValue({ nodeKey: 'ghost', score: 0.3, depth: 4, exact: false, entryDepth: 3 });
+    expect(model.node('ghost')?.entryDepth).toBe(3);
+  });
+
+  it('keeps an infinite certified entry depth', () => {
+    const model = new TreeModel<FakeState>();
+    model.applyValue({
+      nodeKey: 'solved',
+      score: 1,
+      depth: 9,
+      exact: true,
+      entryDepth: Number.POSITIVE_INFINITY,
+    });
+    expect(model.node('solved')?.entryDepth).toBe(Number.POSITIVE_INFINITY);
+  });
 });
 
 describe('TreeModel alpha-bêta fields', () => {
@@ -268,6 +286,17 @@ describe('TreeModel pruned and tt-hit nodes', () => {
     expect(model.node('p')?.parentKey).toBe('root');
     expect(model.node('p')?.kind).toBe('pruned');
     expect(model.children('other')).toEqual([]);
+  });
+
+  it('stores the certified entry depth on a tt-hit node and keeps it on a bare re-visit', () => {
+    const model = new TreeModel<FakeState>();
+    model.insert(visit('root', null, null, 0));
+    model.insert(visit('h', 'root', 'mH', 1, 'tt-hit', 'h', { entryDepth: 3 }));
+    model.applyValue({ nodeKey: 'h', score: 0.4, depth: 1, exact: true, entryDepth: 3 });
+    expect(model.node('h')?.entryDepth).toBe(3);
+    // Une re-visite sans le champ ne doit pas effacer la profondeur stockée.
+    model.insert(visit('h', 'root', 'mH', 1, 'tt-hit', 'h'));
+    expect(model.node('h')?.entryDepth).toBe(3);
   });
 });
 
