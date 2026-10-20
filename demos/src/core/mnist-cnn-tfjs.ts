@@ -1,8 +1,9 @@
 /**
  * Adaptateur d'entraînement TensorFlow.js du CNN MNIST de référence décrit
- * dans `tf-playground/mnist/train.py` : quatre convolutions 3×3 suivies d'une
- * sigmoïde (pas 1, 2, 1, 2 ; remplissage zéro symétrique de 1 sur la deuxième
- * seulement), dropout 0.2, aplatissement, dense 8 + sigmoïde, puis dix logits.
+ * dans `tf-playground/mnist/train.py` : quatre convolutions 3×3 suivies de la
+ * fonction d'activation choisie (sigmoïde par défaut, `tanh` possible ; pas
+ * 1, 2, 1, 2 ; remplissage zéro symétrique de 1 sur la deuxième seulement),
+ * dropout 0.2, aplatissement, dense 8 + la même fonction, puis dix logits.
  * Perte d'entropie croisée softmax, optimiseur Adam au pas 3e-3.
  *
  * Ce module n'importe ni TensorFlow.js ni le DOM au niveau statique : seul
@@ -28,7 +29,12 @@
  */
 
 import type { AdamOptimizer, Sequential, Tensor, Variable } from '@tensorflow/tfjs';
-import type { MnistCnnFilters, MnistCnnLayerWeights, MnistCnnWeights } from './mnist-cnn.js';
+import type {
+  MnistCnnActivation,
+  MnistCnnFilters,
+  MnistCnnLayerWeights,
+  MnistCnnWeights,
+} from './mnist-cnn.js';
 import * as core from './mnist-cnn.js';
 import type { MnistSample } from './mnist-data.js';
 
@@ -77,6 +83,8 @@ export interface MnistCnnTrainingConfig {
   readonly learningRate: number;
   /** Nombre d'exemples par lot. */
   readonly batchSize: number;
+  /** Fonction d'activation des convolutions et de la couche dense cachée. */
+  readonly activation: MnistCnnActivation;
   /** Graine optionnelle : même graine et même configuration donnent les mêmes poids. */
   readonly seed?: number;
 }
@@ -232,6 +240,11 @@ function assertConfig(config: MnistCnnTrainingConfig, core: CoreModule): void {
       `MNIST TFJS batch size must be a positive integer, received ${String(config.batchSize)}.`,
     );
   }
+  if (config.activation !== 'sigmoid' && config.activation !== 'tanh') {
+    throw new RangeError(
+      `MNIST TFJS activation must be "sigmoid" or "tanh", received ${String(config.activation)}.`,
+    );
+  }
   if (config.seed !== undefined && (!Number.isInteger(config.seed) || config.seed < 0)) {
     throw new RangeError(
       `MNIST TFJS seed must be a non-negative integer, received ${String(config.seed)}.`,
@@ -373,7 +386,7 @@ function buildModel(tf: TfModule, core: CoreModule, config: MnistCnnTrainingConf
         kernelSize: core.CONV_KERNEL_SIZE,
         strides: stride,
         padding: 'valid',
-        activation: 'sigmoid',
+        activation: config.activation,
         kernelInitializer,
         biasInitializer,
         inputShape,
@@ -386,7 +399,7 @@ function buildModel(tf: TfModule, core: CoreModule, config: MnistCnnTrainingConf
   model.add(
     tf.layers.dense({
       units: core.HIDDEN_DENSE_SIZE,
-      activation: 'sigmoid',
+      activation: config.activation,
       kernelInitializer,
       biasInitializer,
     }),

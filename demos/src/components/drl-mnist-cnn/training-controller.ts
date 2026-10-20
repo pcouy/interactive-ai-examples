@@ -26,7 +26,7 @@
  *   est ignoré : l'état de la run plus récente est préservé.
  */
 
-import type { MnistCnnFilters, MnistCnnWeights } from '../../core/mnist-cnn.js';
+import type { MnistCnnActivation, MnistCnnFilters, MnistCnnWeights } from '../../core/mnist-cnn.js';
 import type {
   MnistCnnTfjsTrainer,
   MnistCnnTrainingConfig,
@@ -93,6 +93,8 @@ export interface MnistRunRequest {
   readonly learningRate: number;
   /** Nombre d'exemples par lot. */
   readonly batchSize: number;
+  /** Fonction d'activation des convolutions et de la couche dense cachée. */
+  readonly activation: MnistCnnActivation;
   /** Graine d'entraînement. */
   readonly seed: number;
   /** Nombre d'époques. */
@@ -185,6 +187,7 @@ export class MnistTrainingController {
         filters: request.filters,
         learningRate: request.learningRate,
         batchSize: request.batchSize,
+        activation: request.activation,
         seed: request.seed,
       });
       createdTrainer = trainer;

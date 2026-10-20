@@ -869,6 +869,7 @@ describe('trainingRunRequest', () => {
       validationPercent: 15,
       epochs: 4,
       weights,
+      activation: 'sigmoid',
       ...overrides,
     };
   }
@@ -893,6 +894,7 @@ describe('trainingRunRequest', () => {
     expect(request.learningRate).toBe(0.02);
     expect(request.batchSize).toBe(32);
     expect(request.filters).toBe(filters);
+    expect(request.activation).toBe('sigmoid');
   });
 
   it('pins the seed', () => {
@@ -903,6 +905,15 @@ describe('trainingRunRequest', () => {
   it('forwards the batch size from the input', () => {
     const request = trainingRunRequest(input({ batchSize: 32 }));
     expect(request.batchSize).toBe(32);
+  });
+
+  it('forwards the activation from the input', () => {
+    const request = trainingRunRequest(input({ activation: 'tanh' }));
+    expect(request.activation).toBe('tanh');
+  });
+
+  it('defaults the forwarded activation to sigmoid', () => {
+    expect(trainingRunRequest(input()).activation).toBe('sigmoid');
   });
 });
 

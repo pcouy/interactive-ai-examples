@@ -8,6 +8,7 @@ import {
   initializeMnistCnnWeights,
   LOGIT_COUNT,
   MNIST_INPUT_LENGTH,
+  type MnistCnnActivation,
   type MnistCnnFilters,
   type MnistCnnWeights,
 } from './mnist-cnn.js';
@@ -101,12 +102,18 @@ function rampInput(): Float32Array {
 
 async function makeTrainer(
   filters: MnistCnnFilters,
-  overrides: Partial<{ learningRate: number; batchSize: number; seed: number }> = {},
+  overrides: Partial<{
+    learningRate: number;
+    batchSize: number;
+    seed: number;
+    activation: MnistCnnActivation;
+  }> = {},
 ): Promise<MnistCnnTfjsTrainer> {
   const trainer = await createMnistCnnTfjsTrainer({
     filters,
     learningRate: overrides.learningRate ?? 3e-3,
     batchSize: overrides.batchSize ?? 2,
+    activation: overrides.activation ?? 'sigmoid',
     seed: overrides.seed ?? DEFAULT_TRAINING_SEED,
   });
   disposables.push(trainer);
@@ -162,6 +169,27 @@ describe('model shape', () => {
       [null, HIDDEN_DENSE_SIZE],
       [null, LOGIT_COUNT],
     ]);
+  });
+
+  it('builds the convolution and hidden layers with the requested activation', async () => {
+    const trainer = await makeTrainer(SMALL_FILTERS, { activation: 'tanh', batchSize: 2 });
+    await trainer.exportWeights();
+    const graph = trainer.graph;
+    if (graph === null) {
+      throw new Error('The trainer did not build a model.');
+    }
+    const layers = graph.layers;
+    const convs = layers.filter((layer) => layer.getClassName() === 'Conv2D');
+    expect(convs.length).toBe(4);
+    for (const layer of convs) {
+      expect(layer.getConfig().activation).toBe('tanh');
+    }
+    const denses = layers.filter((layer) => layer.getClassName() === 'Dense');
+    expect(denses.length).toBe(2);
+    const hidden = denses.find((layer) => layer.getConfig().units === 8);
+    const logits = denses.find((layer) => layer.getConfig().units === 10);
+    expect(hidden?.getConfig().activation).toBe('tanh');
+    expect(logits?.getConfig().activation).toBe('linear');
   });
 
   it('scales the architecture with the filter tuple', async () => {
@@ -445,6 +473,7 @@ describe('bounded training', () => {
       filters: SMALL_FILTERS,
       learningRate: 3e-3,
       batchSize: 2,
+      activation: 'sigmoid',
       seed: DEFAULT_TRAINING_SEED,
     });
     disposables.push(trainer);
@@ -997,6 +1026,7 @@ describe('loss sampling', () => {
       filters: SMALL_FILTERS,
       learningRate: 3e-3,
       batchSize: 2,
+      activation: 'sigmoid',
       seed: DEFAULT_TRAINING_SEED,
     });
     disposables.push(trainer);
