@@ -280,6 +280,20 @@ textarea {
   background: color-mix(in oklab, var(--site-accent) 12%, transparent);
 }
 
+.site-back {
+  margin-left: var(--space-2);
+}
+
+.site-back::before {
+  content: '';
+  display: inline-block;
+  width: 1px;
+  height: 0.9em;
+  margin-right: var(--space-3);
+  background: var(--site-border);
+  vertical-align: middle;
+}
+
 /* --------------------------------------------------------------------------
    Theme toggle
    -------------------------------------------------------------------------- */
@@ -819,6 +833,38 @@ textarea {
   text-decoration: underline;
 }
 
+.site-footer__links {
+  min-width: 10rem;
+}
+
+.site-footer__heading {
+  margin: 0 0 var(--space-2);
+  color: var(--site-muted);
+  font-family: var(--font-sans);
+  font-size: var(--step--1);
+  font-weight: 600;
+  letter-spacing: 0.06em;
+  text-transform: uppercase;
+}
+
+.site-footer__links ul {
+  display: grid;
+  gap: var(--space-2);
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+
+.site-footer__links a {
+  color: var(--site-muted);
+  text-decoration: none;
+}
+
+.site-footer__links a:hover {
+  color: var(--site-fg);
+  text-decoration: underline;
+}
+
 .site-footer__meta {
   width: 100%;
   margin: 0;
@@ -867,6 +913,10 @@ textarea {
 
   .theme-toggle {
     margin-left: auto;
+  }
+
+  .site-footer__links {
+    width: 100%;
   }
 
   .home-hero {
