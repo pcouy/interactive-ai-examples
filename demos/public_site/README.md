@@ -237,17 +237,23 @@ Le site se déploie avec GitHub Actions. Le workflow se trouve dans
 `.github/workflows/deploy-pages.yml`, à la racine du dépôt.
 
 Le workflow se déclenche sur un push vers la branche `main` et sur un lancement manuel
-(`workflow_dispatch`). Il ne se déclenche pas sur une pull request ni sur un fork.
+(`workflow_dispatch`). Un lancement manuel ne s'exécute que si la référence sélectionnée
+est `main`. Les autres branches sont ignorées. Le workflow ne se déclenche pas sur une
+pull request ni sur un fork.
 
 **Réglage initial.** Dans le dépôt GitHub, ouvrez **Settings** → **Pages** →
 **Build and deployment**, puis choisissez **Source : GitHub Actions**. Sans ce réglage,
-l'étape `configure-pages` échoue.
+l'étape de déploiement échoue.
+
+Si le dépôt est privé, GitHub Pages exige une offre payante (Pro, Team ou Enterprise).
 
 **Étapes du workflow.** Le workflow exécute ces actions :
 
 1. Il installe `demos/` avec `npm ci --ignore-scripts --no-audit --no-fund`. L'option
    `--ignore-scripts` saute le `postinstall`, donc le téléchargement optionnel des jeux
-   MNIST.
+   MNIST. Elle saute aussi le script d'installation d'esbuild. Le build Vite reste sûr,
+   car `@esbuild/linux-x64` est installé comme dépendance optionnelle et esbuild le
+   résout au runtime.
 2. Il installe `demos/public_site/` avec `npm ci --no-audit --no-fund`.
 3. Il lance `npm run build` dans `demos/public_site/`. Ce contrôle rapide construit les
    démos, synchronise les assets, lance le build Astro et le finaliseur, puis exécute
