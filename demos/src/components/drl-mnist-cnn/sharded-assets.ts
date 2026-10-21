@@ -13,7 +13,8 @@
  * premiers de chaque classe dans l'ordre de l'index et les retourne dans
  * l'ordre des classes. `N` vaut `max(1, round(percent / 100 * shardsPerClass))`,
  * plafonné au nombre de fragments disponibles. La sélection ne dépend jamais du
- * nom du fichier.
+ * nom du fichier. Une seconde sélection, `classIndices`, restreint les classes
+ * téléchargées et remappe leurs libellés vers `0..N-1`.
  *
  * Les octets décodés sont mis en cache par identifiant de jeu et chemin de
  * fichier ; seuls les téléchargements réussis sont conservés, ce qui permet une
@@ -336,14 +337,44 @@ export function shardCountForPercent(percent: number, shardsPerClass: number): n
 }
 
 /**
+ * Ordre trié et sans doublon des classes demandées, ou `null` pour toutes les
+ * classes. Rejette un indice qui n'est pas un entier non négatif ou une classe
+ * sans fragment dans la fraction.
+ */
+function requestedClassOrder(
+  classIndices: readonly number[] | null | undefined,
+  available: ReadonlySet<number>,
+): number[] | null {
+  if (classIndices === null || classIndices === undefined || classIndices.length === 0) {
+    return null;
+  }
+  const selected = new Set<number>();
+  for (const value of classIndices) {
+    if (!Number.isInteger(value) || value < 0) {
+      throw new RangeError(
+        `sharded-assets: classIndices must contain non-negative integers, received ${String(value)}.`,
+      );
+    }
+    if (!available.has(value)) {
+      throw new RangeError(`sharded-assets: selected class ${value} has no shard in this split.`);
+    }
+    selected.add(value);
+  }
+  return Array.from(selected).sort((left, right) => left - right);
+}
+
+/**
  * Sélectionne les fragments d'une fraction pour `percent` pourcent : les
  * fragments sont regroupés par classe, les `N` premiers de chaque classe sont
- * gardés dans l'ordre de l'index, et le résultat est retourné dans l'ordre des
+ * gardés dans l'ordre de l'index, et le résultat est retourné dans l'ordre trié
+ * des classes. Quand `classIndices` est fourni, seules ces classes sont gardées,
+ * dans l'ordre trié de la sélection ; `null` ou une liste vide garde toutes les
  * classes. La sélection est déterministe et ne dépend pas du nom des fichiers.
  */
 export function selectShardEntries(
   split: ShardedSplitIndex,
   percent: number,
+  classIndices?: readonly number[] | null,
 ): readonly ShardEntry[] {
   const groups = new Map<number, ShardEntry[]>();
   for (const shard of split.shards) {
@@ -357,15 +388,17 @@ export function selectShardEntries(
   if (groups.size === 0) {
     return [];
   }
+  const order = requestedClassOrder(classIndices, new Set(groups.keys()));
+  const classes = order ?? Array.from(groups.keys()).sort((a, b) => a - b);
+
   let shardsPerClass = 0;
-  for (const group of groups.values()) {
-    shardsPerClass = Math.max(shardsPerClass, group.length);
+  for (const classIndex of classes) {
+    shardsPerClass = Math.max(shardsPerClass, (groups.get(classIndex) as ShardEntry[]).length);
   }
   const wanted = shardCountForPercent(percent, shardsPerClass);
 
-  const classIndices = Array.from(groups.keys()).sort((a, b) => a - b);
   const selected: ShardEntry[] = [];
-  for (const classIndex of classIndices) {
+  for (const classIndex of classes) {
     const group = groups.get(classIndex) as ShardEntry[];
     selected.push(...group.slice(0, wanted));
   }
@@ -377,12 +410,16 @@ export function selectShardEntries(
  * d'images doit contenir exactement `count * 784` octets de pixels, et la
  * tranche de libellés `[start, start + count)` doit exister. Les tableaux
  * retournés sont des copies fraîches ; les tableaux d'entrée ne sont jamais
- * modifiés.
+ * modifiés. Quand `labelRemap` est fourni, chaque libellé tranché passe par
+ * cette fonction ; le résultat doit être un entier dans `[0, classCount)`, où
+ * `classCount` est le nombre de classes distinctes des entrées. Par défaut, les
+ * libellés sont copiés tels quels.
  */
 export function mergeShards(
   entries: readonly ShardEntry[],
   shardImages: readonly Uint8Array[],
   labels: Uint8Array,
+  labelRemap?: (classIndex: number) => number,
 ): MnistIdxDataset {
   if (entries.length !== shardImages.length) {
     throw new RangeError(
@@ -393,6 +430,8 @@ export function mergeShards(
   for (const entry of entries) {
     totalCount += entry.count;
   }
+  const classCount =
+    labelRemap === undefined ? 0 : new Set(entries.map((entry) => entry.classIndex)).size;
   const images = new Uint8Array(totalCount * PIXELS_PER_IMAGE);
   const mergedLabels = new Uint8Array(totalCount);
   let imageOffset = 0;
@@ -412,7 +451,20 @@ export function mergeShards(
       );
     }
     images.set(image, imageOffset);
-    mergedLabels.set(labels.subarray(entry.start, entry.start + entry.count), labelOffset);
+    if (labelRemap === undefined) {
+      mergedLabels.set(labels.subarray(entry.start, entry.start + entry.count), labelOffset);
+    } else {
+      for (let offset = 0; offset < entry.count; offset += 1) {
+        const original = labels[entry.start + offset];
+        const mapped = labelRemap(original);
+        if (!Number.isInteger(mapped) || mapped < 0 || mapped >= classCount) {
+          throw new RangeError(
+            `sharded-assets: shard "${entry.file}" remaps label ${original} to ${String(mapped)}, outside [0, ${classCount}).`,
+          );
+        }
+        mergedLabels[labelOffset + offset] = mapped;
+      }
+    }
     imageOffset += expectedBytes;
     labelOffset += entry.count;
   }
@@ -560,11 +612,56 @@ function labelPayload(bytes: Uint8Array, file: string, expectedCount: number): U
   return bytes.subarray(LABEL_HEADER_BYTES);
 }
 
+/** Sélection de classes : ordre trié et remap des libellés vers `0..N-1`. */
+interface ClassSelection {
+  readonly order: readonly number[];
+  readonly remap: (classIndex: number) => number;
+}
+
+/**
+ * Construit la sélection de classes à partir de `classIndices`. Retourne
+ * `undefined` quand aucune sélection n'est demandée (`null` ou liste vide), pour
+ * garder le chemin par défaut. Rejette un indice hors du nombre de classes et
+ * tout libellé qui n'appartient pas à la sélection.
+ */
+function classSelection(
+  classCount: number,
+  classIndices: readonly number[] | null | undefined,
+): ClassSelection | undefined {
+  if (classIndices === null || classIndices === undefined || classIndices.length === 0) {
+    return undefined;
+  }
+  const selected = new Set<number>();
+  for (const value of classIndices) {
+    if (!Number.isInteger(value) || value < 0 || value >= classCount) {
+      throw new RangeError(
+        `sharded-assets: classIndices must contain integers from 0 to ${classCount - 1}, received ${String(value)}.`,
+      );
+    }
+    selected.add(value);
+  }
+  const order = Array.from(selected).sort((left, right) => left - right);
+  const positions = new Map(order.map((classIndex, position) => [classIndex, position]));
+  return {
+    order,
+    remap: (classIndex: number): number => {
+      const position = positions.get(classIndex);
+      if (position === undefined) {
+        throw new RangeError(
+          `sharded-assets: label ${classIndex} is not one of the selected classes.`,
+        );
+      }
+      return position;
+    },
+  };
+}
+
 /** Construit une fraction IDX brute à partir des octets téléchargés. */
 function buildSplit(
   split: ShardedSplitIndex,
   entries: readonly ShardEntry[],
   byFile: ReadonlyMap<string, Uint8Array>,
+  labelRemap?: (classIndex: number) => number,
 ): MnistIdxDataset {
   const labelsBytes = byFile.get(split.labelsFile);
   if (labelsBytes === undefined) {
@@ -578,7 +675,7 @@ function buildSplit(
     }
     return imagePayload(bytes, entry.file, entry.count);
   });
-  return mergeShards(entries, shardImages, labels);
+  return mergeShards(entries, shardImages, labels, labelRemap);
 }
 
 /** Applique `fn` à chaque élément avec au plus `limit` appels simultanés. */
@@ -607,19 +704,24 @@ async function mapWithConcurrency<T, R>(
  * Télécharge et décode les deux fractions d'un jeu segmenté. L'index, les deux
  * fichiers de libellés et les fragments sélectionnés sont téléchargés avec un
  * cache par jeu et chemin, au plus quatre fichiers à la fois. `onProgress`
- * reçoit `(filesLoaded, totalFiles)`, l'index comptant pour un fichier.
+ * reçoit `(filesLoaded, totalFiles)`, l'index comptant pour un fichier. Quand
+ * `classIndices` est fourni, seules ces classes sont téléchargées et leurs
+ * libellés sont remappés vers `0..N-1` dans l'ordre trié de la sélection ;
+ * `null` ou une liste vide garde toutes les classes.
  */
 export async function loadShardedSplits(
   dataset: ShardedDatasetDefinition,
   trainPercent: number,
   validationPercent: number,
   onProgress?: (loaded: number, total: number) => void,
+  classIndices?: readonly number[] | null,
 ): Promise<MnistSplits> {
   const index = await loadShardedIndex(dataset);
   const trainSplit = index.splits.train;
   const testSplit = index.splits.test;
-  const trainEntries = selectShardEntries(trainSplit, trainPercent);
-  const testEntries = selectShardEntries(testSplit, validationPercent);
+  const selection = classSelection(index.classNames.length, classIndices);
+  const trainEntries = selectShardEntries(trainSplit, trainPercent, selection?.order);
+  const testEntries = selectShardEntries(testSplit, validationPercent, selection?.order);
 
   const totalFiles = 1 + 2 + trainEntries.length + testEntries.length;
   let loaded = 1;
@@ -641,8 +743,8 @@ export async function loadShardedSplits(
 
   const byFile = new Map(results.map((result) => [result.file, result.bytes]));
   return {
-    train: buildSplit(trainSplit, trainEntries, byFile),
-    test: buildSplit(testSplit, testEntries, byFile),
+    train: buildSplit(trainSplit, trainEntries, byFile, selection?.remap),
+    test: buildSplit(testSplit, testEntries, byFile, selection?.remap),
   };
 }
 

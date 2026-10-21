@@ -323,6 +323,40 @@ describe('selectShardEntries', () => {
       'c-third.idx.gz',
     ]);
   });
+
+  const sixClasses: ShardedSplitIndex = {
+    count: 12,
+    labelsFile: 'train-labels.idx.gz',
+    shards: [0, 1, 2, 3, 4, 5].map((classIndex) => ({
+      file: `c${classIndex}.idx.gz`,
+      classIndex,
+      start: classIndex * 2,
+      count: 2,
+    })),
+  };
+
+  it('keeps only the selected classes, in sorted order', async () => {
+    const { selectShardEntries } = await loadLoader();
+    const selected = selectShardEntries(sixClasses, 100, [2, 5]);
+    expect(selected.map((shard) => shard.file)).toEqual(['c2.idx.gz', 'c5.idx.gz']);
+  });
+
+  it('sorts and deduplicates the selected classes', async () => {
+    const { selectShardEntries } = await loadLoader();
+    const selected = selectShardEntries(sixClasses, 100, [5, 2, 5]);
+    expect(selected.map((shard) => shard.classIndex)).toEqual([2, 5]);
+  });
+
+  it('treats an empty selection as every class', async () => {
+    const { selectShardEntries } = await loadLoader();
+    expect(selectShardEntries(sixClasses, 100, [])).toEqual(selectShardEntries(sixClasses, 100));
+  });
+
+  it('rejects a selected class without a shard', async () => {
+    const { selectShardEntries } = await loadLoader();
+    expect(() => selectShardEntries(sixClasses, 100, [2, 9])).toThrow(RangeError);
+    expect(() => selectShardEntries(sixClasses, 100, [2, 9])).toThrow(/class 9/);
+  });
 });
 
 describe('mergeShards', () => {
@@ -353,6 +387,28 @@ describe('mergeShards', () => {
     const { mergeShards } = await loadLoader();
     const outOfRange = { file: 'b.idx.gz', classIndex: 1, start: 10, count: 1 };
     expect(() => mergeShards([outOfRange], [new Uint8Array(784)], labels)).toThrow(/needs labels/);
+  });
+
+  it('remaps the sliced labels through the provided function', async () => {
+    const { mergeShards } = await loadLoader();
+    const remapped = mergeShards(
+      [entryA, entryB],
+      [new Uint8Array(2 * 784), new Uint8Array(784)],
+      Uint8Array.from([0, 1, 0, 1]),
+      (label) => 1 - label,
+    );
+    expect(Array.from(remapped.labels)).toEqual([1, 0, 0]);
+  });
+
+  it('rejects a remapped label outside the class count', async () => {
+    const { mergeShards } = await loadLoader();
+    const images = [new Uint8Array(2 * 784), new Uint8Array(784)];
+    const sliced = Uint8Array.from([0, 1, 0, 1]);
+    expect(() => mergeShards([entryA, entryB], images, sliced, () => 2)).toThrow(RangeError);
+    expect(() => mergeShards([entryA, entryB], images, sliced, () => 2)).toThrow(
+      /outside \[0, 2\)/,
+    );
+    expect(() => mergeShards([entryA, entryB], images, sliced, () => 0.5)).toThrow(RangeError);
   });
 });
 
@@ -386,6 +442,75 @@ describe('loadShardedSplits', () => {
     expect(mock).toHaveBeenCalledTimes(7);
     expect(splits.train.count).toBe(4);
     expect(progress.at(-1)).toEqual([7, 7]);
+  });
+
+  it('downloads only the selected classes and remaps their labels to 0..N-1', async () => {
+    const fixture = segmentFixture(15, 4);
+    const assets = new Map(fixture.assets);
+    assets.set('index.json', new TextEncoder().encode(JSON.stringify(fixture.json)));
+    const mock = stubFetch(assets);
+    const { loadShardedSplits } = await loadLoader();
+    const progress: [number, number][] = [];
+
+    const splits = await loadShardedSplits(
+      SHARDED_DATASET,
+      100,
+      100,
+      (loaded, total) => {
+        progress.push([loaded, total]);
+      },
+      [2, 5],
+    );
+
+    // Deux classes, quatre fragments de deux images par fraction.
+    expect(splits.train.count).toBe(16);
+    expect(splits.test.count).toBe(16);
+    const expectedLabels = [0, 0, 0, 0, 0, 0, 0, 0, 1, 1, 1, 1, 1, 1, 1, 1];
+    expect(Array.from(splits.train.labels)).toEqual(expectedLabels);
+    expect(Array.from(splits.test.labels)).toEqual(expectedLabels);
+
+    const shards = fetchedShardFiles(mock);
+    expect(shards).toHaveLength(16);
+    for (const name of shards) {
+      expect(name).toMatch(/-c(2|5)-/);
+    }
+    // Index + deux libellés + seize fragments (deux classes, quatre fragments,
+    // deux fractions).
+    expect(progress.at(-1)).toEqual([19, 19]);
+  });
+
+  it('keeps every class when the selection is null or empty', async () => {
+    const mock = stubFetch(assetsForIndex(baseIndex()));
+    const { loadShardedSplits } = await loadLoader();
+
+    const withNull = await loadShardedSplits(SHARDED_DATASET, 100, 100, undefined, null);
+    expect(Array.from(withNull.train.labels)).toEqual(TRAIN_LABELS);
+    expect(Array.from(withNull.test.labels)).toEqual(TEST_LABELS);
+
+    const withEmpty = await loadShardedSplits(SHARDED_DATASET, 100, 100, undefined, []);
+    expect(Array.from(withEmpty.train.labels)).toEqual(TRAIN_LABELS);
+    expect(fetchedShardFiles(mock)).toHaveLength(12);
+  });
+
+  it('rejects a labels file that carries an unselected class', async () => {
+    const fixture = segmentFixture(15, 4);
+    const labels = [...fixture.labels];
+    // Premier fragment de la classe 2 : le libellé 7 n'est pas sélectionné.
+    labels[16] = 7;
+    const assets = new Map(fixture.assets);
+    assets.set('train-labels.idx.gz', gz(labelIdx(labels)));
+    assets.set('index.json', new TextEncoder().encode(JSON.stringify(fixture.json)));
+    stubFetch(assets);
+    const { loadShardedSplits } = await loadLoader();
+
+    const error = await loadShardedSplits(SHARDED_DATASET, 2, 2, undefined, [2, 5]).then(
+      () => {
+        throw new Error('expected the load to fail');
+      },
+      (reason: Error) => reason,
+    );
+    expect(error).toBeInstanceOf(RangeError);
+    expect(error.message).toMatch(/label 7/);
   });
 
   it('caches a second call with the same percentages', async () => {
