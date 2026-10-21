@@ -115,8 +115,8 @@ l'API n'est pas disponible.
 
 L'entraînement suit un `zip` des listes de fragments par classe : chaque round
 prend un fragment par classe, et une époque compte autant de rounds que la plus
-courte liste. Les listes sont mélangées à chaque époque, donc les fragments non
-retenus une époque le sont à la suivante. La validation, elle, couvre tous les
+courte liste. Les listes sont mélangées à chaque époque, donc la sélection
+de fragments varie d'une époque à l'autre. La validation, elle, couvre tous les
 fragments de la fraction (les classes plus courtes recyclent leurs fragments)
 afin que la perte et l'exactitude restent comparables d'une époque à l'autre.
 L'effectif d'entraînement affiché correspond au volume d'une époque, pas au
