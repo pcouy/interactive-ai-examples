@@ -8,8 +8,8 @@
       body {
         margin: 0;
         padding: 2rem;
-        background: #f8fafc;
-        color: #0f172a;
+        background: var(--drl-theme-bg);
+        color: var(--drl-theme-fg);
         font-family: system-ui, sans-serif;
       }
 
@@ -36,19 +36,19 @@
       }
 
       a {
-        color: #2563eb;
+        color: var(--drl-theme-accent);
       }
 
       code {
-        background: #ffffff;
-        border: 1px solid #e2e8f0;
+        background: var(--drl-theme-surface);
+        border: 1px solid var(--drl-theme-border);
         border-radius: 4px;
         padding: 0 0.3rem;
       }
 
       section {
-        background: #ffffff;
-        border: 1px solid #e2e8f0;
+        background: var(--drl-theme-surface);
+        border: 1px solid var(--drl-theme-border);
         border-radius: 10px;
         padding: 1.25rem;
       }
@@ -68,16 +68,16 @@
       button {
         font: inherit;
         padding: 0.25rem 0.6rem;
-        border: 1px solid #e2e8f0;
+        border: 1px solid var(--drl-theme-border);
         border-radius: 5px;
-        background: #f8fafc;
-        color: #0f172a;
+        background: var(--drl-theme-bg);
+        color: var(--drl-theme-fg);
         cursor: pointer;
       }
 
       button[aria-pressed='true'] {
-        border-color: #2563eb;
-        color: #2563eb;
+        border-color: var(--drl-theme-accent);
+        color: var(--drl-theme-accent);
       }
 
       .row {
@@ -95,9 +95,10 @@
 
       .mini span {
         font-size: 0.75rem;
-        color: #64748b;
+        color: var(--drl-theme-muted);
       }
     </style>
+    <script type="module" src="/src/styles/playground-tokens.ts"></script>
   </head>
   <body>
     <main>

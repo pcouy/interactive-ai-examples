@@ -8,8 +8,8 @@
       body {
         margin: 0;
         padding: 2rem;
-        background: #f8fafc;
-        color: #0f172a;
+        background: var(--drl-theme-bg);
+        color: var(--drl-theme-fg);
         font-family: system-ui, sans-serif;
       }
 
@@ -36,19 +36,19 @@
       }
 
       a {
-        color: #2563eb;
+        color: var(--drl-theme-accent);
       }
 
       code {
-        background: #ffffff;
-        border: 1px solid #e2e8f0;
+        background: var(--drl-theme-surface);
+        border: 1px solid var(--drl-theme-border);
         border-radius: 4px;
         padding: 0 0.3rem;
       }
 
       section {
-        background: #ffffff;
-        border: 1px solid #e2e8f0;
+        background: var(--drl-theme-surface);
+        border: 1px solid var(--drl-theme-border);
         border-radius: 10px;
         padding: 1.25rem;
       }
@@ -66,10 +66,10 @@
       input {
         font: inherit;
         padding: 0.25rem 0.6rem;
-        border: 1px solid #e2e8f0;
+        border: 1px solid var(--drl-theme-border);
         border-radius: 5px;
-        background: #f8fafc;
-        color: #0f172a;
+        background: var(--drl-theme-bg);
+        color: var(--drl-theme-fg);
       }
 
       button {
@@ -77,8 +77,8 @@
       }
 
       button[aria-pressed='true'] {
-        border-color: #2563eb;
-        color: #2563eb;
+        border-color: var(--drl-theme-accent);
+        color: var(--drl-theme-accent);
       }
 
       label {
@@ -90,10 +90,11 @@
       .log {
         margin: 0.75rem 0 0;
         font-size: 0.85rem;
-        color: #64748b;
+        color: var(--drl-theme-muted);
         min-height: 1.2rem;
       }
     </style>
+    <script type="module" src="/src/styles/playground-tokens.ts"></script>
   </head>
   <body>
     <main>
@@ -171,7 +172,9 @@
 
       playerButtons.forEach((button) => {
         button.addEventListener('click', () => {
-          playerButtons.forEach((other) => other.setAttribute('aria-pressed', 'false'));
+          playerButtons.forEach((other) => {
+            other.setAttribute('aria-pressed', 'false');
+          });
           button.setAttribute('aria-pressed', 'true');
           game.setAttribute('players', button.dataset.players);
         });

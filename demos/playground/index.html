@@ -12,8 +12,8 @@
       body {
         margin: 0;
         padding: 2rem;
-        background: #f8fafc;
-        color: #0f172a;
+        background: var(--drl-theme-bg);
+        color: var(--drl-theme-fg);
         font-family: system-ui, -apple-system, 'Segoe UI', Roboto, sans-serif;
       }
 
@@ -24,7 +24,7 @@
       }
 
       header p {
-        color: #64748b;
+        color: var(--drl-theme-muted);
       }
 
       .grid {
@@ -38,8 +38,8 @@
         display: grid;
         gap: 0.25rem;
         padding: 1rem;
-        background: #ffffff;
-        border: 1px solid #e2e8f0;
+        background: var(--drl-theme-surface);
+        border: 1px solid var(--drl-theme-border);
         border-radius: 10px;
         box-shadow: 0 1px 2px rgb(15 23 42 / 6%);
         color: inherit;
@@ -47,7 +47,7 @@
       }
 
       .demo-card:hover {
-        border-color: #2563eb;
+        border-color: var(--drl-theme-accent);
       }
 
       .demo-card h3 {
@@ -55,10 +55,11 @@
       }
 
       .demo-tag {
-        color: #64748b;
+        color: var(--drl-theme-muted);
         font-size: 0.85rem;
       }
     </style>
+    <script type="module" src="/src/styles/playground-tokens.ts"></script>
   </head>
   <body>
     <header>
