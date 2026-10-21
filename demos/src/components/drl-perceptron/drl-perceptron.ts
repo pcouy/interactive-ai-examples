@@ -18,6 +18,42 @@ const MISSING_VALUE = '–';
 
 type Point = [number, number];
 
+interface PendingPrediction {
+  index: number;
+  point: LabeledPoint;
+  prediction: 0 | 1;
+}
+
+interface AppliedUpdate {
+  point: LabeledPoint;
+  prediction: 0 | 1;
+  expected: 0 | 1;
+  learningRate: number;
+  before: { w1: number; w2: number; bias: number };
+  after: { w1: number; w2: number; bias: number };
+}
+
+export interface PerceptronState {
+  /** Poids de x₁. */
+  w1: number;
+  /** Poids de x₂. */
+  w2: number;
+  /** Biais ajouté à la somme pondérée. */
+  bias: number;
+  /** Seuil de décision : seuil = −bias. */
+  threshold: number;
+  /** Coordonnée x₁ du dernier point présenté, ou null si aucun point. */
+  x1: number | null;
+  /** Coordonnée x₂ du dernier point présenté, ou null si aucun point. */
+  x2: number | null;
+  /** Somme pondérée w₁·x₁ + w₂·x₂, ou null si aucun point. */
+  y: number | null;
+  /** Classe prédite (0 ou 1), ou null si aucun point. */
+  decision: 0 | 1 | null;
+  /** Classe attendue du point présenté (0 ou 1), ou null si aucun point. */
+  expected: 0 | 1 | null;
+}
+
 type ReactiveDataset = DatasetName & DOMStringMap;
 
 type SingleSelection<ElementType extends BaseType> = Selection<
@@ -52,6 +88,10 @@ function formatNumber(value: number): string {
 
 function formatCoord(value: number | undefined): string {
   return value === undefined ? MISSING_VALUE : formatNumber(value);
+}
+
+function classLabel(label: 0 | 1): string {
+  return label === 1 ? 'classe bleue' : 'classe violette';
 }
 
 function weightWidth(weight: number): number {
@@ -153,6 +193,69 @@ export class Perceptron extends DemoElement {
         border-radius: calc(var(--drl-radius) / 2);
         padding: 0 var(--drl-space-2);
         font-size: 0.85em;
+      }
+
+      .drl-explanation {
+        margin-bottom: var(--drl-space-2);
+        padding: var(--drl-space-2);
+        background: var(--drl-bg);
+        border: 1px solid var(--drl-border);
+        border-left: 3px solid var(--drl-accent-2);
+        border-radius: calc(var(--drl-radius) / 2);
+      }
+
+      .drl-explanation[hidden],
+      .drl-rule[hidden] {
+        display: none;
+      }
+
+      .drl-explanation[data-phase='update'] {
+        border-left-color: var(--drl-accent);
+      }
+
+      .drl-explanation-headline {
+        margin: 0 0 var(--drl-space-1);
+        font-weight: 600;
+      }
+
+      .drl-explanation[data-phase='prediction'] .drl-explanation-headline {
+        color: var(--drl-accent-2);
+      }
+
+      .drl-explanation[data-phase='update'] .drl-explanation-headline {
+        color: var(--drl-accent);
+      }
+
+      .drl-explanation-detail,
+      .drl-explanation-hint {
+        margin: 0;
+      }
+
+      .drl-explanation-hint {
+        margin-top: var(--drl-space-1);
+        color: var(--drl-muted);
+        font-size: 0.9em;
+      }
+
+      .drl-rule {
+        margin-top: var(--drl-space-2);
+        padding-top: var(--drl-space-2);
+        border-top: 1px dashed var(--drl-border);
+      }
+
+      .drl-rule-title {
+        margin: 0 0 var(--drl-space-1);
+        color: var(--drl-muted);
+        font-size: 0.85em;
+        letter-spacing: 0.04em;
+        text-transform: uppercase;
+      }
+
+      .drl-rule-line {
+        margin: 0.15rem 0;
+        font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+        font-size: 0.9em;
+        overflow-wrap: anywhere;
       }
 
       .drl-toolbar {
@@ -274,6 +377,22 @@ export class Perceptron extends DemoElement {
 
   private statusBadge: HTMLElement | null = null;
 
+  private explanation: HTMLElement | null = null;
+
+  private explanationHeadline: HTMLElement | null = null;
+
+  private explanationDetail: HTMLElement | null = null;
+
+  private explanationHint: HTMLElement | null = null;
+
+  private explanationRule: HTMLElement | null = null;
+
+  private ruleW1: HTMLElement | null = null;
+
+  private ruleW2: HTMLElement | null = null;
+
+  private ruleBias: HTMLElement | null = null;
+
   private boundary: SingleSelection<SVGLineElement> | null = null;
 
   private tintOne: SingleSelection<SVGPolygonElement> | null = null;
@@ -304,6 +423,42 @@ export class Perceptron extends DemoElement {
 
   private biasLabel: SingleSelection<SVGTextElement> | null = null;
 
+  /** Dernier état diffusé, pour n'émettre drl-state qu'en cas de changement. */
+  private lastState: PerceptronState | null = null;
+
+  /** Prédiction erronée affichée en mode Step, en attente de la mise à jour. */
+  private pendingPrediction: PendingPrediction | null = null;
+
+  /** Mise à jour appliquée, affichée jusqu'au prochain pas manuel. */
+  private appliedUpdate: AppliedUpdate | null = null;
+
+  /** Index affiché : le point en attente prime sur le dernier point présenté. */
+  private get displayedIndex(): number | null {
+    return this.pendingPrediction?.index ?? this.core.lastPresentedIndex;
+  }
+
+  /** État courant de la formule : poids, seuil et dernier point présenté. */
+  get state(): PerceptronState {
+    const { w1, w2 } = this.core.weights;
+    const bias = this.core.bias;
+    const index = this.displayedIndex;
+    const point =
+      index !== null && index >= 0 && index < this.core.points.length
+        ? this.core.points[index]
+        : null;
+    return {
+      w1,
+      w2,
+      bias,
+      threshold: -bias,
+      x1: point?.x ?? null,
+      x2: point?.y ?? null,
+      y: point ? w1 * point.x + w2 * point.y : null,
+      decision: point ? this.core.predictionAt(point.x, point.y) : null,
+      expected: point?.label ?? null,
+    };
+  }
+
   protected override firstUpdated(): void {
     const svgElement = this.renderRoot.querySelector<SVGSVGElement>('svg');
     if (!svgElement) {
@@ -327,15 +482,91 @@ export class Perceptron extends DemoElement {
     this.biasLabel = root.select<SVGTextElement>('.drl-bias-label');
     this.statusText = this.renderRoot.querySelector<HTMLElement>('.drl-status-text');
     this.statusBadge = this.renderRoot.querySelector<HTMLElement>('.drl-badge');
+    this.explanation = this.renderRoot.querySelector<HTMLElement>('.drl-explanation');
+    this.explanationHeadline = this.renderRoot.querySelector<HTMLElement>(
+      '.drl-explanation-headline',
+    );
+    this.explanationDetail = this.renderRoot.querySelector<HTMLElement>('.drl-explanation-detail');
+    this.explanationHint = this.renderRoot.querySelector<HTMLElement>('.drl-explanation-hint');
+    this.explanationRule = this.renderRoot.querySelector<HTMLElement>('.drl-rule');
+    this.ruleW1 = this.renderRoot.querySelector<HTMLElement>('.drl-rule-line--w1');
+    this.ruleW2 = this.renderRoot.querySelector<HTMLElement>('.drl-rule-line--w2');
+    this.ruleBias = this.renderRoot.querySelector<HTMLElement>('.drl-rule-line--b');
     this.draw();
   }
 
   override step(): void {
+    if (this.running) {
+      // En lecture automatique, la règle n'a pas le temps d'être lue : on
+      // applique la mise à jour immédiatement, comme avant.
+      this.clearManualState();
+      this.core.tick(this.learningRate);
+      this.draw();
+      return;
+    }
+    this.manualStep();
+  }
+
+  /**
+   * Pas manuel en deux temps : d'abord la prédiction (sans toucher aux poids),
+   * puis, au clic suivant, la règle de mise à jour et son application.
+   */
+  private manualStep(): void {
+    if (this.appliedUpdate !== null) {
+      this.appliedUpdate = null;
+    }
+    if (this.pendingPrediction !== null) {
+      this.applyPendingPrediction();
+      return;
+    }
+    const index = this.core.nextIndex;
+    const point = this.core.nextPoint;
+    if (this.core.isConverged || index === null || point === null) {
+      this.draw();
+      return;
+    }
+    const prediction = this.core.predictionAt(point.x, point.y);
+    if (prediction !== point.label) {
+      this.pendingPrediction = { index, point, prediction };
+      this.draw();
+      return;
+    }
+    // Prédiction correcte : aucun poids à changer, on avance d'un point.
     this.core.tick(this.learningRate);
     this.draw();
   }
 
+  private applyPendingPrediction(): void {
+    const pending = this.pendingPrediction;
+    if (pending === null) {
+      return;
+    }
+    const before = this.weightSnapshot();
+    this.core.tick(this.learningRate);
+    const after = this.weightSnapshot();
+    this.appliedUpdate = {
+      point: pending.point,
+      prediction: pending.prediction,
+      expected: pending.point.label,
+      learningRate: this.learningRate,
+      before,
+      after,
+    };
+    this.pendingPrediction = null;
+    this.draw();
+  }
+
+  private weightSnapshot(): { w1: number; w2: number; bias: number } {
+    return { w1: this.core.weights.w1, w2: this.core.weights.w2, bias: this.core.bias };
+  }
+
+  private clearManualState(): void {
+    this.pendingPrediction = null;
+    this.appliedUpdate = null;
+  }
+
   protected override onReset(): void {
+    this.clearManualState();
     this.core.reset();
     this.draw();
   }
@@ -343,6 +574,7 @@ export class Perceptron extends DemoElement {
   protected override willUpdate(changed: PropertyValues<this>): void {
     super.willUpdate(changed);
     if (changed.has('dataset') && isDatasetName(this.datasetName)) {
+      this.clearManualState();
       this.core.setData(PRESET_DATASETS[this.datasetName]());
       this.draw();
     }
@@ -364,6 +596,7 @@ export class Perceptron extends DemoElement {
   };
 
   private readonly handleClear = (): void => {
+    this.clearManualState();
     this.core.clearPoints();
     this.draw();
     this.requestUpdate();
@@ -403,6 +636,95 @@ export class Perceptron extends DemoElement {
     selection
       .attr('points', polygon.map(([x, y]) => `${x},${y}`).join(' '))
       .attr('visibility', 'visible');
+  }
+
+  private broadcastState(): void {
+    const state = this.state;
+    const last = this.lastState;
+    if (
+      last !== null &&
+      last.w1 === state.w1 &&
+      last.w2 === state.w2 &&
+      last.bias === state.bias &&
+      last.x1 === state.x1 &&
+      last.x2 === state.x2 &&
+      last.decision === state.decision &&
+      last.expected === state.expected
+    ) {
+      return;
+    }
+    this.lastState = state;
+    this.dispatchEvent(
+      new CustomEvent<PerceptronState>('drl-state', {
+        detail: state,
+        bubbles: true,
+        composed: true,
+      }),
+    );
+  }
+
+  private renderExplanation(): void {
+    const explanation = this.explanation;
+    if (!explanation) {
+      return;
+    }
+    const pending = this.pendingPrediction;
+    const update = this.appliedUpdate;
+    if (this.running || (pending === null && update === null)) {
+      explanation.hidden = true;
+      return;
+    }
+    explanation.hidden = false;
+    explanation.dataset.phase = pending !== null ? 'prediction' : 'update';
+
+    const prediction = pending?.prediction ?? update?.prediction;
+    const expected = pending?.point.label ?? update?.expected;
+    if (prediction === undefined || expected === undefined) {
+      explanation.hidden = true;
+      return;
+    }
+
+    if (this.explanationHeadline) {
+      this.explanationHeadline.textContent =
+        pending !== null ? 'Prédiction erronée' : 'Règle de mise à jour appliquée';
+    }
+    if (this.explanationDetail) {
+      this.explanationDetail.textContent =
+        `ŷ = ${prediction} (${classLabel(prediction)}) · ` +
+        `attendu t = ${expected} (${classLabel(expected)}).`;
+    }
+    if (this.explanationHint) {
+      this.explanationHint.textContent =
+        pending !== null
+          ? 'Step : afficher la règle de mise à jour.'
+          : 'Step : présenter le point suivant.';
+    }
+    if (this.explanationRule) {
+      this.explanationRule.hidden = update === null;
+    }
+    if (update === null) {
+      return;
+    }
+
+    const rate = formatNumber(update.learningRate);
+    const error = `(${update.expected} − ${update.prediction})`;
+    const x1 = formatNumber(update.point.x);
+    const x2 = formatNumber(update.point.y);
+    if (this.ruleW1) {
+      this.ruleW1.textContent =
+        `w₁ ← w₁ + η·(t − ŷ)·x₁ = ${formatNumber(update.before.w1)} + ` +
+        `${rate}·${error}·${x1} = ${formatNumber(update.after.w1)}`;
+    }
+    if (this.ruleW2) {
+      this.ruleW2.textContent =
+        `w₂ ← w₂ + η·(t − ŷ)·x₂ = ${formatNumber(update.before.w2)} + ` +
+        `${rate}·${error}·${x2} = ${formatNumber(update.after.w2)}`;
+    }
+    if (this.ruleBias) {
+      this.ruleBias.textContent =
+        `b ← b + η·(t − ŷ) = ${formatNumber(update.before.bias)} + ` +
+        `${rate}·${error} = ${formatNumber(update.after.bias)}`;
+    }
   }
 
   private draw(): void {
@@ -455,7 +777,7 @@ export class Perceptron extends DemoElement {
       .attr('stroke', (index) => (misclassified.has(index) ? 'var(--drl-fg)' : 'none'))
       .attr('stroke-width', (index) => (misclassified.has(index) ? 2 : 0));
 
-    const currentIndex = this.core.lastPresentedIndex;
+    const currentIndex = this.displayedIndex;
     const current: LabeledPoint | null =
       currentIndex !== null && currentIndex >= 0 && currentIndex < points.length
         ? points[currentIndex]
@@ -498,6 +820,9 @@ export class Perceptron extends DemoElement {
         : '';
       this.statusBadge.style.display = converged ? 'inline-block' : 'none';
     }
+
+    this.renderExplanation();
+    this.broadcastState();
   }
 
   protected override renderContent(): TemplateResult {
@@ -553,6 +878,17 @@ export class Perceptron extends DemoElement {
           <span class="drl-dot drl-dot--0" aria-hidden="true"></span>Classe violette
         </button>
         <button type="button" class="drl-button" @click=${this.handleClear}>Effacer</button>
+      </div>
+      <div class="drl-explanation" role="status" aria-live="polite" hidden>
+        <p class="drl-explanation-headline"></p>
+        <p class="drl-explanation-detail"></p>
+        <div class="drl-rule" hidden>
+          <p class="drl-rule-title">Règle de mise à jour</p>
+          <p class="drl-rule-line drl-rule-line--w1"></p>
+          <p class="drl-rule-line drl-rule-line--w2"></p>
+          <p class="drl-rule-line drl-rule-line--b"></p>
+        </div>
+        <p class="drl-explanation-hint"></p>
       </div>
       <svg
         viewBox="0 0 640 360"

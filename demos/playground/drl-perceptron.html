@@ -23,6 +23,46 @@
       a {
         color: #2563eb;
       }
+
+      .formula {
+        margin-top: 1rem;
+        padding: 0.85rem 1rem;
+        background: #ffffff;
+        border: 1px solid #e2e8f0;
+        border-radius: 10px;
+      }
+
+      .formula h3 {
+        margin: 0 0 0.5rem;
+        font-size: 1rem;
+      }
+
+      .formula-label {
+        margin: 0.75rem 0 0.25rem;
+        color: #64748b;
+        font-size: 0.8rem;
+        letter-spacing: 0.04em;
+        text-transform: uppercase;
+      }
+
+      .formula-expression {
+        margin: 0.15rem 0;
+        font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+        font-size: 1.05rem;
+      }
+
+      .formula-rule {
+        margin: 0.15rem 0;
+        color: #334155;
+      }
+
+      .formula-sample {
+        margin-top: 0.5rem;
+      }
+
+      .formula-sample--error {
+        color: #b91c1c;
+      }
     </style>
   </head>
   <body>
@@ -32,9 +72,25 @@
         <p>
           Cliquez sur le plan pour ajouter un point de la classe active. Play lance
           l'entraînement ; à chaque erreur, le perceptron ajuste ses poids et la frontière
-          bouge.
+          bouge. En mode Step, un point mal classé affiche d'abord sa prédiction erronée ; le
+          clic suivant montre la règle de mise à jour et l'applique.
         </p>
         <drl-perceptron speed="1"></drl-perceptron>
+        <section class="formula" aria-label="Formule du perceptron">
+          <h3>Formule du perceptron</h3>
+
+          <p class="formula-label">Avec les variables</p>
+          <p class="formula-expression">w₁·x₁ + w₂·x₂ = y</p>
+          <p class="formula-rule">y ≥ seuil ⇒ décision 1 (classe bleue)</p>
+          <p class="formula-rule">y &lt; seuil ⇒ décision 2 (classe violette)</p>
+
+          <p class="formula-label">Avec les valeurs courantes</p>
+          <p class="formula-expression" id="formula-substituted">…</p>
+          <p class="formula-rule">seuil = −b = <span id="formula-threshold">…</span></p>
+          <p class="formula-rule formula-sample" id="formula-sample">
+            Aucun point présenté pour l'instant.
+          </p>
+        </section>
         <p>
           <drl-slider
             label="Taux d'apprentissage"
@@ -50,6 +106,74 @@
     <script type="module">
       const demo = document.querySelector('drl-perceptron');
       const slider = document.querySelector('drl-slider');
+      const formulaSubstituted = document.getElementById('formula-substituted');
+      const formulaThreshold = document.getElementById('formula-threshold');
+      const formulaSample = document.getElementById('formula-sample');
+
+      function formatValue(value) {
+        return value.toFixed(2).replace('.', ',').replace('-', '−');
+      }
+
+      function formatInput(value) {
+        const text = formatValue(value);
+        return value < 0 ? `(${text})` : text;
+      }
+
+      function formatTerm(coefficient, symbol, first) {
+        const magnitude = formatValue(Math.abs(coefficient));
+        if (first) {
+          return coefficient < 0 ? `−${magnitude}·${symbol}` : `${magnitude}·${symbol}`;
+        }
+        return coefficient < 0 ? ` − ${magnitude}·${symbol}` : ` + ${magnitude}·${symbol}`;
+      }
+
+      function formatProduct(coefficient, value, first) {
+        const input = formatInput(value);
+        const magnitude = formatValue(Math.abs(coefficient));
+        if (first) {
+          return coefficient < 0 ? `−${magnitude}·${input}` : `${magnitude}·${input}`;
+        }
+        return coefficient < 0 ? ` − ${magnitude}·${input}` : ` + ${magnitude}·${input}`;
+      }
+
+      function renderFormula(state) {
+        if (!state) {
+          return;
+        }
+        if (formulaSubstituted !== null) {
+          formulaSubstituted.textContent =
+            `${formatTerm(state.w1, 'x₁', true)}${formatTerm(state.w2, 'x₂', false)} = y`;
+        }
+        if (formulaThreshold !== null) {
+          formulaThreshold.textContent = formatValue(state.threshold);
+        }
+        if (formulaSample === null) {
+          return;
+        }
+        if (state.x1 === null || state.x2 === null || state.y === null || state.decision === null) {
+          formulaSample.textContent = "Aucun point présenté pour l'instant.";
+          formulaSample.classList.remove('formula-sample--error');
+          return;
+        }
+        const substitution =
+          `${formatProduct(state.w1, state.x1, true)}` +
+          `${formatProduct(state.w2, state.x2, false)}`;
+        const relation = state.y >= state.threshold ? '≥' : '<';
+        const decision =
+          state.decision === 1 ? 'décision 1 (classe bleue)' : 'décision 2 (classe violette)';
+        const expected =
+          state.expected === 1 ? 'décision 1 (classe bleue)' : 'décision 2 (classe violette)';
+        const isError = state.expected !== null && state.expected !== state.decision;
+        formulaSample.textContent =
+          `${substitution} = ${formatValue(state.y)} ${relation} ` +
+          `${formatValue(state.threshold)} ⇒ ${decision}` +
+          (isError ? ` — attendu ${expected}` : '');
+        formulaSample.classList.toggle('formula-sample--error', isError);
+      }
+
+      demo?.addEventListener('drl-state', (event) => renderFormula(event.detail));
+      renderFormula(demo?.state ?? null);
+
       slider?.addEventListener('drl-input', (event) => {
         if (demo) {
           demo.learningRate = event.detail;

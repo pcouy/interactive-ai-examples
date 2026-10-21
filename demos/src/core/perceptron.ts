@@ -271,6 +271,16 @@ export class PerceptronCore {
     return this.lastIndex;
   }
 
+  /** Index du prochain point qui sera présenté, ou null si le jeu est vide. */
+  get nextIndex(): number | null {
+    return this.data.length === 0 ? null : this.cursor;
+  }
+
+  /** Prochain point qui sera présenté, ou null si le jeu est vide. */
+  get nextPoint(): LabeledPoint | null {
+    return this.data.length === 0 ? null : this.data[this.cursor];
+  }
+
   private initWeights(): void {
     this.resetCount += 1;
     const rng = mulberry32(this.seed + this.resetCount);
