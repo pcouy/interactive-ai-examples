@@ -43,6 +43,7 @@ import {
   mapCanvasSize,
   mapCellSize,
   mixRgb,
+  nextGalleryClass,
   outputCellLabel,
   paintDisc,
   parseWeightInput,
@@ -55,12 +56,17 @@ import {
 } from './drl-mnist-cnn.js';
 import type { RectLike } from './filter-links.js';
 import { linkGeometry } from './filter-links.js';
-import type { MnistSplits } from './mnist-assets.js';
+import { loadDatasetSplits, type MnistSplits } from './mnist-assets.js';
 import { loadShardedSplits } from './sharded-assets.js';
 
 vi.mock('./sharded-assets.js', async (importOriginal) => {
   const actual = await importOriginal<typeof import('./sharded-assets.js')>();
   return { ...actual, loadShardedSplits: vi.fn() };
+});
+
+vi.mock('./mnist-assets.js', async (importOriginal) => {
+  const actual = await importOriginal<typeof import('./mnist-assets.js')>();
+  return { ...actual, loadDatasetSplits: vi.fn() };
 });
 
 function blankPixels(): Float32Array {
@@ -1150,6 +1156,35 @@ describe('loadSplitsForDataset', () => {
     // Le cinquième argument est la sélection de classes : sans lui, les libellés
     // remontent jusqu'à 14 classes alors que la sortie en compte `enabledClasses.length`.
     expect(loader).toHaveBeenCalledWith(dataset, 2, 3, undefined, enabledClasses);
+  });
+
+  it('leaves the enabled classes out of the IDX loader call', async () => {
+    const splits: MnistSplits = { train: idxDataset(10), test: idxDataset(5) };
+    const loader = vi.mocked(loadDatasetSplits);
+    loader.mockResolvedValueOnce(splits);
+    const dataset = getDataset('mnist');
+
+    await expect(loadSplitsForDataset(dataset, 2, 3, [0, 2])).resolves.toBe(splits);
+    expect(loader).toHaveBeenCalledWith(dataset);
+  });
+});
+
+describe('nextGalleryClass', () => {
+  it('selects the first enabled class when no class was shown', () => {
+    expect(nextGalleryClass([0, 1, 2], null)).toBe(0);
+  });
+
+  it('keeps the current class when it is still enabled', () => {
+    expect(nextGalleryClass([0, 2, 4], 2)).toBe(2);
+  });
+
+  it('moves to the first enabled class when the current one is disabled', () => {
+    expect(nextGalleryClass([0, 2, 4], 1)).toBe(0);
+  });
+
+  it('returns null when no class is enabled', () => {
+    expect(nextGalleryClass([], null)).toBeNull();
+    expect(nextGalleryClass([], 3)).toBeNull();
   });
 });
 

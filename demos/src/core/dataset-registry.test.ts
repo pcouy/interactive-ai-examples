@@ -57,12 +57,6 @@ describe('dataset-registry', () => {
     }
   });
 
-  it('leaves every dataset uncapped so that all of them allow 100 percent', () => {
-    for (const dataset of DATASETS) {
-      expect(dataset.maxPercent).toBeUndefined();
-    }
-  });
-
   it('narrows MNIST and Fashion-MNIST to four distinct IDX file names', () => {
     for (const id of ['mnist', 'fashion-mnist']) {
       const dataset = getDataset(id);

@@ -780,6 +780,21 @@ export function stepGalleryIndex(index: number, total: number, delta: number): n
   return (((index + delta) % total) + total) % total;
 }
 
+/**
+ * Classe affichée par la galerie après un changement de sélection : `previous`
+ * reste affichée si elle est encore retenue, sinon la première classe retenue.
+ * Retourne null quand aucune classe n'est retenue.
+ */
+export function nextGalleryClass(
+  enabledClasses: readonly number[],
+  previous: number | null,
+): number | null {
+  if (previous !== null && enabledClasses.includes(previous)) {
+    return previous;
+  }
+  return enabledClasses[0] ?? null;
+}
+
 @customElement('drl-mnist-cnn')
 export class MnistCnn extends LitElement {
   static override styles = [
@@ -2055,9 +2070,9 @@ export class MnistCnn extends LitElement {
   }
 
   /**
-   * Charge la galerie de dix exemples par chiffre et les jeux du jeu sélectionné,
-   * qui servent aussi à afficher les effectifs exacts des sélections. Le premier
-   * exemple du premier chiffre est appliqué à l'entrée. Tout échec laisse le
+   * Charge la galerie de dix exemples par classe et, pour un jeu segmenté,
+   * l'index qui donne les effectifs exacts des sélections. Le premier exemple de
+   * la première classe retenue est appliqué à l'entrée. Tout échec laisse le
    * sélecteur avec l'option de recharger et un message : l'inférence reste
    * utilisable.
    */
@@ -2069,39 +2084,41 @@ export class MnistCnn extends LitElement {
     this.galleryLoading = true;
     try {
       const dataset = this.currentDataset;
-      const splits =
-        dataset.kind === 'sharded'
-          ? await loadShardedSplits(dataset, this.trainPercent, this.validationPercent)
-          : await loadDatasetSplits(dataset);
-      // Un changement de jeu a pris un jeton plus récent : cet ancien
-      // chargement s'arrête avant d'écrire quoi que ce soit.
-      if (token !== this.galleryLoadToken) {
-        return;
-      }
-      this.splits = splits;
+      let gallerySample: MnistSample;
       if (dataset.kind === 'sharded') {
+        // La galerie segmentée ne télécharge aucun fragment : seuls l'index et
+        // les deux fichiers de galerie sont chargés.
+        this.splits = null;
         const shardedIndex = await loadShardedIndex(dataset);
         if (token !== this.galleryLoadToken) {
           return;
         }
         this.shardedIndex = shardedIndex;
+        gallerySample = await loadShardedGallery(dataset);
+      } else {
+        const splits = await loadDatasetSplits(dataset);
+        // Un changement de jeu a pris un jeton plus récent : cet ancien
+        // chargement s'arrête avant d'écrire quoi que ce soit.
+        if (token !== this.galleryLoadToken) {
+          return;
+        }
+        this.splits = splits;
+        gallerySample = await loadDatasetGallery(dataset);
       }
-      const gallerySample =
-        dataset.kind === 'sharded'
-          ? await loadShardedGallery(dataset)
-          : await loadDatasetGallery(dataset);
       if (token !== this.galleryLoadToken) {
         return;
       }
       this.gallerySample = gallerySample;
-      this.galleryClass = 0;
+      this.galleryClass = nextGalleryClass(this.galleryClassIndices, this.galleryClass);
       this.galleryIndex = 0;
       this.galleryError = null;
       // Le sélecteur de jeu et la galerie affichent la même erreur : un échec
       // laisse les deux lisibles sans bloquer l'inférence.
       this.datasetError = null;
       this.updateExampleCounts();
-      this.applyGalleryExample();
+      if (this.galleryClass !== null) {
+        this.applyGalleryExample();
+      }
     } catch (error) {
       if (token !== this.galleryLoadToken) {
         return;
@@ -2482,9 +2499,9 @@ export class MnistCnn extends LitElement {
 
   /**
    * Applique une nouvelle sélection de classes : arrête la run, reconstruit les
-   * poids avec la nouvelle largeur de sortie, remet la galerie à zéro et
-   * recalcule l'inférence et les effectifs. Aucune galerie n'est rechargée : les
-   * exemples déjà en mémoire couvrent toutes les classes.
+   * poids avec la nouvelle largeur de sortie, puis affiche la classe courante si
+   * elle reste retenue et la première classe retenue sinon. Aucune galerie n'est
+   * rechargée : les exemples déjà en mémoire couvrent toutes les classes.
    */
   private applyClassSelection(enabled: readonly number[]): void {
     this.enabledClasses = enabled;
@@ -2492,11 +2509,15 @@ export class MnistCnn extends LitElement {
     this.resetMetrics();
     this.clearSelection();
     this.weights = this.weightsForCurrentFilters();
-    this.galleryClass = null;
+    this.galleryClass = nextGalleryClass(this.galleryClassIndices, this.galleryClass);
     this.galleryIndex = 0;
     this.galleryLabel = null;
-    this.runInference();
     this.updateExampleCounts();
+    if (this.galleryClass !== null && this.gallerySample !== null) {
+      this.applyGalleryExample();
+    } else {
+      this.runInference();
+    }
   }
 
   /** Change la part du jeu d'entraînement : n'agit qu'à la prochaine run et

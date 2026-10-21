@@ -21,12 +21,6 @@ interface DatasetBase {
   readonly testCount: number;
   readonly defaultTrainPercent: number;
   readonly defaultValidationPercent: number;
-  /**
-   * Pourcentage maximal de fragments chargé dans le navigateur, pour limiter
-   * la mémoire utilisée. `undefined` vaut 100 : aucun plafond supplémentaire.
-   * Aucun jeu actuel ne fixe ce plafond : ils autorisent tous 100 %.
-   */
-  readonly maxPercent?: number;
   /** Vrai si l'utilisateur peut choisir un sous-ensemble de classes. */
   readonly selectable?: boolean;
   /** Indices des classes cochées au départ (sélectionnables seulement). */
