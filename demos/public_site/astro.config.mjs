@@ -7,7 +7,7 @@ import remarkMath from 'remark-math';
 // into remark/rehype so the demos can share the KaTeX setup used elsewhere.
 export default defineConfig({
   // PUBLIC_SITE_URL overrides the default GitHub Pages URL for a custom domain.
-  site: process.env.PUBLIC_SITE_URL || 'https://pcouy.github.io/interactive-ai-examples',
+  site: process.env.PUBLIC_SITE_URL || 'https://pierre-couy.dev/interactive-ai-examples',
   output: 'static',
   trailingSlash: 'never',
   build: {
