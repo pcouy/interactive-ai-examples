@@ -33,6 +33,16 @@ export interface DemoStatusInput {
   readonly validationAccuracy: number | null;
   /** Durée écoulée depuis le début de la run, en millisecondes. */
   readonly elapsedMs: number;
+  /** Nombre d'époques achevées, ou null avant la première époque. */
+  readonly completedEpochs?: number | null;
+  /** Indice du round en cours dans l'époque, ou null hors run segmentée. */
+  readonly roundIndex?: number | null;
+  /** Nombre de rounds par époque du plan segmenté, ou null hors run segmentée. */
+  readonly roundsPerEpoch?: number | null;
+  /** Nombre cumulé de rounds achevés depuis le début de la run. */
+  readonly completedRounds?: number | null;
+  /** Nombre de fragments couverts par la dernière fenêtre de perte lue. */
+  readonly windowShards?: number | null;
   /** Vrai dès le premier évènement de progression : les métriques sont affichées. */
   readonly metricsStarted: boolean;
   /** Effectif du sous-ensemble d'entraînement sélectionné. */
@@ -99,8 +109,9 @@ export function weightsOriginText(input: DemoStatusInput): string {
 
 /**
  * L'état de la démonstration en une ligne : entrée et classe prédite, paramètres,
- * métriques de la run quand elle a démarré, effectifs des sous-ensembles, note
- * d'édition manuelle des poids, erreur de manifeste. Parties jointes par ` · `.
+ * métriques de la run quand elle a démarré, époque et progression segmentée
+ * quand elles sont fournies, effectifs des sous-ensembles, note d'édition
+ * manuelle des poids, erreur de manifeste. Parties jointes par ` · `.
  */
 export function statusLine(input: DemoStatusInput): string {
   const parts = [
@@ -119,6 +130,20 @@ export function statusLine(input: DemoStatusInput): string {
       }`,
       `temps : ${formatSeconds(input.elapsedMs)}`,
     );
+  }
+  if (input.completedEpochs !== null && input.completedEpochs !== undefined) {
+    parts.push(`époque ${input.completedEpochs}`);
+  }
+  if (
+    input.roundIndex !== null &&
+    input.roundIndex !== undefined &&
+    input.roundsPerEpoch !== null &&
+    input.roundsPerEpoch !== undefined
+  ) {
+    parts.push(`round ${input.roundIndex}/${input.roundsPerEpoch}`);
+  }
+  if (input.windowShards !== null && input.windowShards !== undefined) {
+    parts.push(`fenêtre ${input.windowShards} fragments`);
   }
   parts.push(
     `entraînement : ${input.trainExampleCount} exemples`,

@@ -185,6 +185,48 @@ describe('statusLine', () => {
     );
   });
 
+  it('shows the epoch, round and shard window of a segmented run', () => {
+    const line = statusLine(
+      input({
+        state: 'training',
+        metricsStarted: true,
+        batchesProcessed: 12,
+        loss: 0.4567,
+        validationAccuracy: 0.964,
+        elapsedMs: 1500,
+        completedEpochs: 2,
+        roundIndex: 1,
+        roundsPerEpoch: 4,
+        completedRounds: 5,
+        windowShards: 8,
+      }),
+    );
+    expect(line).toContain('époque 2');
+    expect(line).toContain('round 1/4');
+    expect(line).toContain('fenêtre 8 fragments');
+    // Les métriques existantes restent affichées.
+    expect(line).toContain('perte : 0,457');
+    expect(line).toContain('précision validation (sous-ensemble) : 96,4 %');
+    expect(line).toContain('temps : 1,5 s');
+  });
+
+  it('omits the segmented parts when their fields are absent or null', () => {
+    const line = statusLine(
+      input({
+        state: 'training',
+        metricsStarted: true,
+        completedEpochs: null,
+        roundIndex: null,
+        roundsPerEpoch: null,
+        completedRounds: null,
+        windowShards: null,
+      }),
+    );
+    expect(line).not.toContain('époque');
+    expect(line).not.toContain('round');
+    expect(line).not.toContain('fenêtre');
+  });
+
   it('appends the hand-edited note after the example counts', () => {
     expect(statusLine(input({ state: 'pretrained', weightsEdited: true, predictedClass: 7 }))).toBe(
       'Entrée : Dessin · classe prédite : 7 · 1234 paramètres · entraînement : 600 exemples · validation : 100 exemples · poids modifiés à la main',

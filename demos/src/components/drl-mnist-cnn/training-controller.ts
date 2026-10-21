@@ -27,13 +27,14 @@
  */
 
 import type { MnistCnnActivation, MnistCnnFilters, MnistCnnWeights } from '../../core/mnist-cnn.js';
+import type { SegmentLoader, SegmentPlan } from '../../core/mnist-cnn-segmented.js';
 import type {
   MnistCnnTfjsTrainer,
   MnistCnnTrainingConfig,
   MnistTrainingProgress,
   MnistTrainSource,
 } from '../../core/mnist-cnn-tfjs.js';
-import type { MnistIdxDataset } from '../../core/mnist-data.js';
+import type { MnistIdxDataset, MnistSample } from '../../core/mnist-data.js';
 import type { MnistSplits } from './mnist-assets.js';
 import {
   initialTrainingState,
@@ -83,6 +84,25 @@ export interface MnistTrainingPorts {
   onError(message: string): void;
   /** Signale les effectifs des sous-ensembles d'entraînement et de validation. */
   onCountsChanged(trainCount: number, validationCount: number): void;
+  /**
+   * Prépare une run segmentée : plans et chargeurs de fragments, validation
+   * déjà matérialisée ou segmentée. Retourne null pour une run non segmentée.
+   */
+  loadSegments?(request: MnistRunRequest): Promise<MnistSegmentedRun | null>;
+}
+
+/** Run segmentée préparée par le port `loadSegments`. */
+export interface MnistSegmentedRun {
+  /** Plan des fragments d'entraînement. */
+  readonly trainPlan: SegmentPlan;
+  /** Chargeur des rounds d'entraînement. */
+  readonly trainLoader: SegmentLoader;
+  /** Jeu de validation déjà en mémoire, utilisé sans plan segmenté. */
+  readonly validation?: MnistSample;
+  /** Plan des fragments de validation, à fournir avec `validationLoader`. */
+  readonly validationPlan?: SegmentPlan;
+  /** Chargeur des rounds de validation, à fournir avec `validationPlan`. */
+  readonly validationLoader?: SegmentLoader;
 }
 
 /** Requête de run d'entraînement soumise à `startRun`. */
@@ -119,6 +139,10 @@ export interface MnistRunRequest {
   readonly validationPercent: number;
   /** Poids de départ : les poids affichés, quelle que soit leur origine. */
   readonly initialWeights: MnistCnnWeights;
+  /** Indices des classes retenues pour une run segmentée. */
+  readonly enabledClasses?: readonly number[];
+  /** Run segmentée déjà préparée ; court-circuite le port `loadSegments`. */
+  readonly segmented?: MnistSegmentedRun;
 }
 
 /** Message d'erreur d'une exception, quelle que soit sa nature. */
@@ -166,8 +190,10 @@ export class MnistTrainingController {
   /**
    * Lance un entraînement : charge les jeux IDX, sélectionne les deux
    * sous-ensembles stratifiés, crée l'entraîneur, y pousse les poids de départ
-   * `request.initialWeights` et démarre la boucle par lots bornés. La préparation
-   * est abandonnée après chaque `await` dès que la run n'est plus active (pause,
+   * `request.initialWeights` et démarre la boucle par lots bornés. Une run
+   * segmentée fournie par la requête ou le port `loadSegments` court-circuite le
+   * chargement des jeux et utilise `trainSegmented`. La préparation est
+   * abandonnée après chaque `await` dès que la run n'est plus active (pause,
    * curseur changé, déconnexion).
    */
   async startRun(request: MnistRunRequest): Promise<void> {
@@ -184,20 +210,9 @@ export class MnistTrainingController {
     this.metricsStarted = false;
     let createdTrainer: MnistCnnTfjsTrainer | null = null;
     try {
-      const splits = await this.ports.loadSplits();
+      const segmented = request.segmented ?? (await this.ports.loadSegments?.(request)) ?? null;
       this.assertRunActive(runId);
-      const trainIndices = this.ports.selectIndices(
-        splits.train,
-        request.trainPercent / 100,
-        request.seed,
-      );
-      const validationIndices = this.ports.selectIndices(
-        splits.test,
-        request.validationPercent / 100,
-        request.seed,
-      );
-      this.ports.onCountsChanged(trainIndices.length, validationIndices.length);
-      const trainer = await this.ports.createTrainer({
+      const trainerConfig: MnistCnnTrainingConfig = {
         filters: request.filters,
         learningRate: request.learningRate,
         batchSize: request.batchSize,
@@ -207,31 +222,62 @@ export class MnistTrainingController {
         denseSizes: request.denseSizes,
         outputClasses: request.outputClasses,
         seed: request.seed,
-      });
-      createdTrainer = trainer;
-      this.trainer = trainer;
-      this.assertRunActive(runId);
-      // Poids de départ : toujours ceux de la requête, construits par le
-      // composant depuis les poids affichés.
-      const startingWeights = request.initialWeights;
-      await trainer.applyWeights(startingWeights);
-      this.assertRunActive(runId);
-      const run = trainer.train({
-        train: this.ports.createSource(splits.train, trainIndices),
-        validation: this.ports.createSource(splits.test, validationIndices),
-        epochs: request.epochs,
-        onProgress: (progress) => this.handleProgress(runId, progress),
-      });
-      const final = await run;
-      if (runId !== this.runId || this.disconnected) {
-        return;
+      };
+      if (segmented !== null) {
+        this.ports.onCountsChanged(
+          segmented.trainPlan.totalCount,
+          segmented.validation?.count ?? segmented.validationPlan?.totalCount ?? 0,
+        );
+        const trainer = await this.ports.createTrainer(trainerConfig);
+        createdTrainer = trainer;
+        this.trainer = trainer;
+        this.assertRunActive(runId);
+        // Poids de départ : toujours ceux de la requête, construits par le
+        // composant depuis les poids affichés.
+        const startingWeights = request.initialWeights;
+        await trainer.applyWeights(startingWeights);
+        this.assertRunActive(runId);
+        const run = trainer.trainSegmented({
+          trainPlan: segmented.trainPlan,
+          trainLoader: segmented.trainLoader,
+          validation: segmented.validation,
+          validationPlan: segmented.validationPlan,
+          validationLoader: segmented.validationLoader,
+          epochs: request.epochs,
+          onProgress: (progress) => this.handleProgress(runId, progress),
+        });
+        await this.completeRun(runId, trainer, run);
+      } else {
+        const splits = await this.ports.loadSplits();
+        this.assertRunActive(runId);
+        const trainIndices = this.ports.selectIndices(
+          splits.train,
+          request.trainPercent / 100,
+          request.seed,
+        );
+        const validationIndices = this.ports.selectIndices(
+          splits.test,
+          request.validationPercent / 100,
+          request.seed,
+        );
+        this.ports.onCountsChanged(trainIndices.length, validationIndices.length);
+        const trainer = await this.ports.createTrainer(trainerConfig);
+        createdTrainer = trainer;
+        this.trainer = trainer;
+        this.assertRunActive(runId);
+        // Poids de départ : toujours ceux de la requête, construits par le
+        // composant depuis les poids affichés.
+        const startingWeights = request.initialWeights;
+        await trainer.applyWeights(startingWeights);
+        this.assertRunActive(runId);
+        const run = trainer.train({
+          train: this.ports.createSource(splits.train, trainIndices),
+          validation: this.ports.createSource(splits.test, validationIndices),
+          epochs: request.epochs,
+          onProgress: (progress) => this.handleProgress(runId, progress),
+        });
+        await this.completeRun(runId, trainer, run);
       }
-      this.ports.onProgress(final);
-      // Rafraîchissement systématique en fin de course, quelle que soit la cadence.
-      await this.refreshWeightsFromTrainer(trainer, runId);
-      this.currentState = onRunCompleted(this.currentState);
-      this.ports.onStateChanged(this.currentState);
-      await this.settleRun(false);
     } catch (error) {
       if (runId === this.runId && !this.disconnected && isTrainingActive(this.currentState)) {
         this.ports.onError(toErrorMessage(error));
@@ -378,6 +424,28 @@ export class MnistTrainingController {
     } catch {
       // Rafraîchissement à meilleur effort : les poids courants restent affichés.
     }
+  }
+
+  /**
+   * Termine la run : rapporte la progression finale, rafraîchit les poids
+   * d'inférence, passe à `trained` et libère l'entraîneur. Une run invalidée
+   * entre-temps ne rapporte rien.
+   */
+  private async completeRun(
+    runId: number,
+    trainer: MnistCnnTfjsTrainer,
+    run: Promise<MnistTrainingProgress>,
+  ): Promise<void> {
+    const final = await run;
+    if (runId !== this.runId || this.disconnected) {
+      return;
+    }
+    this.ports.onProgress(final);
+    // Rafraîchissement systématique en fin de course, quelle que soit la cadence.
+    await this.refreshWeightsFromTrainer(trainer, runId);
+    this.currentState = onRunCompleted(this.currentState);
+    this.ports.onStateChanged(this.currentState);
+    await this.settleRun(false);
   }
 
   /**
