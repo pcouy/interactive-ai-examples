@@ -4,19 +4,29 @@ import { customElement, state } from 'lit/decorators.js';
 import { repeat } from 'lit/directives/repeat.js';
 import '../../ui/drl-slider.js';
 import {
+  DATASETS,
+  type DatasetDefinition,
+  datasetClassCount,
+  getDataset,
+} from '../../core/dataset-registry.js';
+import {
   activationDomain,
   CONV_KERNEL_SIZE,
   convLayerName,
   DEFAULT_CONV_LAYERS,
   DEFAULT_DENSE_LAYERS,
+  DEFAULT_DENSE_SIZES,
   DEFAULT_FILTER_COUNTS,
   DEFAULT_MNIST_CNN_ACTIVATION,
   forwardMnistCnn,
+  HIDDEN_DENSE_SIZE,
   initializeMnistCnnWeights,
   MAX_CONV_LAYERS,
   MAX_DENSE_LAYERS,
   MAX_FILTER_COUNT,
+  MAX_HIDDEN_DENSE_SIZE,
   MIN_FILTER_COUNT,
+  MIN_HIDDEN_DENSE_SIZE,
   MNIST_INPUT_LENGTH,
   MNIST_INPUT_SIZE,
   type MnistCnnActivation,
@@ -56,7 +66,20 @@ import {
   linkGeometry,
   type RectLike,
 } from './filter-links.js';
-import { fetchMnistCnnManifest, loadMnistGallery, loadMnistSplits } from './mnist-assets.js';
+import {
+  fetchMnistCnnManifest,
+  loadDatasetGallery,
+  loadDatasetSplits,
+  type MnistSplits,
+} from './mnist-assets.js';
+import {
+  loadShardedGallery,
+  loadShardedIndex,
+  loadShardedSplits,
+  type ShardedIndex,
+  type ShardedSplitIndex,
+  selectShardEntries,
+} from './sharded-assets.js';
 import {
   accuracyPoints,
   appendHistory,
@@ -428,15 +451,61 @@ export function denseLayerTitle(index: number, total: number, units: number): st
   return index === total - 1 ? `Sortie — ${units} classes` : `Dense ${index + 1} — ${units} unités`;
 }
 
+/** Colonnes d'un paquet d'activations pour rester compact quelle que soit sa taille. */
+export function densePackColumns(size: number): number {
+  return Math.max(4, Math.ceil(Math.sqrt(size * 2)));
+}
+
+/** Libellé du curseur de largeur d'une couche dense cachée. */
+export function denseSizeLabel(layer: number): string {
+  return `Unités de la couche dense ${layer + 1}`;
+}
+
+/** Borne une largeur de couche dense cachée dans les limites du modèle. */
+export function clampDenseSize(value: number): number {
+  return clamp(Math.round(value), MIN_HIDDEN_DENSE_SIZE, MAX_HIDDEN_DENSE_SIZE);
+}
+
+/** Vrai si les largeurs correspondent à la couche cachée de référence (8 unités). */
+export function isReferenceDenseSizes(denseSizes: readonly number[]): boolean {
+  return denseSizes[0] === HIDDEN_DENSE_SIZE;
+}
+
 /** Libellé accessible d'une unité cachée. */
 export function denseCellLabel(unit: number, value: number): string {
   return `unité ${unit + 1} : ${formatValue(value, 3)}`;
 }
 
 /** Libellé accessible d'une classe de sortie, avec la mention du maximum. */
-export function outputCellLabel(digit: number, probability: number, isMax: boolean): string {
-  const base = `chiffre ${digit} : ${formatValue(probability * 100, 1)} %`;
+export function outputCellLabel(
+  digit: number,
+  probability: number,
+  isMax: boolean,
+  className?: string,
+): string {
+  const name = className ? ` (${className})` : '';
+  const base = `classe ${digit}${name} : ${formatValue(probability * 100, 1)} %`;
   return isMax ? `${base}, maximum` : base;
+}
+
+/** Libellé d'une classe dans le sélecteur de galerie. */
+export function galleryClassLabel(dataset: DatasetDefinition, index: number): string {
+  const name = dataset.classNames[index] ?? String(index);
+  return name === String(index) ? name : `${index} — ${name}`;
+}
+
+/** Libellé de la source d'entrée quand l'entrée est un exemple de la galerie. */
+export function galleryInputSource(dataset: DatasetDefinition, index: number): string {
+  return `Exemple ${dataset.name} (${galleryClassLabel(dataset, index)})`;
+}
+
+/** Texte d'aide sous la surface de dessin pour le jeu courant. */
+export function galleryInputHint(dataset: DatasetDefinition, classIndex: number | null): string {
+  if (classIndex === null) {
+    return `Dessinez une entrée à la souris ou au doigt, ou choisissez un exemple de ${dataset.name} ; l'inférence se met à jour pendant le tracé.`;
+  }
+  const name = dataset.classNames[classIndex] ?? String(classIndex);
+  return `Exemple de la galerie ${dataset.name} : la classe attendue est « ${name} ».`;
 }
 
 /**
@@ -569,14 +638,25 @@ export function activationScaleAriaLabel(activation: MnistCnnActivation): string
 
 /**
  * Estimation déterministe du nombre d'exemples d'une sélection stratifiée (voir
- * `selectStratifiedIndices`) pour un jeu de `total` exemples répartis en dix
- * classes équilibrées : chaque classe fournit `max(1, round(total ÷ 10 × fraction))`
- * exemples. Sert à afficher les effectifs avant le téléchargement des jeux IDX.
+ * `selectStratifiedIndices`) pour un jeu de `total` exemples répartis en
+ * `classCount` classes équilibrées : chaque classe fournit
+ * `max(1, round(total ÷ classCount × fraction))` exemples. Sert à afficher les
+ * effectifs avant le téléchargement des jeux IDX. `classCount` vaut le nombre de
+ * classes de MNIST (10) par défaut.
  */
-export function stratifiedExampleCountEstimate(total: number, fraction: number): number {
-  if (!Number.isInteger(total) || total < MNIST_CLASS_COUNT) {
+export function stratifiedExampleCountEstimate(
+  total: number,
+  fraction: number,
+  classCount: number = MNIST_CLASS_COUNT,
+): number {
+  if (!Number.isInteger(classCount) || classCount < 2) {
     throw new RangeError(
-      `stratifiedExampleCountEstimate: total must be an integer of at least ${MNIST_CLASS_COUNT}, received ${String(total)}.`,
+      `stratifiedExampleCountEstimate: classCount must be an integer of at least 2, received ${String(classCount)}.`,
+    );
+  }
+  if (!Number.isInteger(total) || total < classCount) {
+    throw new RangeError(
+      `stratifiedExampleCountEstimate: total must be an integer of at least ${classCount}, received ${String(total)}.`,
     );
   }
   if (typeof fraction !== 'number' || !Number.isFinite(fraction) || fraction <= 0 || fraction > 1) {
@@ -584,8 +664,28 @@ export function stratifiedExampleCountEstimate(total: number, fraction: number):
       `stratifiedExampleCountEstimate: fraction must be a finite number in (0, 1], received ${String(fraction)}.`,
     );
   }
-  const perClass = total / MNIST_CLASS_COUNT;
-  return MNIST_CLASS_COUNT * Math.max(1, Math.round(perClass * fraction));
+  const perClass = total / classCount;
+  return classCount * Math.max(1, Math.round(perClass * fraction));
+}
+
+/** Pourcentage maximal applicable à un jeu : 100, ou sa limite mémoire. */
+export function datasetMaxPercent(dataset: DatasetDefinition): number {
+  return Math.min(MAX_PERCENT, dataset.maxPercent ?? MAX_PERCENT);
+}
+
+/**
+ * Effectif exact des exemples retenus pour `percent` pourcent dans une fraction
+ * d'un jeu segmenté : la somme des effectifs des fragments que `selectShardEntries`
+ * garde (les premiers fragments de chaque classe). Le dernier fragment d'une
+ * classe peut être partiel, donc seul le `count` de chaque fragment retenu est
+ * exact.
+ */
+function shardedSplitExampleCount(split: ShardedSplitIndex, percent: number): number {
+  let total = 0;
+  for (const entry of selectShardEntries(split, percent)) {
+    total += entry.count;
+  }
+  return total;
 }
 
 /** Vrai si deux tuples de filtres décrivent la même architecture. */
@@ -600,6 +700,10 @@ export interface TrainingRunInput {
   readonly convLayers: number;
   /** Nombre de couches denses, couche de sortie comprise, de 1 à 3. */
   readonly denseLayers: number;
+  /** Largeurs des couches denses cachées, dans l'ordre, couche de sortie exclue. */
+  readonly denseSizes: readonly number[];
+  /** Nombre de classes de sortie du jeu sélectionné. */
+  readonly outputClasses: number;
   readonly learningRate: number;
   readonly batchSize: number;
   readonly trainPercent: number;
@@ -621,6 +725,8 @@ export function trainingRunRequest(input: TrainingRunInput): MnistRunRequest {
     filters: input.filters,
     convLayers: input.convLayers,
     denseLayers: input.denseLayers,
+    denseSizes: input.denseSizes,
+    outputClasses: input.outputClasses,
     learningRate: input.learningRate,
     batchSize: input.batchSize,
     seed: SEED,
@@ -897,6 +1003,14 @@ export class MnistCnn extends LitElement {
         max-width: 16rem;
       }
 
+      .drl-dataset-field {
+        display: flex;
+        flex-direction: column;
+        gap: var(--drl-space-1);
+        margin-bottom: var(--drl-space-2);
+        max-width: 16rem;
+      }
+
       select {
         font: inherit;
         padding: var(--drl-space-1) var(--drl-space-2);
@@ -1141,7 +1255,6 @@ export class MnistCnn extends LitElement {
 
       .drl-dense-pack {
         display: grid;
-        grid-template-columns: repeat(4, 1fr);
         gap: 2px;
         width: 8rem;
         margin: 0;
@@ -1286,6 +1399,32 @@ export class MnistCnn extends LitElement {
   @state()
   private denseLayers = DEFAULT_DENSE_LAYERS;
 
+  /** Largeurs des couches denses cachées ; seules les couches actives comptent. */
+  @state()
+  private denseSizes: readonly [number, number] = DEFAULT_DENSE_SIZES;
+
+  /** Jeu de données sélectionné ; MNIST par défaut. */
+  @state()
+  private selectedDatasetId = 'mnist';
+
+  /** Vrai pendant le chargement des ressources du jeu sélectionné. */
+  @state()
+  private datasetLoading = false;
+
+  /** Erreur de chargement du jeu, ou null. */
+  @state()
+  private datasetError: string | null = null;
+
+  /**
+   * Jeton du dernier changement de jeu. Un changement plus récent périme le
+   * chargement précédent, qui ne doit alors plus éteindre l'indicateur.
+   */
+  private datasetSwitchToken = 0;
+
+  /** Index des shards QuickDraw, une fois chargé (null pour les jeux IDX). */
+  @state()
+  private shardedIndex: ShardedIndex | null = null;
+
   /** Fonction d'activation des convolutions et de la couche dense cachée. */
   @state()
   private activation: MnistCnnActivation = DEFAULT_MNIST_CNN_ACTIVATION;
@@ -1326,6 +1465,13 @@ export class MnistCnn extends LitElement {
 
   @state()
   private galleryLoading = false;
+
+  /**
+   * Jeton du chargement de galerie en cours. Chaque chargement prend un jeton
+   * neuf ; un chargement dont le jeton a changé s'arrête sans écrire, ce qui
+   * empêche une réponse tardive d'un ancien jeu d'écraser le nouveau.
+   */
+  private galleryLoadToken = 0;
 
   /** Raison de l'échec du chargement de la galerie, affichée sous le sélecteur. */
   @state()
@@ -1381,10 +1527,18 @@ export class MnistCnn extends LitElement {
   private batchSize = DEFAULT_BATCH_SIZE;
 
   @state()
-  private trainExampleCount = stratifiedExampleCountEstimate(MNIST_TRAIN_SPLIT_SIZE, 10 / 100);
+  private trainExampleCount = stratifiedExampleCountEstimate(
+    MNIST_TRAIN_SPLIT_SIZE,
+    10 / 100,
+    MNIST_CLASS_COUNT,
+  );
 
   @state()
-  private validationExampleCount = stratifiedExampleCountEstimate(MNIST_TEST_SPLIT_SIZE, 10 / 100);
+  private validationExampleCount = stratifiedExampleCountEstimate(
+    MNIST_TEST_SPLIT_SIZE,
+    10 / 100,
+    MNIST_CLASS_COUNT,
+  );
 
   /** Dessin des toiles reporté après la prochaine mise à jour du DOM Lit. */
   private canvasesDirty = true;
@@ -1433,14 +1587,27 @@ export class MnistCnn extends LitElement {
   /** Contrôleur du cycle de vie de l'entraînement (pur, sans DOM ni TFJS). */
   private readonly controller = new MnistTrainingController({
     loadSplits: async () => {
-      const splits = await loadMnistSplits();
+      const dataset = this.currentDataset;
+      const splits =
+        dataset.kind === 'sharded'
+          ? await loadShardedSplits(dataset, this.trainPercent, this.validationPercent)
+          : await loadDatasetSplits(dataset);
       this.splits = splits;
       return splits;
     },
     createTrainer: (config) => createMnistCnnTfjsTrainer(config),
     createSource: (dataset, indices) => createIdxTrainSource(dataset, indices),
-    selectIndices: (dataset, fraction, seed) =>
-      selectStratifiedIndices(dataset, { fraction, seed }),
+    selectIndices: (dataset, fraction, seed) => {
+      if (this.currentDataset.kind === 'sharded') {
+        // Les shards sélectionnés forment déjà la fraction demandée.
+        return Uint32Array.from({ length: dataset.count }, (_unused, index) => index);
+      }
+      return selectStratifiedIndices(dataset, {
+        fraction,
+        seed,
+        classCount: this.outputClasses,
+      });
+    },
     onStateChanged: (state) => {
       this.trainingState = state;
     },
@@ -1472,11 +1639,21 @@ export class MnistCnn extends LitElement {
     },
   });
 
-  /** Jeux IDX chargés (mis en cache par le port `loadSplits`), ou null. */
-  private splits: Awaited<ReturnType<typeof loadMnistSplits>> | null = null;
+  /** Jeux chargés (mis en cache par le port `loadSplits`), ou null. */
+  private splits: MnistSplits | null = null;
 
   private get predictedClass(): number | null {
     return this.result ? argmaxIndex(this.result.probabilities) : null;
+  }
+
+  /** Jeu de données sélectionné, lu dans le registre. */
+  private get currentDataset(): DatasetDefinition {
+    return getDataset(this.selectedDatasetId);
+  }
+
+  /** Nombre de classes de sortie du jeu sélectionné. */
+  private get outputClasses(): number {
+    return datasetClassCount(this.currentDataset);
   }
 
   /**
@@ -1508,16 +1685,20 @@ export class MnistCnn extends LitElement {
       filters: this.filterCounts,
       convLayers: this.convLayers,
       denseLayers: this.denseLayers,
+      denseSizes: this.denseSizes,
       activation: this.activation,
+      outputClasses: this.outputClasses,
     };
   }
 
   /** Vrai si l'architecture courante peut utiliser le manifeste de référence. */
   private get usesPretrainedArchitecture(): boolean {
     return (
+      this.selectedDatasetId === 'mnist' &&
       this.activation === 'sigmoid' &&
       this.convLayers === DEFAULT_CONV_LAYERS &&
       this.denseLayers === DEFAULT_DENSE_LAYERS &&
+      isReferenceDenseSizes(this.denseSizes) &&
       this.pretrainedAssets !== null &&
       sameFilters(this.pretrainedAssets.config.filters, this.filterCounts)
     );
@@ -1529,15 +1710,12 @@ export class MnistCnn extends LitElement {
   }
 
   private get inputHint(): string {
-    if (this.galleryLabel === null) {
-      return "Dessinez un chiffre à la souris ou au doigt ; l'inférence se met à jour pendant le tracé.";
-    }
-    return `Exemple de la galerie MNIST : le chiffre attendu est un ${this.galleryLabel}.`;
+    return galleryInputHint(this.currentDataset, this.galleryLabel);
   }
 
-  /** Nombre d'exemples proposés par chiffre dans la galerie chargée. */
+  /** Nombre d'exemples proposés par classe dans la galerie chargée. */
   private get galleryPerClass(): number {
-    return this.gallerySample === null ? 0 : this.gallerySample.count / MNIST_CLASS_COUNT;
+    return this.gallerySample === null ? 0 : this.gallerySample.count / this.outputClasses;
   }
 
   /** Vrai quand la galerie est chargée et qu'un chiffre est affiché. */
@@ -1612,7 +1790,7 @@ export class MnistCnn extends LitElement {
     }
     this.inputPixels.set(pixels);
     this.galleryLabel = classIndex;
-    this.inputSource = `Exemple MNIST (chiffre ${classIndex})`;
+    this.inputSource = galleryInputSource(this.currentDataset, classIndex);
     this.runInference();
   }
 
@@ -1747,57 +1925,123 @@ export class MnistCnn extends LitElement {
   }
 
   /**
-   * Charge la galerie de dix exemples par chiffre et les jeux IDX, qui servent
-   * aussi à afficher les effectifs exacts des sélections. Le premier exemple du
-   * premier chiffre est appliqué à l'entrée. Tout échec laisse le sélecteur avec
-   * l'option de recharger et un message : l'inférence reste utilisable.
+   * Charge la galerie de dix exemples par chiffre et les jeux du jeu sélectionné,
+   * qui servent aussi à afficher les effectifs exacts des sélections. Le premier
+   * exemple du premier chiffre est appliqué à l'entrée. Tout échec laisse le
+   * sélecteur avec l'option de recharger et un message : l'inférence reste
+   * utilisable.
    */
   private async loadGallery(): Promise<void> {
     if (this.galleryLoading) {
       return;
     }
+    const token = ++this.galleryLoadToken;
     this.galleryLoading = true;
     try {
-      this.splits = await loadMnistSplits();
-      this.gallerySample = await loadMnistGallery();
+      const dataset = this.currentDataset;
+      const splits =
+        dataset.kind === 'sharded'
+          ? await loadShardedSplits(dataset, this.trainPercent, this.validationPercent)
+          : await loadDatasetSplits(dataset);
+      // Un changement de jeu a pris un jeton plus récent : cet ancien
+      // chargement s'arrête avant d'écrire quoi que ce soit.
+      if (token !== this.galleryLoadToken) {
+        return;
+      }
+      this.splits = splits;
+      if (dataset.kind === 'sharded') {
+        const shardedIndex = await loadShardedIndex(dataset);
+        if (token !== this.galleryLoadToken) {
+          return;
+        }
+        this.shardedIndex = shardedIndex;
+      }
+      const gallerySample =
+        dataset.kind === 'sharded'
+          ? await loadShardedGallery(dataset)
+          : await loadDatasetGallery(dataset);
+      if (token !== this.galleryLoadToken) {
+        return;
+      }
+      this.gallerySample = gallerySample;
       this.galleryClass = 0;
       this.galleryIndex = 0;
       this.galleryError = null;
+      // Le sélecteur de jeu et la galerie affichent la même erreur : un échec
+      // laisse les deux lisibles sans bloquer l'inférence.
+      this.datasetError = null;
       this.updateExampleCounts();
       this.applyGalleryExample();
     } catch (error) {
+      if (token !== this.galleryLoadToken) {
+        return;
+      }
       this.gallerySample = null;
       this.galleryClass = null;
       this.galleryError = (error as Error).message;
+      this.datasetError = this.galleryError;
     } finally {
-      this.galleryLoading = false;
+      // Seul le chargement courant rend la main : un chargement invalidé ne
+      // doit pas effacer l'indicateur du chargement qui l'a remplacé.
+      if (token === this.galleryLoadToken) {
+        this.galleryLoading = false;
+      }
     }
   }
 
   /**
-   * Recalcule les effectifs affichés : exactement depuis les jeux IDX quand ils
-   * sont chargés, par estimation sur les effectifs officiels sinon.
+   * Recalcule les effectifs affichés : exactement depuis les jeux chargés quand
+   * ils le sont, par estimation sur les effectifs officiels sinon. Un jeu
+   * segmenté garde déjà la fraction demandée ; un jeu IDX est échantillonné
+   * stratifié selon le nombre de classes du jeu.
    */
   private updateExampleCounts(): void {
     const trainFraction = this.trainPercent / 100;
     const validationFraction = this.validationPercent / 100;
+    const dataset = this.currentDataset;
+    if (dataset.kind === 'sharded') {
+      // L'index donne l'effectif exact de la fraction courante, y compris après
+      // un déplacement de curseur ; les fragments déjà chargés ne couvrent que
+      // l'ancienne fraction.
+      if (this.shardedIndex !== null) {
+        this.trainExampleCount = shardedSplitExampleCount(
+          this.shardedIndex.splits.train,
+          this.trainPercent,
+        );
+        this.validationExampleCount = shardedSplitExampleCount(
+          this.shardedIndex.splits.test,
+          this.validationPercent,
+        );
+      } else if (this.splits !== null) {
+        this.trainExampleCount = this.splits.train.count;
+        this.validationExampleCount = this.splits.test.count;
+      } else {
+        this.trainExampleCount = Math.round(dataset.trainCount * trainFraction);
+        this.validationExampleCount = Math.round(dataset.testCount * validationFraction);
+      }
+      return;
+    }
     if (this.splits !== null) {
       this.trainExampleCount = selectStratifiedIndices(this.splits.train, {
         fraction: trainFraction,
         seed: SEED,
+        classCount: this.outputClasses,
       }).length;
       this.validationExampleCount = selectStratifiedIndices(this.splits.test, {
         fraction: validationFraction,
         seed: SEED,
+        classCount: this.outputClasses,
       }).length;
     } else {
       this.trainExampleCount = stratifiedExampleCountEstimate(
-        MNIST_TRAIN_SPLIT_SIZE,
+        dataset.trainCount,
         trainFraction,
+        this.outputClasses,
       );
       this.validationExampleCount = stratifiedExampleCountEstimate(
-        MNIST_TEST_SPLIT_SIZE,
+        dataset.testCount,
         validationFraction,
+        this.outputClasses,
       );
     }
   }
@@ -1814,6 +2058,8 @@ export class MnistCnn extends LitElement {
       filters: this.filterCounts,
       convLayers: this.convLayers,
       denseLayers: this.denseLayers,
+      denseSizes: this.denseSizes,
+      outputClasses: this.outputClasses,
       learningRate: this.learningRate,
       batchSize: this.batchSize,
       trainPercent: this.trainPercent,
@@ -1956,6 +2202,25 @@ export class MnistCnn extends LitElement {
     void this.controller.notifySliderChanged(this.manifestMatches, true);
   }
 
+  /** Change la largeur d'une couche dense cachée : arrête la run et reconstruit le modèle. */
+  private setDenseSize(layer: number, value: number): void {
+    if (layer < 0 || layer >= this.denseLayers - 1) {
+      return;
+    }
+    const size = clampDenseSize(value);
+    if (size === this.denseSizes[layer]) {
+      return;
+    }
+    const next: [number, number] = [this.denseSizes[0], this.denseSizes[1]];
+    next[layer] = size;
+    this.denseSizes = next;
+    this.weights = this.weightsForCurrentFilters();
+    this.clearSelection();
+    this.runInference();
+    this.resetMetrics();
+    void this.controller.notifySliderChanged(this.manifestMatches, true);
+  }
+
   /** Change la fonction d'activation : arrête la run et reconstruit le modèle. */
   private readonly handleActivationChange = (event: Event): void => {
     const target = event.currentTarget;
@@ -1978,10 +2243,67 @@ export class MnistCnn extends LitElement {
     void this.controller.notifySliderChanged(this.manifestMatches, true);
   }
 
+  private readonly handleDatasetChange = (event: Event): void => {
+    const target = event.currentTarget;
+    if (!(target instanceof HTMLSelectElement)) {
+      return;
+    }
+    this.setDataset(target.value);
+  };
+
+  /**
+   * Change de jeu : arrête la run, remet le modèle à zéro et recharge la galerie.
+   * L'identifiant inconnu est ignoré : le sélecteur ne peut alors plus dériver
+   * d'un jeu servi. Le manifeste pré-entraîné ne vaut que pour MNIST, donc la
+   * notification finale porte l'état du nouveau jeu.
+   */
+  private setDataset(id: string): void {
+    if (id === this.selectedDatasetId) {
+      return;
+    }
+    let dataset: DatasetDefinition;
+    try {
+      dataset = getDataset(id);
+    } catch {
+      return;
+    }
+    this.selectedDatasetId = dataset.id;
+    this.datasetError = null;
+    const token = ++this.datasetSwitchToken;
+    this.datasetLoading = true;
+    this.resetMetrics();
+    this.clearSelection();
+    this.trainingError = null;
+    this.splits = null;
+    this.shardedIndex = null;
+    this.gallerySample = null;
+    this.galleryClass = null;
+    this.galleryLabel = null;
+    this.galleryIndex = 0;
+    this.galleryError = null;
+    this.trainPercent = dataset.defaultTrainPercent;
+    this.validationPercent = dataset.defaultValidationPercent;
+    this.weights = this.weightsForCurrentFilters();
+    this.runInference();
+    this.updateExampleCounts();
+    void this.controller.notifySliderChanged(this.manifestMatches, true);
+    // Un chargement du jeu précédent peut être en vol : un jeton neuf le
+    // périme et la libération du drapeau laisse démarrer le nouveau.
+    this.galleryLoadToken += 1;
+    this.galleryLoading = false;
+    void this.loadGallery().finally(() => {
+      // Un changement plus récent a pris un jeton neuf : il porte le drapeau,
+      // cet ancien chargement ne doit pas l'éteindre.
+      if (token === this.datasetSwitchToken) {
+        this.datasetLoading = false;
+      }
+    });
+  }
+
   /** Change la part du jeu d'entraînement : n'agit qu'à la prochaine run et
    * n'interrompt pas une run active. */
   private setTrainPercent(value: number): void {
-    const percent = clamp(Math.round(value), MIN_PERCENT, MAX_PERCENT);
+    const percent = clamp(Math.round(value), MIN_PERCENT, datasetMaxPercent(this.currentDataset));
     if (percent === this.trainPercent) {
       return;
     }
@@ -1994,7 +2316,7 @@ export class MnistCnn extends LitElement {
   /** Change la part du jeu de validation : n'agit qu'à la prochaine run et
    * n'interrompt pas une run active. */
   private setValidationPercent(value: number): void {
-    const percent = clamp(Math.round(value), MIN_PERCENT, MAX_PERCENT);
+    const percent = clamp(Math.round(value), MIN_PERCENT, datasetMaxPercent(this.currentDataset));
     if (percent === this.validationPercent) {
       return;
     }
@@ -2034,7 +2356,7 @@ export class MnistCnn extends LitElement {
       return;
     }
     const classValue = Number(target.value);
-    if (!Number.isInteger(classValue) || classValue < 0 || classValue >= MNIST_CLASS_COUNT) {
+    if (!Number.isInteger(classValue) || classValue < 0 || classValue >= this.outputClasses) {
       return;
     }
     this.galleryClass = classValue;
@@ -2675,7 +2997,12 @@ export class MnistCnn extends LitElement {
           return html`
             <div class="drl-dense-layer">
               <p class="drl-dense-title">${title}</p>
-              <ul class="drl-dense-pack" role="list" aria-label=${`Activations de ${title}`}>
+              <ul
+                class="drl-dense-pack"
+                role="list"
+                aria-label=${`Activations de ${title}`}
+                style=${`grid-template-columns: repeat(${densePackColumns(values.length)}, 1fr)`}
+              >
                 ${Array.from(values, (value, unit) => {
                   const rgb = rgbOf(value);
                   return html`
@@ -2710,7 +3037,12 @@ export class MnistCnn extends LitElement {
                   return html`
                     <li
                       class=${`drl-dense-output-cell${isMax ? ' drl-dense-output-cell--max' : ''}`}
-                      aria-label=${outputCellLabel(digit, probability, isMax)}
+                      aria-label=${outputCellLabel(
+                        digit,
+                        probability,
+                        isMax,
+                        this.currentDataset.classNames[digit],
+                      )}
                     >
                       <span
                         class="drl-dense-square"
@@ -2740,18 +3072,43 @@ export class MnistCnn extends LitElement {
               width=${INPUT_CANVAS_SIZE}
               height=${INPUT_CANVAS_SIZE}
               role="img"
-              aria-label="Surface de dessin 28 par 28 pixels pour un chiffre MNIST"
+              aria-label="Surface de dessin 28 par 28 pixels"
               @pointerdown=${this.onDrawPointerDown}
               @pointermove=${this.onDrawPointerMove}
               @pointerup=${this.onDrawPointerUp}
               @pointercancel=${this.onDrawPointerUp}
             ></canvas>
             <p class="drl-hint">${this.inputHint}</p>
+            <div class="drl-dataset-field">
+              <label class="drl-field-label" for="drl-mnist-cnn-dataset">Jeu de données</label>
+              <select
+                id="drl-mnist-cnn-dataset"
+                aria-label="Jeu de données"
+                .value=${this.selectedDatasetId}
+                @change=${this.handleDatasetChange}
+              >
+                ${DATASETS.map(
+                  (dataset) => html`<option value=${dataset.id}>${dataset.name}</option>`,
+                )}
+              </select>
+              ${
+                this.datasetLoading
+                  ? html`<span class="drl-hint" role="status">Chargement du jeu…</span>`
+                  : nothing
+              }
+              ${
+                this.datasetError
+                  ? html`<span class="drl-hint" role="alert">${this.datasetError}</span>`
+                  : nothing
+              }
+            </div>
             <div class="drl-field">
-              <label class="drl-field-label" for="drl-mnist-cnn-sample">Exemple MNIST</label>
+              <label class="drl-field-label" for="drl-mnist-cnn-sample"
+                >Exemple ${this.currentDataset.name}</label
+              >
               <select
                 id="drl-mnist-cnn-sample"
-                aria-label="Choisir un exemple MNIST de la galerie"
+                aria-label="Choisir un exemple de ${this.currentDataset.name}"
                 @click=${this.handleSampleSelectorOpen}
                 @change=${this.handleGallerySelect}
               >
@@ -2759,13 +3116,13 @@ export class MnistCnn extends LitElement {
                   this.galleryLoading
                     ? html`<option>Chargement de la galerie…</option>`
                     : this.gallerySample === null
-                      ? html`<option value="">Charger la galerie MNIST…</option>`
+                      ? html`<option value="">Charger la galerie…</option>`
                       : repeat(
-                          Array.from({ length: MNIST_CLASS_COUNT }, (_unused, digit) => digit),
-                          (digit) => digit,
-                          (digit) =>
-                            html`<option value=${digit} ?selected=${digit === this.galleryClass}>
-                              Chiffre ${digit}
+                          this.currentDataset.classNames.map((_name, index) => index),
+                          (index) => index,
+                          (index) =>
+                            html`<option value=${index} ?selected=${index === this.galleryClass}>
+                              ${galleryClassLabel(this.currentDataset, index)}
                             </option>`,
                         )
                 }
@@ -2856,7 +3213,7 @@ export class MnistCnn extends LitElement {
               <drl-slider
                 label="Données d'entraînement"
                 min=${MIN_PERCENT}
-                max=${MAX_PERCENT}
+                max=${datasetMaxPercent(this.currentDataset)}
                 step="1"
                 .value=${this.trainPercent}
                 @drl-input=${(event: CustomEvent<number>) => this.setTrainPercent(event.detail)}
@@ -2864,7 +3221,7 @@ export class MnistCnn extends LitElement {
               <drl-slider
                 label="Validation"
                 min=${MIN_PERCENT}
-                max=${MAX_PERCENT}
+                max=${datasetMaxPercent(this.currentDataset)}
                 step="1"
                 .value=${this.validationPercent}
                 @drl-input=${(event: CustomEvent<number>) => this.setValidationPercent(event.detail)}
@@ -2886,6 +3243,11 @@ export class MnistCnn extends LitElement {
                 @drl-input=${(event: CustomEvent<number>) => this.setBatchSize(event.detail)}
               ></drl-slider>
             </div>
+            ${
+              datasetMaxPercent(this.currentDataset) < MAX_PERCENT
+                ? html`<p class="drl-hint">Ce jeu est limité à ${datasetMaxPercent(this.currentDataset)} % pour rester dans la mémoire du navigateur.</p>`
+                : nothing
+            }
             <p class="drl-hint">
               ${
                 this.trainingError !== null
@@ -2905,7 +3267,13 @@ export class MnistCnn extends LitElement {
             </div>
             <div class="drl-stat">
               <p class="drl-stat-label">Classe prédite</p>
-              <p class="drl-stat-value">${this.predictedClass ?? '–'}</p>
+              <p class="drl-stat-value">
+                ${
+                  this.predictedClass === null
+                    ? '–'
+                    : galleryClassLabel(this.currentDataset, this.predictedClass)
+                }
+              </p>
             </div>
             <div class="drl-stat">
               <p class="drl-stat-label">Entrée</p>
@@ -2918,16 +3286,24 @@ export class MnistCnn extends LitElement {
           </div>
 
           <h4 class="drl-panel-title">Probabilités par classe</h4>
-          <div class="drl-probs" role="list" aria-label="Probabilités des dix classes de chiffres">
+          <div
+            class="drl-probs"
+            role="list"
+            aria-label="Probabilités par classe pour ${this.currentDataset.name}"
+          >
             ${
               result
                 ? repeat(
                     result.probabilities,
                     (_probability: number, digit: number) => digit,
-                    (probability, digit) => html`
+                    (probability, digit) => {
+                      const label = `${galleryClassLabel(this.currentDataset, digit)} : ${formatPercent(probability * 100)}`;
+                      return html`
                     <div
                       class="${digit === this.predictedClass ? 'drl-prob-row drl-prob-row--max' : 'drl-prob-row'}"
                       role="listitem"
+                      aria-label=${label}
+                      title=${label}
                     >
                       <span class="drl-prob-digit">${digit}</span>
                       <span class="drl-prob-bar-wrap"
@@ -2936,7 +3312,8 @@ export class MnistCnn extends LitElement {
                       ></span>
                       <span class="drl-prob-value">${formatPercent(probability * 100)}</span>
                     </div>
-                  `,
+                  `;
+                    },
                   )
                 : html`<p class="drl-hint">En attente du premier passage avant.</p>`
             }
@@ -2959,7 +3336,9 @@ export class MnistCnn extends LitElement {
             denses (1 à 3) ; le choix de la fonction d'activation arrête aussi la run et reconstruit le
             modèle ; le manifeste pré-entraîné ne s'applique qu'à la profondeur de référence (quatre
             convolutions, deux couches denses) et avec la sigmoïde, toute autre configuration repart
-            des poids déterministes.
+            des poids déterministes. Les curseurs de largeur règlent les unités de chaque couche dense
+            cachée (1 à 128) et arrêtent la run ; le manifeste exige la largeur de référence, soit une
+            couche cachée de 8 unités.
           </p>
           <div class="drl-sliders" role="group" aria-label="Profondeur du réseau">
             <drl-slider
@@ -2979,6 +3358,29 @@ export class MnistCnn extends LitElement {
               @drl-input=${(event: CustomEvent<number>) => this.setDenseLayers(event.detail)}
             ></drl-slider>
           </div>
+          ${
+            this.denseLayers > 1
+              ? html`
+                  <div class="drl-sliders" role="group" aria-label="Taille des couches denses cachées">
+                    ${repeat(
+                      Array.from({ length: this.denseLayers - 1 }, (_, layer) => layer),
+                      (layer) => layer,
+                      (layer) => html`
+                        <drl-slider
+                          label=${denseSizeLabel(layer)}
+                          min=${MIN_HIDDEN_DENSE_SIZE}
+                          max=${MAX_HIDDEN_DENSE_SIZE}
+                          step="1"
+                          .value=${this.denseSizes[layer]}
+                          @drl-input=${(event: CustomEvent<number>) =>
+                            this.setDenseSize(layer, event.detail)}
+                        ></drl-slider>
+                      `,
+                    )}
+                  </div>
+                `
+              : nothing
+          }
           <div class="drl-activation-field">
             <label class="drl-field-label" for="drl-mnist-cnn-activation">
               Fonction d'activation

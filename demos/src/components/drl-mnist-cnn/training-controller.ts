@@ -99,6 +99,16 @@ export interface MnistRunRequest {
   readonly convLayers: number;
   /** Nombre de couches denses, sortie comprise, de 1 à 3. */
   readonly denseLayers: number;
+  /**
+   * Largeurs des couches denses cachées, dans l'ordre, couche de sortie exclue.
+   * Défaut : `[8, 8]`.
+   */
+  readonly denseSizes?: readonly number[];
+  /**
+   * Nombre de classes de sortie, de 2 à `MAX_OUTPUT_CLASSES`. Défaut :
+   * `LOGIT_COUNT` (10).
+   */
+  readonly outputClasses?: number;
   /** Graine d'entraînement. */
   readonly seed: number;
   /** Nombre d'époques. */
@@ -194,6 +204,8 @@ export class MnistTrainingController {
         activation: request.activation,
         convLayers: request.convLayers,
         denseLayers: request.denseLayers,
+        denseSizes: request.denseSizes,
+        outputClasses: request.outputClasses,
         seed: request.seed,
       });
       createdTrainer = trainer;

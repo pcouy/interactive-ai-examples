@@ -30,19 +30,26 @@
       <p><a href="./index.html">← Playground</a></p>
       <drl-card heading="MNIST CNN — démonstration interactive">
         <p>
-          Dessinez un chiffre sur la surface 28×28, ou choisissez un chiffre dans
-          la galerie MNIST et parcourez ses dix exemples avec « Précédent » et
-          « Suivant » : le réseau à quatre couches de convolution 3×3 suivies
-          d'une sigmoïde, puis dense 8 + sigmoïde et dix logits, fait un passage
-          avant en pur TypeScript (sans TensorFlow.js) et met à jour les
-          probabilités, les filtres et les cartes de caractéristiques.
+          Dessinez sur la surface 28×28, ou choisissez une classe dans la galerie
+          du jeu et parcourez ses dix exemples avec « Précédent » et « Suivant » :
+          le réseau de référence, quatre couches de convolution 3×3 suivies d'une
+          sigmoïde, puis une couche dense de 8 unités, une sigmoïde et une sortie
+          par classe, fait un passage avant en pur TypeScript (sans TensorFlow.js)
+          et met à jour les probabilités, les filtres et les cartes de
+          caractéristiques.
         </p>
         <drl-mnist-cnn></drl-mnist-cnn>
         <p>
-          Les poids pré-entraînés du manifeste <code>mnist/model-v1.json</code> sont
-          appliqués au chargement ; en cas d'échec, des poids déterministes (graine
-          42) les remplacent. Chaque couche de convolution affiche ses filtres,
-          reliés par des lignes fines entre canaux d'entrée et de sortie. Un clic
+          Les poids pré-entraînés du manifeste
+          <code>datasets/mnist/model-v1.json</code> sont
+          appliqués au chargement, mais seulement pour MNIST ; en cas d'échec, des
+          poids déterministes (graine 42) les remplacent. Le sélecteur « Jeu de
+          données » propose dix jeux : MNIST, Fashion-MNIST, QuickDraw et sept jeux
+          MedMNIST à un canal (OCT, Pneumonia, Breast, Tissue, OrganA/C/S) ;
+          changer de jeu arrête la run, remet à zéro les poids, les métriques,
+          l'historique et la galerie, puis recharge le jeu. Chaque couche de
+          convolution affiche ses filtres, avec un biais sous chacun, reliés par
+          des lignes fines entre canaux d'entrée et de sortie. Un clic
           sur une ligne sélectionne le couple et montre le noyau 3×3 exact du
           filtre en aval ; un clic sur une case ouvre un champ numérique :
           <strong>Entrée</strong> ou <strong>Appliquer</strong> écrit la valeur,
@@ -50,7 +57,7 @@
           effet immédiatement. Des poids édités à la main affichent un badge
           <strong>Modifié</strong> et une origine le signalant. Les boutons
           <strong>Entraîner 1 époque</strong> et <strong>Entraîner en boucle</strong>
-          chargent TensorFlow.js paresseusement et les exemples MNIST locaux, puis
+          chargent TensorFlow.js paresseusement et les exemples locaux du jeu, puis
           entraînent sur les sous-ensembles d'entraînement et de validation choisis
           par deux curseurs de pourcentage indépendants : l'entraînement repart
           toujours des poids affichés, qu'ils soient pré-entraînés, aléatoires ou
@@ -60,26 +67,40 @@
           Les commandes d'entraînement se trouvent sous le dessin, dans la colonne de
           gauche. <strong>Pause</strong> arrête la boucle au lot suivant,
           <strong>Réinitialiser les poids</strong> restaure les initiaux et
-          <strong>Poids aléatoires</strong> tire une graine nouvelle. La galerie
-          MNIST se télécharge à la première ouverture du sélecteur ou au premier
-          clic sur « Précédent » ou « Suivant », pas au chargement de la page ;
-          chaque chiffre propose dix exemples du jeu de test ; la précision affichée
-          est celle du sous-ensemble de validation tenu à l'écart, pas celle du jeu
-          complet. Le bouton
-          <strong>Effacer</strong> vide le dessin, les curseurs de nombre de filtres,
-          les deux curseurs de profondeur (0 à 4 couches de convolution, 1 à 3 couches
-          denses, couche de sortie comprise) et le sélecteur de fonction d'activation
+          <strong>Poids aléatoires</strong> tire une graine nouvelle. QuickDraw
+          retient cinq catégories (livre, lune, chat, parapluie, gâteau) et ne
+          charge que les fragments utiles au pourcentage choisi, chacun de 1 000
+          images ; il est plafonné à 10 % pour rester dans la mémoire du navigateur.
+          Les sept jeux MedMNIST fusionnent les divisions d'entraînement et de
+          validation pour l'entraînement, et réservent le jeu de test officiel à la
+          validation et à la galerie ; ils sont aussi plafonnés à 10 %. Le sélecteur
+          de galerie, la classe prédite, la rangée de sortie et les probabilités
+          portent les noms de classes du jeu. La galerie du jeu se télécharge à la
+          première ouverture du sélecteur ou au premier clic sur « Précédent » ou
+          « Suivant », pas au chargement de la page ; chaque classe propose dix
+          exemples du jeu de test ; la précision affichée est celle du sous-ensemble
+          de validation tenu à l'écart, pas celle du jeu complet. Le bouton
+          <strong>Effacer</strong> vide le dessin, les curseurs de nombre de filtres
+          (1 à 8 filtres par couche de convolution), les deux curseurs de profondeur
+          (0 à 4 couches de convolution, 1 à 3 couches denses, couche de sortie
+          comprise), les curseurs de largeur (1 à 128 unités par couche dense
+          cachée) et le sélecteur de fonction d'activation (sigmoïde ou tanh)
           reconstruisent le modèle et interrompent une run active ; le manifeste
-          pré-entraîné ne s'applique qu'à la profondeur de référence (quatre
-          convolutions, deux couches denses) avec la sigmoïde, toute autre configuration
+          pré-entraîné ne s'applique qu'à MNIST et à la profondeur et aux largeurs
+          de référence (quatre convolutions, deux couches denses, une couche cachée
+          de 8 unités) avec la sigmoïde, toute autre configuration ou tout autre jeu
           repart des poids déterministes (graine 42) ;
           les curseurs de pourcentage, de taux d'apprentissage et de taille des lots
           n'interrompent pas la run et n'agissent qu'à la prochaine. Le dessin et
           la sélection d'une case
           demandent un pointeur : les lignes de liaison se pilotent au clavier,
           mais pas les toiles. Chaque couche dense cachée affiche ses activations
-          sous forme d'un paquet de petits carrés, et la rangée de sortie affiche
-          dix carrés libellés, le maximum étant souligné.
+          sous forme d'un paquet de petits carrés, colorés sur l'échelle de
+          l'activation choisie, et la rangée de sortie affiche un carré par classe
+          libellé, le maximum étant souligné. Les données sont téléchargées
+          localement avec <code>npm run datasets:data</code>,
+          <code>npm run quickdraw:data</code> et <code>npm run medmnist:data</code> ;
+          les ressources ne sont pas versionnées.
         </p>
       </drl-card>
     </main>

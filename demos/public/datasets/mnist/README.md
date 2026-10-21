@@ -1,4 +1,4 @@
-# Ressources MNIST (`demos/public/mnist/`)
+# Ressources MNIST (`demos/public/datasets/mnist/`)
 
 Ce dossier contient les ressources servies telles quelles par Vite (`public/` est copié
 dans `dist/`). Le chargeur navigateur

@@ -4,7 +4,7 @@
  * Ce module est volontairement pur (aucun import Node) : il est importé par le
  * script de téléchargement `fetch-mnist-data.mjs` et par les tests, qui
  * vérifient que les noms, tailles et empreintes MD5 correspondent à ce que
- * documente `public/mnist/README.md`.
+ * documente `public/datasets/mnist/README.md`.
  */
 
 /** Miroir S3 maintenu par PyTorch, source des quatre archives. */

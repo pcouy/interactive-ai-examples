@@ -27,6 +27,17 @@ export interface MnistCnnConfig {
   /** Nombre de couches denses, couche de sortie comprise, de 1 à 3. Défaut : 2. */
   readonly denseLayers?: number;
   /**
+   * Largeurs des couches denses cachées, dans l'ordre, couche de sortie exclue.
+   * Défaut : `[8, 8]`. Une entrée manquante est remplacée par 8 ; les entrées
+   * au-delà du nombre de couches cachées sont ignorées.
+   */
+  readonly denseSizes?: readonly number[];
+  /**
+   * Nombre de classes de sortie, de 2 à `MAX_OUTPUT_CLASSES`. Défaut :
+   * `LOGIT_COUNT` (10).
+   */
+  readonly outputClasses?: number;
+  /**
    * Fonction d'activation des convolutions et des couches denses cachées.
    * La valeur par défaut est `DEFAULT_MNIST_CNN_ACTIVATION`. La couche de
    * logits reste linéaire dans les deux cas.
@@ -69,9 +80,21 @@ export const MNIST_INPUT_LENGTH = MNIST_INPUT_SIZE * MNIST_INPUT_SIZE;
 export const CONV_KERNEL_SIZE = 3;
 export const HIDDEN_DENSE_SIZE = 8;
 export const LOGIT_COUNT = 10;
+/** Nombre maximal de classes de sortie (QuickDraw : vingt catégories). */
+export const MAX_OUTPUT_CLASSES = 20;
+
+/** Bornes des couches denses cachées. */
+export const MIN_HIDDEN_DENSE_SIZE = 1;
+export const MAX_HIDDEN_DENSE_SIZE = 128;
+
+/** Largeurs par défaut des couches denses cachées. */
+export const DEFAULT_DENSE_SIZES: readonly [number, number] = [
+  HIDDEN_DENSE_SIZE,
+  HIDDEN_DENSE_SIZE,
+];
 
 export const MIN_FILTER_COUNT = 1;
-export const MAX_FILTER_COUNT = 4;
+export const MAX_FILTER_COUNT = 8;
 
 export const DEFAULT_FILTER_COUNTS: MnistCnnFilters = [3, 3, 3, 3];
 
@@ -204,6 +227,36 @@ function resolveDenseLayers(config: MnistCnnConfig): number {
   return value;
 }
 
+/** Résout et valide le nombre de classes de sortie. */
+export function resolveOutputClasses(config: MnistCnnConfig): number {
+  const value = config.outputClasses ?? LOGIT_COUNT;
+  if (!Number.isInteger(value) || value < 2 || value > MAX_OUTPUT_CLASSES) {
+    throw new RangeError(
+      `outputClasses must be an integer from 2 to ${MAX_OUTPUT_CLASSES}, received ${String(value)}.`,
+    );
+  }
+  return value;
+}
+
+/** Valide les largeurs cachées : au plus deux entrées, entières, de 1 à 128. */
+export function validateDenseSizes(sizes: readonly number[] | undefined): void {
+  if (sizes === undefined) {
+    return;
+  }
+  if (!Array.isArray(sizes) || sizes.length > MAX_DENSE_LAYERS - 1) {
+    throw new RangeError(
+      `Hidden dense sizes must be an array of at most ${MAX_DENSE_LAYERS - 1} integer(s) from ${MIN_HIDDEN_DENSE_SIZE} to ${MAX_HIDDEN_DENSE_SIZE}, received ${JSON.stringify(sizes)}.`,
+    );
+  }
+  for (const size of sizes) {
+    if (!Number.isInteger(size) || size < MIN_HIDDEN_DENSE_SIZE || size > MAX_HIDDEN_DENSE_SIZE) {
+      throw new RangeError(
+        `Each hidden dense size must be an integer from ${MIN_HIDDEN_DENSE_SIZE} to ${MAX_HIDDEN_DENSE_SIZE}, received ${String(size)}.`,
+      );
+    }
+  }
+}
+
 function validateConfig(config: MnistCnnConfig): void {
   if (config === null || typeof config !== 'object') {
     throw new TypeError('MNIST CNN config with a filters tuple is required.');
@@ -219,6 +272,8 @@ function validateConfig(config: MnistCnnConfig): void {
   }
   resolveConvLayers(config);
   resolveDenseLayers(config);
+  resolveOutputClasses(config);
+  validateDenseSizes(config.denseSizes);
 }
 
 /** Nom affiché d'une couche dense, à partir de 0. */
@@ -267,15 +322,19 @@ function denseInputWidth(plans: readonly ConvLayerPlan[]): number {
   return last.outputSize * last.outputSize * last.outputChannels;
 }
 
-/** Largeurs des couches denses : 8 pour chaque couche cachée, 10 pour la sortie. */
-export function denseLayerWidths(denseLayers: number): readonly number[] {
-  if (!Number.isInteger(denseLayers) || denseLayers < 1 || denseLayers > MAX_DENSE_LAYERS) {
-    throw new RangeError(
-      `denseLayers must be an integer from 1 to ${MAX_DENSE_LAYERS}, received ${String(denseLayers)}.`,
-    );
+/**
+ * Largeurs des couches denses : celles demandées par `config.denseSizes` (8 par
+ * défaut et pour une entrée manquante), puis le nombre de classes de sortie.
+ */
+export function denseLayerWidths(config: MnistCnnConfig): readonly number[] {
+  const denseLayers = resolveDenseLayers(config);
+  validateDenseSizes(config.denseSizes);
+  const requested = config.denseSizes ?? DEFAULT_DENSE_SIZES;
+  const widths = new Array<number>(denseLayers - 1);
+  for (let index = 0; index < denseLayers - 1; index += 1) {
+    widths[index] = requested[index] ?? HIDDEN_DENSE_SIZE;
   }
-  const widths = new Array<number>(denseLayers - 1).fill(HIDDEN_DENSE_SIZE);
-  widths.push(LOGIT_COUNT);
+  widths.push(resolveOutputClasses(config));
   return widths;
 }
 
@@ -381,7 +440,7 @@ function validateWeights(weights: MnistCnnWeights, config: MnistCnnConfig): void
       plans[layer].outputChannels,
     );
   }
-  const widths = denseLayerWidths(denseLayers);
+  const widths = denseLayerWidths(config);
   if (!Array.isArray(weights.dense) || weights.dense.length !== denseLayers) {
     throw new RangeError(
       `dense weights must hold ${denseLayers} layer(s), received ${layerArrayLength(weights.dense)}.`,
@@ -650,7 +709,7 @@ export function initializeMnistCnnWeights(
   validateConfig(config);
   const plans = convLayerPlans(config);
   const denseLayers = resolveDenseLayers(config);
-  const widths = denseLayerWidths(denseLayers);
+  const widths = denseLayerWidths(config);
   const rng = mulberry32(seed);
   const conv = plans.map((plan) => randomConvLayer(rng, plan));
   let inputWidth = denseInputWidth(plans);
@@ -671,7 +730,7 @@ export function mnistCnnParameterCount(
   config: MnistCnnConfig = { filters: DEFAULT_FILTER_COUNTS },
 ): number {
   const plans = convLayerPlans(config);
-  const widths = denseLayerWidths(resolveDenseLayers(config));
+  const widths = denseLayerWidths(config);
   let total = 0;
   for (const plan of plans) {
     total += plan.kernelLength + plan.outputChannels;
@@ -688,7 +747,8 @@ export function mnistCnnParameterCount(
  * Passage forward complet sur une image 28×28×1 (Float32Array de 784 valeurs
  * en ordre row-major, normalisée). Retourne les cartes de caractéristiques de
  * chaque convolution, l'activation de chaque couche dense (la dernière entrée
- * est le softmax), les logits linéaires (10) et les probabilités softmax (10).
+ * est le softmax), les logits linéaires et les probabilités softmax (autant que
+ * de classes de sortie).
  */
 export function forwardMnistCnn(
   input: Float32Array,
@@ -702,7 +762,7 @@ export function forwardMnistCnn(
   const convLayers = resolveConvLayers(config);
   const denseLayers = resolveDenseLayers(config);
   const plans = convLayerPlans(config);
-  const widths = denseLayerWidths(denseLayers);
+  const widths = denseLayerWidths(config);
   const featureMaps: MnistCnnFeatureMap[] = [];
   let activation: Float32Array = input;
   for (let layer = 0; layer < convLayers; layer += 1) {

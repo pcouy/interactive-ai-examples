@@ -7,7 +7,7 @@ import {
   parseMnistCnnManifestJson,
 } from './mnist-cnn-assets.js';
 
-const MANIFEST_URL = new URL('../../public/mnist/model-v1.json', import.meta.url);
+const MANIFEST_URL = new URL('../../public/datasets/mnist/model-v1.json', import.meta.url);
 const MANIFEST_TEXT = readFileSync(MANIFEST_URL, 'utf8');
 
 /** Copie modifiable du manifeste exporté, pour les cas d'erreur. */
@@ -147,6 +147,12 @@ describe('parseMnistCnnManifest', () => {
     const longBias = manifestClone();
     layersOf(longBias).dense2.bias = [0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10];
     expect(() => parseMnistCnnManifest(longBias)).toThrow(/dense2 bias must have 10 values/);
+  });
+
+  it('names the layer whose dense bias has the wrong length', () => {
+    const wrongBias = manifestClone();
+    layersOf(wrongBias).dense1.bias = [0, 0, 0, 0, 0, 0, 0];
+    expect(() => parseMnistCnnManifest(wrongBias)).toThrow(/dense1 bias must have 8 values/);
   });
 
   it('rejects non-finite and non-numeric weight values', () => {

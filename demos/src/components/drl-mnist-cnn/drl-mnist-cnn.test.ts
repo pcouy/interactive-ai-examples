@@ -1,4 +1,5 @@
 import { describe, expect, it } from 'vitest';
+import { getDataset } from '../../core/dataset-registry.js';
 import type {
   MnistCnnFilters,
   MnistCnnLayerWeights,
@@ -12,9 +13,13 @@ import {
   applyWeightEditorEvent,
   argmaxIndex,
   brushStrength,
+  clampDenseSize,
   convLayerGeometry,
+  datasetMaxPercent,
   denseCellLabel,
   denseLayerTitle,
+  densePackColumns,
+  denseSizeLabel,
   describeLinkLabel,
   describeWeightSelection,
   filterBiasCaption,
@@ -24,7 +29,11 @@ import {
   filterKernelValues,
   filterLinkGeometry,
   filterViewMode,
+  galleryClassLabel,
+  galleryInputHint,
+  galleryInputSource,
   hexToRgb,
+  isReferenceDenseSizes,
   linkCanvasSelectors,
   linkGroupIndices,
   linkLineState,
@@ -283,8 +292,95 @@ describe('dense activation labels', () => {
   });
 
   it('labels an output class with a percentage and the maximum', () => {
-    expect(outputCellLabel(7, 0.9823, true)).toBe('chiffre 7 : 98,2 %, maximum');
-    expect(outputCellLabel(0, 0.0012, false)).toBe('chiffre 0 : 0,1 %');
+    expect(outputCellLabel(7, 0.9823, true)).toBe('classe 7 : 98,2 %, maximum');
+    expect(outputCellLabel(0, 0.0012, false)).toBe('classe 0 : 0,1 %');
+    expect(outputCellLabel(2, 0.5, false)).toBe('classe 2 : 50,0 %');
+    expect(outputCellLabel(2, 0.5, false, 'chat')).toBe('classe 2 (chat) : 50,0 %');
+    expect(outputCellLabel(2, 0.5, true, 'chat')).toBe('classe 2 (chat) : 50,0 %, maximum');
+  });
+});
+
+describe('galleryClassLabel', () => {
+  it('keeps plain digits for MNIST', () => {
+    expect(galleryClassLabel(getDataset('mnist'), 3)).toBe('3');
+  });
+
+  it('pairs the index with the class name for named datasets', () => {
+    expect(galleryClassLabel(getDataset('fashion-mnist'), 0)).toBe('0 — T-shirt');
+    expect(galleryClassLabel(getDataset('quickdraw'), 2)).toBe('2 — chat');
+  });
+
+  it('falls back to the index when the class has no name', () => {
+    expect(galleryClassLabel(getDataset('mnist'), 10)).toBe('10');
+  });
+});
+
+describe('galleryInputSource', () => {
+  it('names the dataset and the plain digit for MNIST', () => {
+    expect(galleryInputSource(getDataset('mnist'), 3)).toBe('Exemple MNIST (3)');
+  });
+
+  it('names the dataset and the class for named datasets', () => {
+    expect(galleryInputSource(getDataset('fashion-mnist'), 0)).toBe(
+      'Exemple Fashion-MNIST (0 — T-shirt)',
+    );
+    expect(galleryInputSource(getDataset('quickdraw'), 2)).toBe('Exemple QuickDraw (2 — chat)');
+  });
+});
+
+describe('galleryInputHint', () => {
+  it('names the dataset and the expected class', () => {
+    expect(galleryInputHint(getDataset('mnist'), 3)).toBe(
+      'Exemple de la galerie MNIST : la classe attendue est « 3 ».',
+    );
+    expect(galleryInputHint(getDataset('fashion-mnist'), 0)).toBe(
+      'Exemple de la galerie Fashion-MNIST : la classe attendue est « T-shirt ».',
+    );
+    expect(galleryInputHint(getDataset('quickdraw'), 2)).toBe(
+      'Exemple de la galerie QuickDraw : la classe attendue est « chat ».',
+    );
+  });
+
+  it('names the dataset in the drawing prompt when no class is chosen', () => {
+    const hint = galleryInputHint(getDataset('quickdraw'), null);
+    expect(hint).toContain('QuickDraw');
+    expect(hint).toContain('Dessinez');
+  });
+});
+
+describe('dense size labels', () => {
+  it('names each hidden layer width control', () => {
+    expect(denseSizeLabel(0)).toBe('Unités de la couche dense 1');
+    expect(denseSizeLabel(1)).toBe('Unités de la couche dense 2');
+  });
+
+  it('shows the chosen width in the layer title', () => {
+    expect(denseLayerTitle(0, 3, 7)).toBe('Dense 1 — 7 unités');
+    expect(denseLayerTitle(2, 3, 10)).toBe('Sortie — 10 classes');
+  });
+});
+
+describe('dense size bounds', () => {
+  it('clamps and rounds a hidden width', () => {
+    expect(clampDenseSize(0)).toBe(1);
+    expect(clampDenseSize(129)).toBe(128);
+    expect(clampDenseSize(7.6)).toBe(8);
+    expect(clampDenseSize(32)).toBe(32);
+  });
+
+  it('recognises the reference hidden width only', () => {
+    expect(isReferenceDenseSizes([8, 7])).toBe(true);
+    expect(isReferenceDenseSizes([9, 8])).toBe(false);
+    expect(isReferenceDenseSizes([128])).toBe(false);
+  });
+});
+
+describe('dense pack columns', () => {
+  it('scales the column count with the pack size', () => {
+    expect(densePackColumns(1)).toBe(4);
+    expect(densePackColumns(8)).toBe(4);
+    expect(densePackColumns(32)).toBe(8);
+    expect(densePackColumns(128)).toBe(16);
   });
 });
 
@@ -330,6 +426,26 @@ describe('stratifiedExampleCountEstimate', () => {
     expect(() => stratifiedExampleCountEstimate(60000, 0)).toThrow(RangeError);
     expect(() => stratifiedExampleCountEstimate(60000, 1.5)).toThrow(RangeError);
     expect(() => stratifiedExampleCountEstimate(60000, Number.NaN)).toThrow(RangeError);
+  });
+
+  it('uses the class count of the selected dataset', () => {
+    // 5 classes : 60000 ÷ 5 × 0,1 = 1200 par classe, soit 6000 exemples.
+    expect(stratifiedExampleCountEstimate(60000, 0.1, 5)).toBe(6000);
+    // Le même total avec 10 classes donne un autre résultat sur 50 exemples.
+    expect(stratifiedExampleCountEstimate(50, 0.1, 5)).toBe(5);
+    expect(stratifiedExampleCountEstimate(50, 0.1)).toBe(10);
+  });
+
+  it('rejects a class count below two', () => {
+    expect(() => stratifiedExampleCountEstimate(60000, 0.1, 1)).toThrow(RangeError);
+    expect(() => stratifiedExampleCountEstimate(60000, 0.1, 2.5)).toThrow(RangeError);
+  });
+});
+
+describe('datasetMaxPercent', () => {
+  it('caps a memory-heavy dataset and leaves the others at 100', () => {
+    expect(datasetMaxPercent(getDataset('mnist'))).toBe(100);
+    expect(datasetMaxPercent(getDataset('quickdraw'))).toBe(10);
   });
 });
 
@@ -912,6 +1028,8 @@ describe('trainingRunRequest', () => {
       filters,
       convLayers: 4,
       denseLayers: 2,
+      denseSizes: [8, 8],
+      outputClasses: 10,
       learningRate: 0.01,
       batchSize: 64,
       trainPercent: 25,
@@ -955,6 +1073,18 @@ describe('trainingRunRequest', () => {
     const request = trainingRunRequest(input({ convLayers: 2, denseLayers: 3 }));
     expect(request.convLayers).toBe(2);
     expect(request.denseLayers).toBe(3);
+  });
+
+  it('forwards the dense sizes from the input', () => {
+    const request = trainingRunRequest(input({ denseSizes: [3, 7] }));
+    expect(request.denseSizes).toEqual([3, 7]);
+  });
+
+  it('forwards the output class count from the input', () => {
+    expect(trainingRunRequest(input()).outputClasses).toBe(10);
+    expect(trainingRunRequest(input({ outputClasses: 20 })).outputClasses).toBe(20);
+    // QuickDraw : cinq classes de sortie.
+    expect(trainingRunRequest(input({ outputClasses: 5 })).outputClasses).toBe(5);
   });
 
   it('forwards the batch size from the input', () => {

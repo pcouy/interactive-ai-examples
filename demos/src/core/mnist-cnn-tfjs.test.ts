@@ -53,8 +53,8 @@ function mulberry32(seed: number): () => number {
   };
 }
 
-/** Échantillon synthétique : pixels dans [0, 1], libellés cycliques 0 à 9. */
-function makeSample(count: number, seed = 7): MnistSample {
+/** Échantillon synthétique : pixels dans [0, 1], libellés cycliques 0 à `classCount - 1`. */
+function makeSample(count: number, seed = 7, classCount = LOGIT_COUNT): MnistSample {
   const rng = mulberry32(seed);
   const images = new Float32Array(count * MNIST_INPUT_LENGTH);
   for (let index = 0; index < images.length; index += 1) {
@@ -62,7 +62,7 @@ function makeSample(count: number, seed = 7): MnistSample {
   }
   const labels = new Uint8Array(count);
   for (let index = 0; index < count; index += 1) {
-    labels[index] = index % LOGIT_COUNT;
+    labels[index] = index % classCount;
   }
   return { count, images, labels };
 }
@@ -75,6 +75,18 @@ function makeSource(count: number, seed = 7): MnistTrainSource {
 /** Source dont `readBatch` retourne toujours le même lot, pour tester la validation. */
 function sourceOfBatch(batch: MnistSample): MnistTrainSource {
   return { count: batch.count, readBatch: () => batch };
+}
+
+/** Source dont le lot porte un libellé hors de la plage de classes. */
+function sourceWithLabel(labels: readonly number[]): MnistTrainSource {
+  return {
+    count: labels.length,
+    readBatch: () => ({
+      count: labels.length,
+      images: new Float32Array(labels.length * MNIST_INPUT_LENGTH),
+      labels: Uint8Array.from(labels),
+    }),
+  };
 }
 
 /** Source qui découpe un échantillon en tranches et enregistre chaque plage lue. */
@@ -109,6 +121,8 @@ async function makeTrainer(
     activation: MnistCnnActivation;
     convLayers: number;
     denseLayers: number;
+    denseSizes: readonly number[];
+    outputClasses: number;
   }> = {},
 ): Promise<MnistCnnTfjsTrainer> {
   const trainer = await createMnistCnnTfjsTrainer({
@@ -118,6 +132,8 @@ async function makeTrainer(
     activation: overrides.activation ?? 'sigmoid',
     convLayers: overrides.convLayers ?? 4,
     denseLayers: overrides.denseLayers ?? 2,
+    denseSizes: overrides.denseSizes,
+    outputClasses: overrides.outputClasses,
     seed: overrides.seed ?? DEFAULT_TRAINING_SEED,
   });
   disposables.push(trainer);
@@ -173,6 +189,34 @@ describe('model shape', () => {
       [null, HIDDEN_DENSE_SIZE],
       [null, LOGIT_COUNT],
     ]);
+  });
+
+  it('builds the requested number of output classes', async () => {
+    const trainer = await makeTrainer(SMALL_FILTERS, { outputClasses: 20 });
+    await trainer.exportWeights();
+    const graph = trainer.graph;
+    if (graph === null) {
+      throw new Error('The trainer did not build a model.');
+    }
+    const logits = graph.layers.filter((layer) => layer.getClassName() === 'Dense').at(-1);
+    expect(logits?.getConfig().units).toBe(20);
+    const weights = await trainer.exportWeights();
+    expect(weights.dense.at(-1)?.bias.length).toBe(20);
+  });
+
+  it('trains one batch with twenty classes and rejects a label of twenty', async () => {
+    const trainer = await makeTrainer(SMALL_FILTERS, { batchSize: 2, outputClasses: 20 });
+    const result = await trainer.train({
+      train: sourceOfBatch(makeSample(2, 7, 20)),
+      epochs: 1,
+    });
+    expect(result.status).toBe('completed');
+    expect(result.batchesProcessed).toBe(1);
+    // Un libellé égal au nombre de classes est hors de la plage : la seconde
+    // run est rejetée par la validation des libellés, qui porte la borne.
+    await expect(trainer.train({ train: sourceWithLabel([1, 20]), epochs: 1 })).rejects.toThrow(
+      /labels/i,
+    );
   });
 
   it('builds the convolution and hidden layers with the requested activation', async () => {
@@ -236,6 +280,20 @@ describe('model shape', () => {
       expect(weights.conv).toHaveLength(convLayers);
       expect(weights.dense).toHaveLength(denseLayers);
     }
+  });
+
+  it('builds the hidden dense units from denseSizes', async () => {
+    const trainer = await makeTrainer(SMALL_FILTERS, { denseLayers: 3, denseSizes: [3, 7] });
+    await trainer.exportWeights();
+    const graph = trainer.graph;
+    if (graph === null) {
+      throw new Error('The trainer did not build a model.');
+    }
+    expect(
+      graph.layers
+        .filter((layer) => layer.getClassName() === 'Dense')
+        .map((layer) => layer.getConfig().units),
+    ).toEqual([3, 7, LOGIT_COUNT]);
   });
 
   it('returns softmax probabilities on the simplex', async () => {
@@ -354,6 +412,25 @@ describe('applyWeights', () => {
     const reference = forwardMnistCnn(input, weights, { filters: DEFAULT_FILTER_COUNTS });
     for (let index = 0; index < LOGIT_COUNT; index += 1) {
       expect(probabilities[index]).toBeCloseTo(reference.probabilities[index], 4);
+    }
+  });
+
+  it('round-trips custom denseSizes through applyWeights and exportWeights', async () => {
+    const trainer = await makeTrainer(SMALL_FILTERS, { denseLayers: 3, denseSizes: [3, 7] });
+    const weights = initializeMnistCnnWeights(
+      { filters: SMALL_FILTERS, denseLayers: 3, denseSizes: [3, 7] },
+      1234,
+    );
+    await trainer.applyWeights(weights);
+    const exported = await trainer.exportWeights();
+    expect(exported.dense).toHaveLength(3);
+    expect(exported.dense.map((layer) => layer.kernel.length)).toEqual([25 * 3, 3 * 7, 7 * 10]);
+    expect(exported.dense.map((layer) => layer.bias.length)).toEqual([3, 7, LOGIT_COUNT]);
+    for (let layer = 0; layer < exported.dense.length; layer += 1) {
+      expect(Array.from(exported.dense[layer].kernel)).toEqual(
+        Array.from(weights.dense[layer].kernel),
+      );
+      expect(Array.from(exported.dense[layer].bias)).toEqual(Array.from(weights.dense[layer].bias));
     }
   });
 
@@ -1261,6 +1338,37 @@ describe('configuration validation', () => {
   it('rejects invalid filter counts', async () => {
     await expect(makeTrainer([0, 1, 1, 1])).rejects.toThrow(/filter count/i);
     await expect(makeTrainer([1, 1, 1, 9])).rejects.toThrow(/filter count/i);
+  });
+
+  it('rejects invalid denseSizes', async () => {
+    await expect(makeTrainer(SMALL_FILTERS, { denseSizes: [129] })).rejects.toThrow(
+      /hidden dense size/i,
+    );
+    await expect(makeTrainer(SMALL_FILTERS, { denseSizes: [0] })).rejects.toThrow(
+      /hidden dense size/i,
+    );
+    await expect(makeTrainer(SMALL_FILTERS, { denseSizes: [1.5] })).rejects.toThrow(
+      /hidden dense size/i,
+    );
+    await expect(makeTrainer(SMALL_FILTERS, { denseSizes: [8, 8, 8] })).rejects.toThrow(
+      /at most 2/,
+    );
+  });
+
+  it('accepts the maximum hidden dense size', async () => {
+    const trainer = await makeTrainer(SMALL_FILTERS, { denseSizes: [128] });
+    const weights = await trainer.exportWeights();
+    expect(weights.dense[0].bias.length).toBe(128);
+    expect(weights.dense[1].bias.length).toBe(10);
+  });
+
+  it('rejects an invalid outputClasses', async () => {
+    await expect(makeTrainer(SMALL_FILTERS, { outputClasses: 1 })).rejects.toThrow(
+      /outputClasses/i,
+    );
+    await expect(makeTrainer(SMALL_FILTERS, { outputClasses: 21 })).rejects.toThrow(
+      /outputClasses/i,
+    );
   });
 
   it('rejects invalid learning rate, batch size and seed', async () => {

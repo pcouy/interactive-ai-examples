@@ -1,5 +1,9 @@
 node_modules/
 dist/
 
-# Archives MNIST téléchargées à l'installation (npm run mnist:data)
-public/mnist/*.gz
+# Archives de données téléchargées à l'installation (npm run mnist:data)
+public/datasets/**/*.gz
+public/datasets/**/index.json
+
+# Fichiers .npy bruts de QuickDraw téléchargés par le convertisseur
+.cache/

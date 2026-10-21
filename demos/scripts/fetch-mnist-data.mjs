@@ -1,6 +1,6 @@
 #!/usr/bin/env node
 /**
- * Télécharge les quatre archives IDX MNIST dans `demos/public/mnist/`.
+ * Télécharge les quatre archives IDX MNIST dans `demos/public/datasets/mnist/`.
  *
  * Les archives ne sont pas versionnées : `npm install` lance ce script via le
  * crochet `postinstall` (mode `--optional`), et `npm run mnist:data` le lance
@@ -26,7 +26,7 @@ import { fileURLToPath } from 'node:url';
 import { MNIST_BASE_URL, MNIST_FILES } from './mnist-data-manifest.mjs';
 
 const SCRIPT_DIRECTORY = dirname(fileURLToPath(import.meta.url));
-const TARGET_DIRECTORY = resolve(SCRIPT_DIRECTORY, '..', 'public', 'mnist');
+const TARGET_DIRECTORY = resolve(SCRIPT_DIRECTORY, '..', 'public', 'datasets', 'mnist');
 const OPTIONAL = process.argv.includes('--optional');
 
 function md5(bytes) {

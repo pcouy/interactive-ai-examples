@@ -15,6 +15,9 @@ import {
   LOGIT_COUNT,
   MAX_CONV_LAYERS,
   MAX_DENSE_LAYERS,
+  MAX_FILTER_COUNT,
+  MAX_OUTPUT_CLASSES,
+  MIN_FILTER_COUNT,
   MNIST_INPUT_LENGTH,
   MNIST_INPUT_SIZE,
   type MnistCnnConfig,
@@ -22,7 +25,10 @@ import {
   type MnistCnnLayerWeights,
   type MnistCnnWeights,
   mnistCnnParameterCount,
+  resolveOutputClasses,
   softmax,
+  validateDenseSizes,
+  validateFilterCounts,
   withKernelWeight,
 } from './mnist-cnn.js';
 
@@ -215,7 +221,7 @@ describe('initializeMnistCnnWeights', () => {
     expect(weights.dense[1].bias).toHaveLength(HIDDEN_DENSE_SIZE);
     expect(weights.dense[2].kernel).toHaveLength(HIDDEN_DENSE_SIZE * LOGIT_COUNT);
     expect(weights.dense[2].bias).toHaveLength(LOGIT_COUNT);
-    expect(denseLayerWidths(3)).toEqual([HIDDEN_DENSE_SIZE, HIDDEN_DENSE_SIZE, LOGIT_COUNT]);
+    expect(denseLayerWidths(config)).toEqual([HIDDEN_DENSE_SIZE, HIDDEN_DENSE_SIZE, LOGIT_COUNT]);
   });
 
   it('counts parameters for several layer counts', () => {
@@ -294,9 +300,35 @@ describe('initializeMnistCnnWeights', () => {
     ).toBe(true);
   });
 
+  it('accepts the maximum filter count of every layer', () => {
+    const config = configWith([
+      MAX_FILTER_COUNT,
+      MAX_FILTER_COUNT,
+      MAX_FILTER_COUNT,
+      MAX_FILTER_COUNT,
+    ]);
+    const weights = initializeMnistCnnWeights(config, 1);
+    expect(weights.conv).toHaveLength(4);
+    expect(weights.conv.map((layer) => layer.bias)).toEqual([
+      new Float32Array(MAX_FILTER_COUNT),
+      new Float32Array(MAX_FILTER_COUNT),
+      new Float32Array(MAX_FILTER_COUNT),
+      new Float32Array(MAX_FILTER_COUNT),
+    ]);
+    // Quatre convolutions, pas et remplissage du planning de référence :
+    // 28 -> 26 -> 13 -> 11 -> 5. Canaux 1 -> 8 -> 8 -> 8 -> 8.
+    // conv : (9·1·8+8) + (9·8·8+8) + (9·8·8+8) + (9·8·8+8)
+    //      = 80 + 584 + 584 + 584 = 1832.
+    // dense : entrée 5·5·8 = 200 ; 200·8+8 + 8·10+10 = 1608 + 90 = 1698.
+    // total : 1832 + 1698 = 3530.
+    expect(mnistCnnParameterCount(config)).toBe(3530);
+  });
+
   it('rejects invalid filter counts', () => {
     expect(() => initializeMnistCnnWeights(configWith([0, 3, 3, 3]), 1)).toThrow(/filter count/i);
-    expect(() => initializeMnistCnnWeights(configWith([3, 3, 3, 5]), 1)).toThrow(/filter count/i);
+    expect(() => initializeMnistCnnWeights(configWith([MAX_FILTER_COUNT + 1, 3, 3, 3]), 1)).toThrow(
+      /filter count/i,
+    );
     expect(() => initializeMnistCnnWeights(configWith([2.5, 3, 3, 3]), 1)).toThrow(/integer/i);
     expect(() =>
       initializeMnistCnnWeights(configWith([3, 3, 3] as unknown as MnistCnnFilters), 1),
@@ -304,6 +336,14 @@ describe('initializeMnistCnnWeights', () => {
     expect(() => initializeMnistCnnWeights(undefined as unknown as MnistCnnConfig, 1)).toThrow(
       TypeError,
     );
+  });
+
+  it('validates the filter count bounds directly', () => {
+    expect(MIN_FILTER_COUNT).toBe(1);
+    expect(MAX_FILTER_COUNT).toBe(8);
+    expect(() => validateFilterCounts([8, 8, 8, 8])).not.toThrow();
+    expect(() => validateFilterCounts([9, 3, 3, 3])).toThrow(RangeError);
+    expect(() => validateFilterCounts([1, 1, 1, 1])).not.toThrow();
   });
 
   it('rejects layer counts outside the supported ranges', () => {
@@ -318,8 +358,173 @@ describe('initializeMnistCnnWeights', () => {
       initializeMnistCnnWeights({ ...base, denseLayers: MAX_DENSE_LAYERS + 1 }, 1),
     ).toThrow(RangeError);
     expect(() => mnistCnnParameterCount({ ...base, convLayers: 5 })).toThrow(RangeError);
-    expect(() => denseLayerWidths(0)).toThrow(RangeError);
-    expect(() => denseLayerWidths(4)).toThrow(RangeError);
+    expect(() => denseLayerWidths({ ...base, denseLayers: 0 })).toThrow(RangeError);
+    expect(() => denseLayerWidths({ ...base, denseLayers: MAX_DENSE_LAYERS + 1 })).toThrow(
+      RangeError,
+    );
+  });
+
+  it('derives the dense widths from denseSizes, with 8 as the padded default', () => {
+    const filters = DEFAULT_FILTER_COUNTS;
+    expect(denseLayerWidths({ filters, denseLayers: 3, denseSizes: [3, 7] })).toEqual([
+      3,
+      7,
+      LOGIT_COUNT,
+    ]);
+    expect(denseLayerWidths({ filters, denseLayers: 2 })).toEqual([HIDDEN_DENSE_SIZE, LOGIT_COUNT]);
+    expect(denseLayerWidths({ filters, denseLayers: 2, denseSizes: [3, 7] })).toEqual([
+      3,
+      LOGIT_COUNT,
+    ]);
+    expect(denseLayerWidths({ filters, denseLayers: 3, denseSizes: [128] })).toEqual([
+      128,
+      HIDDEN_DENSE_SIZE,
+      LOGIT_COUNT,
+    ]);
+  });
+
+  it('accepts the maximum hidden dense size', () => {
+    const filters = DEFAULT_FILTER_COUNTS;
+    expect(denseLayerWidths({ filters, denseLayers: 3, denseSizes: [128] })).toEqual([
+      128,
+      8,
+      LOGIT_COUNT,
+    ]);
+    expect(
+      mnistCnnParameterCount({ filters, convLayers: 0, denseLayers: 3, denseSizes: [128, 128] }),
+    ).toBe(118282);
+  });
+
+  it('sizes the dense layers and counts parameters for custom denseSizes', () => {
+    const config: MnistCnnConfig = {
+      filters: DEFAULT_FILTER_COUNTS,
+      convLayers: 4,
+      denseLayers: 3,
+      denseSizes: [3, 7],
+    };
+    const weights = initializeMnistCnnWeights(config, 11);
+    expect(weights.dense.map((layer) => layer.bias.length)).toEqual([3, 7, LOGIT_COUNT]);
+    for (const layer of weights.dense) {
+      expect(Array.from(layer.bias)).toEqual(new Array<number>(layer.bias.length).fill(0));
+    }
+    // 4 conv + 3 dense : conv 30 + 84 + 84 + 84 = 282 ;
+    // dense 75·3+3 + 3·7+7 + 7·10+10 = 228 + 28 + 80 = 336 ; total 618.
+    expect(mnistCnnParameterCount(config)).toBe(618);
+    // 4 conv + 2 dense, hidden 4 : conv 282 ; dense 75·4+4 + 4·10+10 = 354 ; total 636.
+    expect(
+      mnistCnnParameterCount({
+        filters: DEFAULT_FILTER_COUNTS,
+        convLayers: 4,
+        denseLayers: 2,
+        denseSizes: [4],
+      }),
+    ).toBe(636);
+  });
+
+  it('runs forwardMnistCnn with custom denseSizes', () => {
+    const config: MnistCnnConfig = {
+      filters: DEFAULT_FILTER_COUNTS,
+      denseLayers: 3,
+      denseSizes: [3, 7],
+    };
+    const weights = initializeMnistCnnWeights(config, 13);
+    const output = forwardMnistCnn(rampInput(), weights, config);
+    expect(output.denseActivations.map((activation) => activation.length)).toEqual([
+      3,
+      7,
+      LOGIT_COUNT,
+    ]);
+    expect(output.logits).toHaveLength(LOGIT_COUNT);
+  });
+
+  it('rejects invalid denseSizes', () => {
+    const base = { filters: DEFAULT_FILTER_COUNTS };
+    expect(() => initializeMnistCnnWeights({ ...base, denseSizes: [0] }, 1)).toThrow(RangeError);
+    expect(() => initializeMnistCnnWeights({ ...base, denseSizes: [129] }, 1)).toThrow(RangeError);
+    expect(() => initializeMnistCnnWeights({ ...base, denseSizes: [1.5] }, 1)).toThrow(RangeError);
+    expect(() => initializeMnistCnnWeights({ ...base, denseSizes: [8, 8, 8] }, 1)).toThrow(
+      RangeError,
+    );
+    expect(() =>
+      forwardMnistCnn(rampInput(), initializeMnistCnnWeights({ ...base }, 1), {
+        ...base,
+        denseSizes: [0],
+      }),
+    ).toThrow(RangeError);
+    expect(() => validateDenseSizes([0])).toThrow(/hidden dense size/i);
+    expect(() => validateDenseSizes([129])).toThrow(/hidden dense size/i);
+    expect(() => validateDenseSizes([8, 8, 8])).toThrow(/at most 2/);
+    expect(() => validateDenseSizes(undefined)).not.toThrow();
+  });
+});
+
+describe('output classes', () => {
+  const filters = DEFAULT_FILTER_COUNTS;
+
+  it('keeps ten output classes by default', () => {
+    expect(resolveOutputClasses({ filters })).toBe(LOGIT_COUNT);
+    expect(denseLayerWidths({ filters })).toEqual([HIDDEN_DENSE_SIZE, LOGIT_COUNT]);
+    expect(mnistCnnParameterCount({ filters })).toBe(980);
+  });
+
+  it('resolves the requested output class count', () => {
+    expect(resolveOutputClasses({ filters, outputClasses: 20 })).toBe(MAX_OUTPUT_CLASSES);
+    expect(denseLayerWidths({ filters, outputClasses: 20 })).toEqual([HIDDEN_DENSE_SIZE, 20]);
+  });
+
+  it('rejects output class counts outside the supported range', () => {
+    expect(() => resolveOutputClasses({ filters, outputClasses: 1 })).toThrow(RangeError);
+    expect(() => resolveOutputClasses({ filters, outputClasses: 21 })).toThrow(RangeError);
+    expect(() => resolveOutputClasses({ filters, outputClasses: 10.5 })).toThrow(RangeError);
+    expect(() => resolveOutputClasses({ filters, outputClasses: 1 })).toThrow(/outputClasses/);
+    expect(() => resolveOutputClasses({ filters, outputClasses: 21 })).toThrow(/outputClasses/);
+    expect(() => resolveOutputClasses({ filters, outputClasses: 10.5 })).toThrow(/integer/);
+    expect(() => resolveOutputClasses({ filters, outputClasses: 2 })).not.toThrow();
+  });
+
+  it('rejects an invalid output class count before counting parameters', () => {
+    expect(() => mnistCnnParameterCount({ filters, outputClasses: 1 })).toThrow(/outputClasses/);
+    expect(() => initializeMnistCnnWeights({ filters, outputClasses: 21 }, 1)).toThrow(
+      /outputClasses/,
+    );
+    expect(() =>
+      forwardMnistCnn(rampInput(), initializeMnistCnnWeights({ filters }, 1), {
+        filters,
+        outputClasses: 1,
+      }),
+    ).toThrow(/outputClasses/);
+  });
+
+  it('counts 1070 parameters for twenty output classes', () => {
+    // La sortie passe de 8·10+10 = 90 à 8·20+20 = 180, soit +90 paramètres.
+    expect(mnistCnnParameterCount({ filters, outputClasses: 20 })).toBe(
+      980 + (8 * 20 + 20) - (8 * 10 + 10),
+    );
+    expect(mnistCnnParameterCount({ filters, outputClasses: 20 })).toBe(1070);
+  });
+
+  it('sizes the output layer for twenty classes', () => {
+    const weights = initializeMnistCnnWeights({ filters, outputClasses: 20 }, 7);
+    expect(weights.dense[1].bias).toHaveLength(20);
+    expect(weights.dense[1].kernel).toHaveLength(8 * 20);
+    expect(weights.dense[0].bias).toHaveLength(HIDDEN_DENSE_SIZE);
+    expect(weights.dense[0].kernel).toHaveLength(5 * 5 * 3 * HIDDEN_DENSE_SIZE);
+  });
+
+  it('runs the forward pass with twenty probabilities that sum to one', () => {
+    const config: MnistCnnConfig = { filters, outputClasses: 20 };
+    const weights = initializeMnistCnnWeights(config, 7);
+    const output = forwardMnistCnn(rampInput(), weights, config);
+    expect(output.logits).toHaveLength(20);
+    expect(output.probabilities).toHaveLength(20);
+    expect(output.denseActivations[output.denseActivations.length - 1]).toHaveLength(20);
+    let sum = 0;
+    for (const probability of output.probabilities) {
+      expect(Number.isFinite(probability)).toBe(true);
+      expect(probability).toBeGreaterThanOrEqual(0);
+      sum += probability;
+    }
+    expect(sum).toBeCloseTo(1, 5);
   });
 });
 
@@ -985,7 +1190,7 @@ describe('validation', () => {
     expect(() => forwardMnistCnn(constantInput(0.5), weights, mismatched)).toThrow(
       /conv1 kernel must have 9/,
     );
-    expect(() => forwardMnistCnn(constantInput(0.5), weights, configWith([3, 3, 3, 5]))).toThrow(
+    expect(() => forwardMnistCnn(constantInput(0.5), weights, configWith([3, 3, 3, 9]))).toThrow(
       /filter count/i,
     );
     expect(() =>
