@@ -113,30 +113,22 @@ describe('replayHeader', () => {
 });
 
 describe('schematicView', () => {
-  /** Dummy update whose transition fields are easy to tell apart from a state. */
-  function updateResult(
-    overrides: Partial<Transition<number, FrozenLakeAction>> = {},
-  ): QUpdateResult<number, FrozenLakeAction> {
-    return {
-      transition: transition(overrides),
-      previousValue: 0,
-      nextValue: 0,
-      discountFactor: 0.9,
-      bootstrap: 0,
-      target: 0,
-      tdError: 0,
-      learningRate: 0.1,
-      updatedValue: 0,
-    };
-  }
-
-  it('shows only the observation in the observe phase without an update', () => {
-    expect(schematicView(fineStep({ observation: 5 }), null)).toEqual({
+  it('shows only the observation in the observe phase', () => {
+    expect(schematicView(fineStep({ observation: 5 }))).toEqual({
       observation: 5,
       action: null,
       nextObservation: null,
       reward: null,
-      fallback: false,
+    });
+  });
+
+  it('ignores stale transition fields in the observe phase', () => {
+    const state = fineStep({ observation: 6, nextObservation: 9, reward: 0.5 });
+    expect(schematicView(state)).toEqual({
+      observation: 6,
+      action: null,
+      nextObservation: null,
+      reward: null,
     });
   });
 
@@ -147,20 +139,11 @@ describe('schematicView', () => {
       observation: 4,
       action: 'up',
     });
-    // Live state wins over the stale update.
-    const staleUpdate = updateResult({
-      observation: 30,
-      action: 'left',
-      reward: -2,
-      nextObservation: 31,
-      done: true,
-    });
-    expect(schematicView(state, staleUpdate)).toEqual({
+    expect(schematicView(state)).toEqual({
       observation: 4,
       action: 'up',
       nextObservation: null,
       reward: null,
-      fallback: false,
     });
   });
 
@@ -174,39 +157,11 @@ describe('schematicView', () => {
       reward: 0.5,
       done: false,
     });
-    // Live state wins over the stale update.
-    const staleUpdate = updateResult({
-      observation: 30,
-      action: 'left',
-      reward: -2,
-      nextObservation: 31,
-      done: true,
-    });
-    expect(schematicView(state, staleUpdate)).toEqual({
+    expect(schematicView(state)).toEqual({
       observation: 4,
       action: 'down',
       nextObservation: 9,
       reward: 0.5,
-      fallback: false,
-    });
-  });
-
-  it('uses one whole transition as the fallback in the observe phase', () => {
-    const lastUpdate = updateResult({
-      observation: 3,
-      action: 'right',
-      reward: 1,
-      nextObservation: 7,
-      done: true,
-    });
-    // The state observation differs, so a mixed mapping would be visible.
-    const state = fineStep({ observation: 6 });
-    expect(schematicView(state, lastUpdate)).toEqual({
-      observation: 3,
-      action: 'right',
-      nextObservation: 7,
-      reward: 1,
-      fallback: true,
     });
   });
 });

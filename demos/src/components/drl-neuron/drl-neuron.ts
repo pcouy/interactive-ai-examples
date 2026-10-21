@@ -31,7 +31,7 @@ import {
  * exaggeration of that landscape is configurable.
  *
  * Color scale: targets span [t min, t max]. A low target is blue
- * (--drl-accent), a high target is violet (--drl-accent-2). Predictions use the
+ * (--drl-accent), a high target is red (--drl-accent-2). Predictions use the
  * same range, so a point and the cell below it are directly comparable: a cell
  * that matches its point shows the same color.
  */
@@ -330,7 +330,7 @@ export class Neuron extends DemoElement {
       }
 
       /* The test point marker: a ring plus a cross, drawn in the accent-2
-         color so it stays distinct from the blue/violet target points. */
+         color so it stays distinct from the blue/red target points. */
       .drl-test-point {
         fill: none;
         stroke: var(--drl-accent-2);

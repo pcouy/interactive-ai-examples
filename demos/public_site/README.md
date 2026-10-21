@@ -68,7 +68,10 @@ Le build se déroule en trois étapes :
    `build.format: 'file'` et `inlineStylesheets: 'always'`.
 3. `scripts/finalize-build.mjs` réécrit les URL absolues (`/deep-blue`) en URL relatives
    (`./deep-blue.html`). `scripts/verify-build.mjs` contrôle ensuite le résultat : fichiers
-   requis, liens, balises de thème, KaTeX, balises de démo et absence d'URL absolue.
+   requis, liens, balises de thème, KaTeX, balises de démo et absence d'URL absolue. Il
+   vérifie aussi l'identité octet pour octet du bundle copié et de
+   `demos/dist/drl-demos.js`, ainsi que la présence de quatre marqueurs :
+   `--drl-theme-bg`, `Boucle agent-environnement`, `Dernière mise à jour` et `Rejeu`.
 
 Le build échoue si un contrôle de `verify-build.mjs` échoue.
 
@@ -198,14 +201,14 @@ Le script de collage se trouve dans `src/scripts/`. Importez-le avec `?raw`, com
 
 | Commande | Rôle |
 |---|---|
-| `npm run sync` | Copie `../dist/*.js` vers `public/demo/`, copie KaTeX et régénère `palette.generated.css` |
+| `npm run sync` | Copie `../dist/*.js` vers `public/demo/`, copie KaTeX et régénère `palette.generated.css`. Il refuse un bundle plus ancien que `demos/src` ou que les fichiers de configuration des démos |
 | `npm run dev` | Construit les démos, puis synchronise, puis sert Astro avec HMR (`predev`) |
 | `npm run build` | `prebuild` + `astro build` + `finalize-build.mjs` + `verify-build.mjs` |
 | `npm run preview` | Sert `dist/` en local |
 | `npm run check` | Construit les démos, puis synchronise, puis `astro check` (`precheck`) |
 | `npm test` | Tests Node de `scripts/url-rewrite.test.mjs` |
 | `npm run verify` | `check` + `test` + `build` |
-| `npm run smoke` | Contrôle HTTP du build (voir « Vérification ») |
+| `npm run smoke` | Contrôle HTTP du build (voir « Vérification »). Vérifie aussi les quatre marqueurs dans le bundle servi |
 | `npm run verify:full` | `verify` + `smoke` |
 
 ## Vérification

@@ -3,7 +3,7 @@ const log = document.querySelector('[data-demo-log]');
 
 const PLAYER_NAMES = {
   'tic-tac-toe': ['Croix', 'Cercles'],
-  connect4: ['Bleus', 'Violets'],
+  connect4: ['Bleus', 'Rouges'],
 };
 
 const entries = [];
