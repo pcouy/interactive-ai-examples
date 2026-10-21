@@ -1,7 +1,8 @@
 import { gzipSync } from 'node:zlib';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import type { ShardedDatasetDefinition } from '../../core/dataset-registry.js';
-import type { ShardedSplitIndex } from './sharded-assets.js';
+import type { RoundRef } from '../../core/mnist-cnn-segmented.js';
+import type { ShardEntry, ShardedIndex, ShardedSplitIndex } from './sharded-assets.js';
 
 const IMAGE_MAGIC = 2051;
 const LABEL_MAGIC = 2049;
@@ -10,11 +11,11 @@ function u32Bytes(value: number): number[] {
   return [(value >>> 24) & 0xff, (value >>> 16) & 0xff, (value >>> 8) & 0xff, value & 0xff];
 }
 
-function imageIdx(count: number): Uint8Array<ArrayBuffer> {
+function imageIdx(count: number, fillBase = 0): Uint8Array<ArrayBuffer> {
   const bytes = new Uint8Array(new ArrayBuffer(16 + count * 28 * 28));
   bytes.set([...u32Bytes(IMAGE_MAGIC), ...u32Bytes(count), ...u32Bytes(28), ...u32Bytes(28)]);
   for (let index = 0; index < count * 28 * 28; index += 1) {
-    bytes[16 + index] = (index * 7) % 256;
+    bytes[16 + index] = (fillBase + index * 7) % 256;
   }
   return bytes;
 }
@@ -64,7 +65,7 @@ function baseIndex(): Record<string, unknown> {
     { file: `${prefix}-c1-s02.idx.gz`, classIndex: 1, start: 10, count: 2 },
   ];
   return {
-    version: 1,
+    version: 2,
     dataset: 'quickdraw',
     classNames: ['livre', 'lune'],
     shardSize: 2,
@@ -72,11 +73,24 @@ function baseIndex(): Record<string, unknown> {
       train: { count: 12, labelsFile: 'train-labels.idx.gz', shards: shards('train') },
       test: { count: 12, labelsFile: 'test-labels.idx.gz', shards: shards('test') },
     },
-    gallery: { imagesFile: 'gallery.idx.gz', labelsFile: 'gallery-labels.idx.gz', perClass: 3 },
+    galleries: {
+      train: {
+        imagesFile: 'train-gallery.idx.gz',
+        labelsFile: 'train-gallery-labels.idx.gz',
+        perClass: 3,
+      },
+      test: { imagesFile: 'gallery.idx.gz', labelsFile: 'gallery-labels.idx.gz', perClass: 3 },
+    },
   };
 }
 
-/** Ressources complètes pour l'index donné : index, libellés, fragments et galerie. */
+/** Libellés des galeries de test : l'entraînement et le test diffèrent. */
+const GALLERY_LABELS = new Map([
+  ['train-gallery-labels.idx.gz', [1, 1, 1, 0, 0, 0]],
+  ['gallery-labels.idx.gz', [0, 0, 0, 1, 1, 1]],
+]);
+
+/** Ressources complètes pour l'index donné : index, libellés, fragments et galeries. */
 function assetsForIndex(index: Record<string, unknown>): Map<string, Uint8Array<ArrayBuffer>> {
   const assets = new Map<string, Uint8Array<ArrayBuffer>>();
   assets.set('index.json', new TextEncoder().encode(JSON.stringify(index)));
@@ -91,13 +105,16 @@ function assetsForIndex(index: Record<string, unknown>): Map<string, Uint8Array<
       assets.set(shard.file, gz(imageIdx(shard.count)));
     }
   }
-  const gallery = index.gallery as {
-    imagesFile: string;
-    labelsFile: string;
-    perClass: number;
+  const galleries = index.galleries as {
+    train: { imagesFile: string; labelsFile: string };
+    test: { imagesFile: string; labelsFile: string };
   };
-  assets.set(gallery.imagesFile, gz(imageIdx(6)));
-  assets.set(gallery.labelsFile, gz(labelIdx([0, 0, 0, 1, 1, 1])));
+  for (const gallery of [galleries.train, galleries.test]) {
+    const labels = GALLERY_LABELS.get(gallery.labelsFile) ?? [0, 0, 0, 1, 1, 1];
+    const fillBase = gallery.imagesFile.startsWith('train') ? 100 : 0;
+    assets.set(gallery.imagesFile, gz(imageIdx(labels.length, fillBase)));
+    assets.set(gallery.labelsFile, gz(labelIdx(labels)));
+  }
   return assets;
 }
 
@@ -132,15 +149,18 @@ afterEach(() => {
 });
 
 describe('parseIndexJson', () => {
-  it('accepts a valid index', async () => {
+  it('accepts a valid version 2 index with both galleries', async () => {
     const { parseIndexJson } = await loadLoader();
     const index = parseIndexJson(JSON.stringify(baseIndex()));
-    expect(index.version).toBe(1);
+    expect(index.version).toBe(2);
     expect(index.classNames).toEqual(['livre', 'lune']);
     expect(index.shardSize).toBe(2);
     expect(index.splits.train.count).toBe(12);
     expect(index.splits.train.shards).toHaveLength(6);
     expect(index.splits.test.shards).toHaveLength(6);
+    expect(index.galleries.train.imagesFile).toBe('train-gallery.idx.gz');
+    expect(index.galleries.test.labelsFile).toBe('gallery-labels.idx.gz');
+    expect(index.galleries.test.perClass).toBe(3);
   });
 
   it('accepts the expected dataset and rejects a different one', async () => {
@@ -170,10 +190,36 @@ describe('parseIndexJson', () => {
     expect(() => parseIndexJson(JSON.stringify(index))).toThrow(/splits/);
   });
 
+  it('rejects a missing galleries field', async () => {
+    const { parseIndexJson } = await loadLoader();
+    const index = baseIndex();
+    delete index.galleries;
+    expect(() => parseIndexJson(JSON.stringify(index))).toThrow(/galleries/);
+  });
+
+  it('rejects a missing train gallery', async () => {
+    const { parseIndexJson } = await loadLoader();
+    const index = baseIndex();
+    const galleries = index.galleries as { train?: unknown };
+    delete galleries.train;
+    expect(() => parseIndexJson(JSON.stringify(index))).toThrow(/galleries\.train/);
+  });
+
+  it('rejects a version 1 index and names both rerun commands', async () => {
+    const { parseIndexJson } = await loadLoader();
+    const index = baseIndex();
+    index.version = 1;
+    const parse = () => parseIndexJson(JSON.stringify(index));
+    expect(parse).toThrow(RangeError);
+    expect(parse).toThrow(/version 1/);
+    expect(parse).toThrow(/npm run quickdraw:data/);
+    expect(parse).toThrow(/npm run medmnist:data/);
+  });
+
   it('rejects an unsupported version', async () => {
     const { parseIndexJson } = await loadLoader();
     const index = baseIndex();
-    index.version = 2;
+    index.version = 3;
     expect(() => parseIndexJson(JSON.stringify(index))).toThrow(/version/);
   });
 
@@ -277,6 +323,40 @@ describe('selectShardEntries', () => {
       'c-third.idx.gz',
     ]);
   });
+
+  const sixClasses: ShardedSplitIndex = {
+    count: 12,
+    labelsFile: 'train-labels.idx.gz',
+    shards: [0, 1, 2, 3, 4, 5].map((classIndex) => ({
+      file: `c${classIndex}.idx.gz`,
+      classIndex,
+      start: classIndex * 2,
+      count: 2,
+    })),
+  };
+
+  it('keeps only the selected classes, in sorted order', async () => {
+    const { selectShardEntries } = await loadLoader();
+    const selected = selectShardEntries(sixClasses, 100, [2, 5]);
+    expect(selected.map((shard) => shard.file)).toEqual(['c2.idx.gz', 'c5.idx.gz']);
+  });
+
+  it('sorts and deduplicates the selected classes', async () => {
+    const { selectShardEntries } = await loadLoader();
+    const selected = selectShardEntries(sixClasses, 100, [5, 2, 5]);
+    expect(selected.map((shard) => shard.classIndex)).toEqual([2, 5]);
+  });
+
+  it('treats an empty selection as every class', async () => {
+    const { selectShardEntries } = await loadLoader();
+    expect(selectShardEntries(sixClasses, 100, [])).toEqual(selectShardEntries(sixClasses, 100));
+  });
+
+  it('rejects a selected class without a shard', async () => {
+    const { selectShardEntries } = await loadLoader();
+    expect(() => selectShardEntries(sixClasses, 100, [2, 9])).toThrow(RangeError);
+    expect(() => selectShardEntries(sixClasses, 100, [2, 9])).toThrow(/class 9/);
+  });
 });
 
 describe('mergeShards', () => {
@@ -307,6 +387,28 @@ describe('mergeShards', () => {
     const { mergeShards } = await loadLoader();
     const outOfRange = { file: 'b.idx.gz', classIndex: 1, start: 10, count: 1 };
     expect(() => mergeShards([outOfRange], [new Uint8Array(784)], labels)).toThrow(/needs labels/);
+  });
+
+  it('remaps the sliced labels through the provided function', async () => {
+    const { mergeShards } = await loadLoader();
+    const remapped = mergeShards(
+      [entryA, entryB],
+      [new Uint8Array(2 * 784), new Uint8Array(784)],
+      Uint8Array.from([0, 1, 0, 1]),
+      (label) => 1 - label,
+    );
+    expect(Array.from(remapped.labels)).toEqual([1, 0, 0]);
+  });
+
+  it('rejects a remapped label outside the class count', async () => {
+    const { mergeShards } = await loadLoader();
+    const images = [new Uint8Array(2 * 784), new Uint8Array(784)];
+    const sliced = Uint8Array.from([0, 1, 0, 1]);
+    expect(() => mergeShards([entryA, entryB], images, sliced, () => 2)).toThrow(RangeError);
+    expect(() => mergeShards([entryA, entryB], images, sliced, () => 2)).toThrow(
+      /outside \[0, 2\)/,
+    );
+    expect(() => mergeShards([entryA, entryB], images, sliced, () => 0.5)).toThrow(RangeError);
   });
 });
 
@@ -340,6 +442,75 @@ describe('loadShardedSplits', () => {
     expect(mock).toHaveBeenCalledTimes(7);
     expect(splits.train.count).toBe(4);
     expect(progress.at(-1)).toEqual([7, 7]);
+  });
+
+  it('downloads only the selected classes and remaps their labels to 0..N-1', async () => {
+    const fixture = segmentFixture(15, 4);
+    const assets = new Map(fixture.assets);
+    assets.set('index.json', new TextEncoder().encode(JSON.stringify(fixture.json)));
+    const mock = stubFetch(assets);
+    const { loadShardedSplits } = await loadLoader();
+    const progress: [number, number][] = [];
+
+    const splits = await loadShardedSplits(
+      SHARDED_DATASET,
+      100,
+      100,
+      (loaded, total) => {
+        progress.push([loaded, total]);
+      },
+      [2, 5],
+    );
+
+    // Deux classes, quatre fragments de deux images par fraction.
+    expect(splits.train.count).toBe(16);
+    expect(splits.test.count).toBe(16);
+    const expectedLabels = [0, 0, 0, 0, 0, 0, 0, 0, 1, 1, 1, 1, 1, 1, 1, 1];
+    expect(Array.from(splits.train.labels)).toEqual(expectedLabels);
+    expect(Array.from(splits.test.labels)).toEqual(expectedLabels);
+
+    const shards = fetchedShardFiles(mock);
+    expect(shards).toHaveLength(16);
+    for (const name of shards) {
+      expect(name).toMatch(/-c(2|5)-/);
+    }
+    // Index + deux libellés + seize fragments (deux classes, quatre fragments,
+    // deux fractions).
+    expect(progress.at(-1)).toEqual([19, 19]);
+  });
+
+  it('keeps every class when the selection is null or empty', async () => {
+    const mock = stubFetch(assetsForIndex(baseIndex()));
+    const { loadShardedSplits } = await loadLoader();
+
+    const withNull = await loadShardedSplits(SHARDED_DATASET, 100, 100, undefined, null);
+    expect(Array.from(withNull.train.labels)).toEqual(TRAIN_LABELS);
+    expect(Array.from(withNull.test.labels)).toEqual(TEST_LABELS);
+
+    const withEmpty = await loadShardedSplits(SHARDED_DATASET, 100, 100, undefined, []);
+    expect(Array.from(withEmpty.train.labels)).toEqual(TRAIN_LABELS);
+    expect(fetchedShardFiles(mock)).toHaveLength(12);
+  });
+
+  it('rejects a labels file that carries an unselected class', async () => {
+    const fixture = segmentFixture(15, 4);
+    const labels = [...fixture.labels];
+    // Premier fragment de la classe 2 : le libellé 7 n'est pas sélectionné.
+    labels[16] = 7;
+    const assets = new Map(fixture.assets);
+    assets.set('train-labels.idx.gz', gz(labelIdx(labels)));
+    assets.set('index.json', new TextEncoder().encode(JSON.stringify(fixture.json)));
+    stubFetch(assets);
+    const { loadShardedSplits } = await loadLoader();
+
+    const error = await loadShardedSplits(SHARDED_DATASET, 2, 2, undefined, [2, 5]).then(
+      () => {
+        throw new Error('expected the load to fail');
+      },
+      (reason: Error) => reason,
+    );
+    expect(error).toBeInstanceOf(RangeError);
+    expect(error.message).toMatch(/label 7/);
   });
 
   it('caches a second call with the same percentages', async () => {
@@ -474,8 +645,8 @@ describe('loadShardedSplits', () => {
 });
 
 describe('loadShardedGallery', () => {
-  it('returns perClass times classCount normalised samples with the right labels', async () => {
-    stubFetch(assetsForIndex(baseIndex()));
+  it('returns the test gallery with perClass times classCount normalised samples', async () => {
+    const mock = stubFetch(assetsForIndex(baseIndex()));
     const { loadShardedGallery } = await loadLoader();
 
     const gallery = await loadShardedGallery(SHARDED_DATASET);
@@ -483,17 +654,35 @@ describe('loadShardedGallery', () => {
     expect(gallery.images).toBeInstanceOf(Float32Array);
     expect(gallery.images).toHaveLength(6 * 28 * 28);
     expect(Array.from(gallery.labels)).toEqual([0, 0, 0, 1, 1, 1]);
+    // Le jeu de test n'a pas le décalage de 100 réservé à l'entraînement.
+    expect(gallery.images[0]).toBe(0);
     for (const value of gallery.images) {
       expect(value).toBeGreaterThanOrEqual(0);
       expect(value).toBeLessThanOrEqual(1);
     }
+    // Aucun fragment n'est nécessaire pour la galerie.
+    expect(fetchedShardFiles(mock)).toEqual([]);
   });
 
-  it('fetches the gallery file names from the index', async () => {
+  it('returns the train gallery when the train split is asked', async () => {
+    stubFetch(assetsForIndex(baseIndex()));
+    const { loadShardedGallery } = await loadLoader();
+
+    const gallery = await loadShardedGallery(SHARDED_DATASET, 'train');
+    expect(gallery.count).toBe(6);
+    // Libellés et pixels différents de ceux du jeu de test : la fraction
+    // demandée est bien celle qui est lue.
+    expect(Array.from(gallery.labels)).toEqual([1, 1, 1, 0, 0, 0]);
+    expect(gallery.images[0]).toBeCloseTo(100 / 255);
+  });
+
+  it('fetches the test gallery file names from the index', async () => {
     const index = baseIndex();
-    const galleryIndex = index.gallery as { imagesFile: string; labelsFile: string };
-    galleryIndex.imagesFile = 'index-gallery-images.idx.gz';
-    galleryIndex.labelsFile = 'index-gallery-labels-idx1-ubyte.gz';
+    const galleries = index.galleries as {
+      test: { imagesFile: string; labelsFile: string };
+    };
+    galleries.test.imagesFile = 'index-gallery-images.idx.gz';
+    galleries.test.labelsFile = 'index-gallery-labels-idx1-ubyte.gz';
     const mock = stubFetch(assetsForIndex(index));
     const { loadShardedGallery } = await loadLoader();
 
@@ -506,8 +695,8 @@ describe('loadShardedGallery', () => {
 
   it('rejects a gallery whose image count differs from perClass times classCount', async () => {
     const index = baseIndex();
-    const galleryIndex = index.gallery as { perClass: number };
-    galleryIndex.perClass = 4;
+    const galleries = index.galleries as { test: { perClass: number } };
+    galleries.test.perClass = 4;
     stubFetch(assetsForIndex(index));
     const { loadShardedGallery } = await loadLoader();
 
@@ -519,5 +708,728 @@ describe('loadShardedGallery', () => {
     );
     expect(error).toBeInstanceOf(RangeError);
     expect(error.message).toMatch(/expected 8/);
+  });
+
+  it('reports a missing train gallery and still loads the test gallery', async () => {
+    const assets = assetsForIndex(baseIndex());
+    assets.delete('train-gallery.idx.gz');
+    stubFetch(assets);
+    const { loadShardedGallery } = await loadLoader();
+
+    const error = await loadShardedGallery(SHARDED_DATASET, 'train').then(
+      () => {
+        throw new Error('expected the train gallery load to fail');
+      },
+      (reason: Error) => reason,
+    );
+    expect(error.message).toContain('train-gallery.idx.gz');
+    expect(error.message).toContain(SHARDED_DATASET.downloadCommand);
+
+    const gallery = await loadShardedGallery(SHARDED_DATASET, 'test');
+    expect(gallery.count).toBe(6);
+  });
+
+  it('caches a second call with the same dataset, split and perClass', async () => {
+    const mock = stubFetch(assetsForIndex(baseIndex()));
+    const { loadShardedGallery } = await loadLoader();
+
+    await loadShardedGallery(SHARDED_DATASET, 'test');
+    // Index + deux fichiers de galerie.
+    expect(mock).toHaveBeenCalledTimes(3);
+    await loadShardedGallery(SHARDED_DATASET, 'test');
+    expect(mock).toHaveBeenCalledTimes(3);
+  });
+
+  it('isolates the train and test gallery cache entries', async () => {
+    const mock = stubFetch(assetsForIndex(baseIndex()));
+    const { loadShardedGallery } = await loadLoader();
+
+    const testPromise = loadShardedGallery(SHARDED_DATASET, 'test');
+    const trainPromise = loadShardedGallery(SHARDED_DATASET, 'train');
+    expect(trainPromise).not.toBe(testPromise);
+
+    const [testGallery, trainGallery] = await Promise.all([testPromise, trainPromise]);
+    // Chaque fraction garde ses libellés et ses pixels : une clé constante
+    // renverrait la galerie de test pour l'appel d'entraînement.
+    expect(Array.from(testGallery.labels)).toEqual([0, 0, 0, 1, 1, 1]);
+    expect(Array.from(trainGallery.labels)).toEqual([1, 1, 1, 0, 0, 0]);
+    expect(testGallery.images[0]).toBe(0);
+    expect(trainGallery.images[0]).toBeCloseTo(100 / 255);
+    expect(testGallery.images[0]).not.toBeCloseTo(trainGallery.images[0]);
+
+    // Index + deux fichiers par fraction.
+    expect(mock).toHaveBeenCalledTimes(5);
+
+    await Promise.all([
+      loadShardedGallery(SHARDED_DATASET, 'test'),
+      loadShardedGallery(SHARDED_DATASET, 'train'),
+    ]);
+    expect(mock).toHaveBeenCalledTimes(5);
+  });
+});
+
+/** Index synthétique : `classCount` classes, `shardsPerClass` fragments pleins. */
+interface SegmentFixture {
+  readonly json: Record<string, unknown>;
+  readonly labels: number[];
+  readonly assets: Map<string, Uint8Array<ArrayBuffer>>;
+}
+
+function segmentFixture(classCount: number, shardsPerClass: number, perShard = 2): SegmentFixture {
+  const classNames = Array.from({ length: classCount }, (_unused, index) => `classe-${index}`);
+  const labels: number[] = [];
+  const trainShards: ShardEntry[] = [];
+  const testShards: ShardEntry[] = [];
+  let start = 0;
+  for (let classIndex = 0; classIndex < classCount; classIndex += 1) {
+    for (let shardIndex = 0; shardIndex < shardsPerClass; shardIndex += 1) {
+      const suffix = `c${classIndex}-s${String(shardIndex).padStart(2, '0')}.idx.gz`;
+      trainShards.push({ file: `train-${suffix}`, classIndex, start, count: perShard });
+      testShards.push({ file: `test-${suffix}`, classIndex, start, count: perShard });
+      for (let index = 0; index < perShard; index += 1) {
+        labels.push(classIndex);
+      }
+      start += perShard;
+    }
+  }
+  const json = {
+    version: 2,
+    dataset: 'quickdraw',
+    classNames,
+    shardSize: perShard,
+    splits: {
+      train: { count: start, labelsFile: 'train-labels.idx.gz', shards: trainShards },
+      test: { count: start, labelsFile: 'test-labels.idx.gz', shards: testShards },
+    },
+    galleries: {
+      train: {
+        imagesFile: 'train-gallery.idx.gz',
+        labelsFile: 'train-gallery-labels.idx.gz',
+        perClass: 1,
+      },
+      test: { imagesFile: 'gallery.idx.gz', labelsFile: 'gallery-labels.idx.gz', perClass: 1 },
+    },
+  };
+  const assets = new Map<string, Uint8Array<ArrayBuffer>>();
+  assets.set('train-labels.idx.gz', gz(labelIdx(labels)));
+  assets.set('test-labels.idx.gz', gz(labelIdx(labels)));
+  let fill = 1;
+  for (const split of [trainShards, testShards]) {
+    for (const shard of split) {
+      assets.set(shard.file, gz(imageIdx(shard.count, fill % 200)));
+      fill += 7;
+    }
+  }
+  return { json, labels, assets };
+}
+
+/**
+ * Variante dont la fraction de test a `testShardsPerClass` fragments et un
+ * fichier de libellés propre, pour prouver que le magasin lit la fraction
+ * demandée et pas toujours l'entraînement.
+ */
+function differingSplitFixture(testShardsPerClass: number): SegmentFixture {
+  const base = segmentFixture(15, 4);
+  const testLabels: number[] = [];
+  const testShards: ShardEntry[] = [];
+  let start = 0;
+  for (let classIndex = 0; classIndex < 15; classIndex += 1) {
+    for (let shardIndex = 0; shardIndex < testShardsPerClass; shardIndex += 1) {
+      const suffix = `c${classIndex}-s${String(shardIndex).padStart(2, '0')}.idx.gz`;
+      testShards.push({ file: `test-${suffix}`, classIndex, start, count: 2 });
+      testLabels.push(classIndex, classIndex);
+      start += 2;
+    }
+  }
+  const splits = base.json.splits as {
+    train: ShardedSplitIndex;
+    test: ShardedSplitIndex;
+  };
+  const json = {
+    ...base.json,
+    splits: {
+      train: splits.train,
+      test: { count: start, labelsFile: 'test-labels.idx.gz', shards: testShards },
+    },
+  };
+  const assets = new Map(base.assets);
+  assets.set('test-labels.idx.gz', gz(labelIdx(testLabels)));
+  return { json, labels: base.labels, assets };
+}
+
+/** URL publique d'une ressource du jeu de test `quickdraw`. */
+function segmentUrl(file: string): string {
+  return `/datasets/quickdraw/${file}`;
+}
+
+/** Cache Cache API en mémoire, suffisant pour les tests du magasin. */
+class TestCache {
+  readonly entries = new Map<string, Response>();
+
+  async match(url: string): Promise<Response | undefined> {
+    const response = this.entries.get(url);
+    return response === undefined ? undefined : response.clone();
+  }
+
+  async put(url: string, response: Response): Promise<void> {
+    this.entries.set(url, response.clone());
+  }
+
+  async delete(url: string): Promise<boolean> {
+    return this.entries.delete(url);
+  }
+}
+
+class TestCacheStorage {
+  readonly caches = new Map<string, TestCache>();
+
+  async open(name: string): Promise<TestCache> {
+    let cache = this.caches.get(name);
+    if (cache === undefined) {
+      cache = new TestCache();
+      this.caches.set(name, cache);
+    }
+    return cache;
+  }
+}
+
+function stubCaches(): TestCacheStorage {
+  const storage = new TestCacheStorage();
+  vi.stubGlobal('caches', storage);
+  return storage;
+}
+
+/** Un round : un fragment par classe sélectionnée, à l'ordinal donné. */
+function segmentRound(
+  index: ShardedIndex,
+  classIndices: readonly number[],
+  shardOrdinal: number,
+  roundIndex = 0,
+  split: 'train' | 'test' = 'train',
+): RoundRef {
+  const entries = classIndices.map((classIndex) => {
+    const shards = index.splits[split].shards.filter((shard) => shard.classIndex === classIndex);
+    const shard = shards[shardOrdinal % shards.length];
+    if (shard === undefined) {
+      throw new Error(`fixture: no shard for class ${classIndex}`);
+    }
+    return {
+      file: shard.file,
+      classIndex: shard.classIndex,
+      start: shard.start,
+      count: shard.count,
+    };
+  });
+  return { index: roundIndex, entries };
+}
+
+const FIFTEEN_CLASSES = Array.from({ length: 15 }, (_unused, index) => index);
+
+/** Importe le module et construit un magasin sur l'index synthétique. */
+async function createSegmentStore(
+  fixture: SegmentFixture,
+  classIndices: readonly number[],
+  maxShards?: number,
+): Promise<{
+  module: typeof import('./sharded-assets.js');
+  index: ShardedIndex;
+  store: import('./sharded-assets.js').SegmentStore;
+}> {
+  const module = await loadLoader();
+  const index = module.parseIndexJson(JSON.stringify(fixture.json));
+  const store = new module.SegmentStore({
+    dataset: SHARDED_DATASET,
+    index,
+    classIndices,
+    cacheName: 'test-cache',
+    ...(maxShards === undefined ? {} : { maxShards }),
+  });
+  return { module, index, store };
+}
+
+/** Liste les fichiers de fragments demandés au faux `fetch`. */
+function fetchedSegmentShards(mock: ReturnType<typeof vi.fn>): string[] {
+  return mock.mock.calls
+    .map((call) => String(call[0]).split('/').pop() ?? '')
+    .filter((name) => /^train-c\d+-s\d+\.idx\.gz$/.test(name));
+}
+
+describe('SegmentStore', () => {
+  it('serves a round from a pre-populated cache without fetching', async () => {
+    const fixture = segmentFixture(15, 4);
+    const storage = stubCaches();
+    const cache = await storage.open('test-cache');
+    const { index, store } = await createSegmentStore(fixture, [0, 1]);
+    const ref = segmentRound(index, [0, 1], 0);
+    for (const entry of ref.entries) {
+      cache.entries.set(segmentUrl(entry.file), new Response(gz(imageIdx(entry.count))));
+    }
+    cache.entries.set(
+      segmentUrl('train-labels.idx.gz'),
+      new Response(gz(labelIdx(fixture.labels))),
+    );
+    const mock = stubFetch(new Map());
+
+    const round = await store.loadRound(ref);
+
+    expect(mock).not.toHaveBeenCalled();
+    expect(round.count).toBe(4);
+    expect(Array.from(round.labels)).toEqual([0, 0, 1, 1]);
+  });
+
+  it('fetches once, fills the cache, and a new store reads the cache', async () => {
+    const fixture = segmentFixture(15, 4);
+    const storage = stubCaches();
+    const cache = await storage.open('test-cache');
+    const mock = stubFetch(fixture.assets);
+    const first = await createSegmentStore(fixture, [0, 1]);
+    const ref = segmentRound(first.index, [0, 1], 0);
+
+    await first.store.loadRound(ref);
+    // Deux fragments et le fichier de libellés.
+    expect(mock).toHaveBeenCalledTimes(3);
+    for (const entry of ref.entries) {
+      expect(cache.entries.has(segmentUrl(entry.file))).toBe(true);
+    }
+    expect(cache.entries.has(segmentUrl('train-labels.idx.gz'))).toBe(true);
+
+    const second = await createSegmentStore(fixture, [0, 1]);
+    const round = await second.store.loadRound(ref);
+    expect(mock).toHaveBeenCalledTimes(3);
+    expect(round.count).toBe(4);
+  });
+
+  it('never caches an undecodable body and retries after the failure', async () => {
+    const fixture = segmentFixture(15, 4);
+    const module = await loadLoader();
+    const index = module.parseIndexJson(JSON.stringify(fixture.json));
+    const ref = segmentRound(index, [0, 1], 0);
+    const failing = ref.entries[0].file;
+    let returnsGarbage = true;
+    const mock = vi.fn(async (input: RequestInfo | URL): Promise<Response> => {
+      const name = String(input).split('/').pop() ?? '';
+      if (returnsGarbage && name === failing) {
+        returnsGarbage = false;
+        return new Response('<html>not an IDX file</html>', { status: 200 });
+      }
+      const body = fixture.assets.get(name);
+      if (body === undefined) {
+        return new Response('missing', { status: 404, statusText: 'Not Found' });
+      }
+      return new Response(body, { status: 200 });
+    });
+    const storage = stubCaches();
+    const cache = await storage.open('test-cache');
+    vi.stubGlobal('fetch', mock);
+    const store = new module.SegmentStore({
+      dataset: SHARDED_DATASET,
+      index,
+      classIndices: [0, 1],
+      cacheName: 'test-cache',
+    });
+
+    const error = await store.loadRound(ref).then(
+      () => {
+        throw new Error('expected the round to fail');
+      },
+      (reason: Error) => reason,
+    );
+    expect(error.message).toContain(failing);
+    expect(cache.entries.has(segmentUrl(failing))).toBe(false);
+
+    const round = await store.loadRound(ref);
+    expect(round.count).toBe(4);
+    expect(cache.entries.has(segmentUrl(failing))).toBe(true);
+    const calls = mock.mock.calls.filter((call) => String(call[0]).endsWith(failing));
+    expect(calls).toHaveLength(2);
+  });
+
+  it('deletes an undecodable cached body and refetches it once', async () => {
+    const fixture = segmentFixture(15, 4);
+    const module = await loadLoader();
+    const index = module.parseIndexJson(JSON.stringify(fixture.json));
+    const ref = segmentRound(index, [0, 1], 0);
+    const failing = ref.entries[0].file;
+    const storage = stubCaches();
+    const cache = await storage.open('test-cache');
+    cache.entries.set(segmentUrl(failing), new Response('<html>bad cache</html>'));
+    const mock = stubFetch(fixture.assets);
+    const store = new module.SegmentStore({
+      dataset: SHARDED_DATASET,
+      index,
+      classIndices: [0, 1],
+      cacheName: 'test-cache',
+    });
+
+    const round = await store.loadRound(ref);
+
+    expect(round.count).toBe(4);
+    expect(cache.entries.has(segmentUrl(failing))).toBe(true);
+    const calls = mock.mock.calls.filter((call) => String(call[0]).endsWith(failing));
+    expect(calls).toHaveLength(1);
+
+    const before = mock.mock.calls.length;
+    const second = new module.SegmentStore({
+      dataset: SHARDED_DATASET,
+      index,
+      classIndices: [0, 1],
+      cacheName: 'test-cache',
+    });
+    await second.loadRound(ref);
+    expect(mock.mock.calls.length).toBe(before);
+  });
+
+  it('loads when cache.put rejects with QuotaExceededError', async () => {
+    const fixture = segmentFixture(15, 4);
+    const storage = stubCaches();
+    const cache = await storage.open('test-cache');
+    cache.put = async () => {
+      const error = new Error('quota exceeded');
+      error.name = 'QuotaExceededError';
+      throw error;
+    };
+    stubFetch(fixture.assets);
+    const { index, store } = await createSegmentStore(fixture, [0, 1]);
+
+    const round = await store.loadRound(segmentRound(index, [0, 1], 0));
+
+    expect(round.count).toBe(4);
+    expect(Array.from(round.labels)).toEqual([0, 0, 1, 1]);
+  });
+
+  it('loads when the Cache API is unavailable', async () => {
+    const fixture = segmentFixture(15, 4);
+    vi.stubGlobal('caches', undefined);
+    stubFetch(fixture.assets);
+    const { index, store } = await createSegmentStore(fixture, [0, 1]);
+
+    const round = await store.loadRound(segmentRound(index, [0, 1], 0));
+
+    expect(round.count).toBe(4);
+  });
+
+  it('never keeps more than 60 resident shards with 15 classes and 5 shards each', async () => {
+    const fixture = segmentFixture(15, 5);
+    stubCaches();
+    stubFetch(fixture.assets);
+    const { index, store } = await createSegmentStore(fixture, FIFTEEN_CLASSES);
+
+    for (let ordinal = 0; ordinal < 5; ordinal += 1) {
+      await store.loadRound(segmentRound(index, FIFTEEN_CLASSES, ordinal, ordinal));
+      expect(store.residentShards).toBeLessThanOrEqual(60);
+    }
+    expect(store.residentShards).toBe(60);
+  });
+
+  it('evicts the least recently used shards above maxShards', async () => {
+    const fixture = segmentFixture(15, 4);
+    stubCaches();
+    stubFetch(fixture.assets);
+    const { index, store } = await createSegmentStore(fixture, FIFTEEN_CLASSES, 20);
+
+    await store.loadRound(segmentRound(index, FIFTEEN_CLASSES, 0, 0));
+    expect(store.residentShards).toBe(15);
+    await store.loadRound(segmentRound(index, FIFTEEN_CLASSES, 1, 1));
+
+    expect(store.residentShards).toBe(20);
+  });
+
+  it('evicts a consumed shard after releaseRound', async () => {
+    const fixture = segmentFixture(15, 4);
+    stubCaches();
+    stubFetch(fixture.assets);
+    const { index, store } = await createSegmentStore(fixture, FIFTEEN_CLASSES);
+    const first = segmentRound(index, FIFTEEN_CLASSES, 0, 0);
+    const second = segmentRound(index, FIFTEEN_CLASSES, 1, 1);
+    const third = segmentRound(index, FIFTEEN_CLASSES, 2, 2);
+
+    await store.loadRound(first);
+    await store.loadRound(second);
+    expect(store.residentShards).toBe(30);
+
+    store.releaseRound(first);
+    expect(store.residentShards).toBe(15);
+
+    store.prefetchRound(third);
+    await store.loadRound(third);
+    // Sans éviction, le premier round resterait : 45 fragments.
+    expect(store.residentShards).toBe(30);
+    expect(store.residentShards).toBeLessThanOrEqual(60);
+  });
+
+  it('remaps the selected classes to 0..N-1 and slices labels per entry', async () => {
+    const fixture = segmentFixture(15, 4);
+    stubCaches();
+    stubFetch(fixture.assets);
+    const { index, store } = await createSegmentStore(fixture, [2, 5]);
+    const ref = segmentRound(index, [2, 5], 0);
+
+    const round = await store.loadRound(ref);
+
+    expect(store.totalCount).toBe(16);
+    expect(Array.from(round.labels)).toEqual([0, 0, 1, 1]);
+    const batch = round.readBatch(1, 3);
+    expect(batch.count).toBe(2);
+    expect(Array.from(batch.labels)).toEqual([0, 1]);
+    expect(batch.images).toBeInstanceOf(Float32Array);
+    expect(batch.images).toHaveLength(2 * 28 * 28);
+    for (const value of batch.images) {
+      expect(value).toBeGreaterThanOrEqual(0);
+      expect(value).toBeLessThanOrEqual(1);
+    }
+    expect(round.readBatch(0, 4).count).toBe(4);
+    expect(() => round.readBatch(3, 5)).toThrow(RangeError);
+  });
+
+  it('fetches no shard outside the selected classes', async () => {
+    const fixture = segmentFixture(15, 4);
+    stubCaches();
+    const mock = stubFetch(fixture.assets);
+    const { index, store } = await createSegmentStore(fixture, [2, 5]);
+    const ref = segmentRound(index, [2, 5], 1);
+
+    await store.loadRound(ref);
+
+    expect(fetchedSegmentShards(mock).sort()).toEqual(
+      ref.entries.map((entry) => entry.file).sort(),
+    );
+  });
+
+  it('pins the selected shard set and totalCount', async () => {
+    const fixture = segmentFixture(15, 4);
+    stubCaches();
+    stubFetch(fixture.assets);
+    const module = await loadLoader();
+    const index = module.parseIndexJson(JSON.stringify(fixture.json));
+    const candidates = index.splits.train.shards.filter(
+      (shard) => shard.classIndex === 2 || shard.classIndex === 5,
+    );
+    const pinned = candidates.filter((shard) => shard.file.endsWith('-s00.idx.gz'));
+    const store = new module.SegmentStore({
+      dataset: SHARDED_DATASET,
+      index,
+      classIndices: [2, 5],
+      cacheName: 'test-cache',
+      entries: pinned,
+    });
+
+    expect(store.totalCount).toBe(4);
+    const ref: RoundRef = {
+      index: 0,
+      entries: pinned.map(({ file, classIndex, start, count }) => ({
+        file,
+        classIndex,
+        start,
+        count,
+      })),
+    };
+    const round = await store.loadRound(ref);
+    expect(round.count).toBe(4);
+    expect(Array.from(round.labels)).toEqual([0, 0, 1, 1]);
+
+    const outside = candidates.find((shard) => shard.file.endsWith('-s01.idx.gz'));
+    if (outside === undefined) {
+      throw new Error('fixture: expected an unpinned shard');
+    }
+    const outsideError = await store.loadRound({ index: 1, entries: [outside] }).then(
+      () => {
+        throw new Error('expected the unpinned shard to fail');
+      },
+      (reason: Error) => reason,
+    );
+    expect(outsideError.message).toContain(outside.file);
+    expect(outsideError.message).toMatch(/not in the selected shard set/);
+
+    const pinnedEntry = pinned[0];
+    const mismatchError = await store
+      .loadRound({
+        index: 2,
+        entries: [{ ...pinnedEntry, count: pinnedEntry.count + 1 }],
+      })
+      .then(
+        () => {
+          throw new Error('expected the mismatched shard to fail');
+        },
+        (reason: Error) => reason,
+      );
+    expect(mismatchError.message).toContain(pinnedEntry.file);
+    expect(mismatchError.message).toMatch(/does not match its selected entry/);
+  });
+
+  it('accepts a labels file that is already remapped', async () => {
+    const fixture = segmentFixture(15, 4);
+    const module = await loadLoader();
+    const index = module.parseIndexJson(JSON.stringify(fixture.json));
+    const ref = segmentRound(index, [2, 5], 0);
+    const remapped = [...fixture.labels];
+    for (const entry of ref.entries) {
+      const position = [2, 5].indexOf(entry.classIndex);
+      for (let offset = 0; offset < entry.count; offset += 1) {
+        remapped[entry.start + offset] = position;
+      }
+    }
+    fixture.assets.set('train-labels.idx.gz', gz(labelIdx(remapped)));
+    stubCaches();
+    stubFetch(fixture.assets);
+    const store = new module.SegmentStore({
+      dataset: SHARDED_DATASET,
+      index,
+      classIndices: [2, 5],
+      cacheName: 'test-cache',
+    });
+
+    const round = await store.loadRound(ref);
+
+    expect(Array.from(round.labels)).toEqual([0, 0, 1, 1]);
+  });
+
+  it('rejects a shard whose payload is not count * 784 bytes', async () => {
+    const fixture = segmentFixture(15, 4);
+    const module = await loadLoader();
+    const index = module.parseIndexJson(JSON.stringify(fixture.json));
+    const ref = segmentRound(index, [0], 0);
+    const entry = ref.entries[0];
+    const truncated = new Uint8Array(16 + 28 * 28);
+    truncated.set(imageIdx(entry.count).subarray(0, 16 + 28 * 28));
+    fixture.assets.set(entry.file, gz(truncated));
+    stubCaches();
+    stubFetch(fixture.assets);
+    const store = new module.SegmentStore({
+      dataset: SHARDED_DATASET,
+      index,
+      classIndices: [0],
+      cacheName: 'test-cache',
+    });
+
+    const error = await store.loadRound(ref).then(
+      () => {
+        throw new Error('expected the round to fail');
+      },
+      (reason: Error) => reason,
+    );
+
+    expect(error).toBeInstanceOf(RangeError);
+    expect(error.message).toContain(entry.file);
+    expect(error.message).toMatch(/784 image bytes, expected 1568/);
+  });
+
+  it('waits for an in-flight prefetch without starting a second build', async () => {
+    const fixture = segmentFixture(15, 4);
+    stubCaches();
+    let releaseFetch = (): void => {};
+    const gate = new Promise<void>((resolve) => {
+      releaseFetch = resolve;
+    });
+    const mock = vi.fn(async (input: RequestInfo | URL): Promise<Response> => {
+      await gate;
+      const name = String(input).split('/').pop() ?? '';
+      const body = fixture.assets.get(name);
+      if (body === undefined) {
+        return new Response('missing', { status: 404, statusText: 'Not Found' });
+      }
+      return new Response(body, { status: 200 });
+    });
+    vi.stubGlobal('fetch', mock);
+    const { module, index, store } = await createSegmentStore(fixture, [0, 1]);
+    const ref = segmentRound(index, [0, 1], 0);
+    const prototype = module.SegmentStore.prototype as unknown as {
+      buildRound: (round: RoundRef) => Promise<unknown>;
+    };
+    const buildSpy = vi.spyOn(prototype, 'buildRound');
+
+    store.prefetchRound(ref);
+    const roundPromise = store.loadRound(ref);
+
+    expect(buildSpy).toHaveBeenCalledTimes(1);
+    await vi.waitFor(() => {
+      expect(mock.mock.calls.length).toBe(ref.entries.length);
+    });
+
+    releaseFetch();
+    const round = await roundPromise;
+
+    expect(buildSpy).toHaveBeenCalledTimes(1);
+    expect(round.count).toBe(4);
+    for (const entry of ref.entries) {
+      const calls = mock.mock.calls.filter((call) => String(call[0]).endsWith(entry.file));
+      expect(calls).toHaveLength(1);
+    }
+  });
+
+  it('names the shard file on a 404 and allows a retry', async () => {
+    const fixture = segmentFixture(15, 4);
+    const module = await loadLoader();
+    const index = module.parseIndexJson(JSON.stringify(fixture.json));
+    const ref = segmentRound(index, [0, 1], 0);
+    const failing = ref.entries[0].file;
+    let failures = 1;
+    const mock = vi.fn(async (input: RequestInfo | URL): Promise<Response> => {
+      const name = String(input).split('/').pop() ?? '';
+      if (failures > 0 && name === failing) {
+        failures -= 1;
+        return new Response('missing', { status: 404, statusText: 'Not Found' });
+      }
+      const body = fixture.assets.get(name);
+      if (body === undefined) {
+        return new Response('missing', { status: 404, statusText: 'Not Found' });
+      }
+      return new Response(body, { status: 200 });
+    });
+    stubCaches();
+    vi.stubGlobal('fetch', mock);
+    const store = new module.SegmentStore({
+      dataset: SHARDED_DATASET,
+      index,
+      classIndices: [0, 1],
+      cacheName: 'test-cache',
+    });
+
+    const error = await store.loadRound(ref).then(
+      () => {
+        throw new Error('expected the round to fail');
+      },
+      (reason: Error) => reason,
+    );
+    expect(error.message).toContain(failing);
+    expect(error.message).toContain('HTTP 404');
+    expect(error.message).toContain(SHARDED_DATASET.downloadCommand);
+
+    const round = await store.loadRound(ref);
+    expect(round.count).toBe(4);
+  });
+
+  it('serves the test split and keeps train as the default', async () => {
+    const fixture = differingSplitFixture(2);
+    stubCaches();
+    const mock = stubFetch(fixture.assets);
+    const module = await loadLoader();
+    const index = module.parseIndexJson(JSON.stringify(fixture.json));
+    const options = {
+      dataset: SHARDED_DATASET,
+      index,
+      classIndices: [2, 5],
+      cacheName: 'test-cache',
+    };
+
+    const trainStore = new module.SegmentStore(options);
+    expect(trainStore.totalCount).toBe(16);
+    const trainRef = segmentRound(index, [2, 5], 0);
+    const trainRound = await trainStore.loadRound(trainRef);
+    expect(Array.from(trainRound.labels)).toEqual([0, 0, 1, 1]);
+    const trainNames = mock.mock.calls.map((call) => String(call[0]).split('/').pop() ?? '');
+    expect(trainNames.length).toBeGreaterThan(0);
+    expect(trainNames.every((name) => name.startsWith('train-'))).toBe(true);
+
+    const before = mock.mock.calls.length;
+    const testStore = new module.SegmentStore({ ...options, split: 'test' });
+    expect(testStore.totalCount).toBe(8);
+    const testRef = segmentRound(index, [2, 5], 0, 0, 'test');
+    const testRound = await testStore.loadRound(testRef);
+    expect(Array.from(testRound.labels)).toEqual([0, 0, 1, 1]);
+
+    const testNames = mock.mock.calls.slice(before).map((call) => String(call[0]).split('/').pop());
+    expect(testNames).toContain(testRef.entries[0].file);
+    expect(testNames).toContain('test-labels.idx.gz');
+    expect(testNames.some((name) => name?.startsWith('train-'))).toBe(false);
   });
 });

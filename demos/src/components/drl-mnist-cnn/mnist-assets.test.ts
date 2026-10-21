@@ -9,11 +9,11 @@ function u32Bytes(value: number): number[] {
   return [(value >>> 24) & 0xff, (value >>> 16) & 0xff, (value >>> 8) & 0xff, value & 0xff];
 }
 
-function imageIdx(count: number): Uint8Array<ArrayBuffer> {
+function imageIdx(count: number, fillBase = 0): Uint8Array<ArrayBuffer> {
   const bytes = new Uint8Array(new ArrayBuffer(16 + count * 28 * 28));
   bytes.set([...u32Bytes(IMAGE_MAGIC), ...u32Bytes(count), ...u32Bytes(28), ...u32Bytes(28)]);
   for (let index = 0; index < count * 28 * 28; index += 1) {
-    bytes[16 + index] = (index * 7) % 256;
+    bytes[16 + index] = (fillBase + index * 7) % 256;
   }
   return bytes;
 }
@@ -54,11 +54,13 @@ async function gzippedAssets(): Promise<Map<string, Uint8Array<ArrayBuffer>>> {
 
 /**
  * Ressources de la galerie : 20 exemples par chiffre dans le jeu de test, contre
- * seulement deux dans le jeu d'entraînement — la galerie lit le jeu de test.
+ * seulement deux dans le jeu d'entraînement — la galerie lit le jeu de test par
+ * défaut. Les pixels d'entraînement portent un décalage de 100 pour distinguer
+ * les deux fractions.
  */
 async function gzippedGalleryAssets(): Promise<Map<string, Uint8Array<ArrayBuffer>>> {
   return new Map([
-    ['train-images-idx3-ubyte.gz', await gzip(imageIdx(TRAIN_LABELS.length))],
+    ['train-images-idx3-ubyte.gz', await gzip(imageIdx(TRAIN_LABELS.length, 100))],
     ['train-labels-idx1-ubyte.gz', await gzip(labelIdx(TRAIN_LABELS))],
     ['t10k-images-idx3-ubyte.gz', await gzip(imageIdx(GALLERY_TEST_LABELS.length))],
     ['t10k-labels-idx1-ubyte.gz', await gzip(labelIdx(GALLERY_TEST_LABELS))],
@@ -405,6 +407,77 @@ describe('selectGalleryIndices', () => {
   });
 });
 
+describe('loadDatasetGallery', () => {
+  it('reads the train split when asked', async () => {
+    const mock = stubFetch(await gzippedGalleryAssets());
+    const { loadDatasetGallery } = await loadLoader();
+    const gallery = await loadDatasetGallery(idxDataset('mnist'), 'train', 2);
+    expect(gallery.count).toBe(20);
+    // Les pixels d'entraînement portent le décalage 100 : la galerie a bien lu
+    // train-images-idx3-ubyte.gz, pas le jeu de test.
+    expect(gallery.images[0]).toBeCloseTo(100 / 255);
+    expect(gallery.images[784]).toBeCloseTo(((100 + 784 * 7) % 256) / 255);
+    // L'ordre classe par classe est conservé dans la fraction choisie.
+    const expectedLabels: number[] = [];
+    for (let label = 0; label < 10; label += 1) {
+      expectedLabels.push(label, label);
+    }
+    expect(Array.from(gallery.labels)).toEqual(expectedLabels);
+    const urls = mock.mock.calls.map((call) => String(call[0]));
+    expect(urls.some((url) => url.endsWith('train-images-idx3-ubyte.gz'))).toBe(true);
+  });
+
+  it('reads the test split by default', async () => {
+    stubFetch(await gzippedGalleryAssets());
+    const { loadDatasetGallery } = await loadLoader();
+    const gallery = await loadDatasetGallery(idxDataset('mnist'), undefined, 2);
+    expect(gallery.count).toBe(20);
+    // Le jeu de test n'a pas le décalage : premier pixel 0, deuxième exemple
+    // pris à l'indice 19 (pixel 80) plutôt qu'à l'indice 1 du jeu d'entraînement.
+    expect(gallery.images[0]).toBe(0);
+    expect(gallery.images[784]).toBeCloseTo(80 / 255);
+  });
+
+  it('caches one promise per dataset, split and perClass', async () => {
+    const mock = stubFetch(await gzippedGalleryAssets());
+    const { loadDatasetGallery } = await loadLoader();
+
+    const first = loadDatasetGallery(idxDataset('mnist'), 'test', 2);
+    const second = loadDatasetGallery(idxDataset('mnist'), 'test', 2);
+    expect(second).toBe(first);
+    await Promise.all([first, second]);
+    expect(mock).toHaveBeenCalledTimes(4);
+
+    // Une autre clé relit la fraction, mais les quatre fichiers bruts restent
+    // en cache.
+    await loadDatasetGallery(idxDataset('mnist'), 'train', 2);
+    expect(mock).toHaveBeenCalledTimes(4);
+  });
+
+  it('isolates the train and test gallery cache entries', async () => {
+    const mock = stubFetch(await gzippedGalleryAssets());
+    const { loadDatasetGallery } = await loadLoader();
+
+    const testPromise = loadDatasetGallery(idxDataset('mnist'), 'test', 2);
+    const trainPromise = loadDatasetGallery(idxDataset('mnist'), 'train', 2);
+    expect(trainPromise).not.toBe(testPromise);
+
+    const [testGallery, trainGallery] = await Promise.all([testPromise, trainPromise]);
+    // Les deux fractions gardent leurs propres pixels : une clé constante
+    // renverrait la même galerie pour les deux appels.
+    expect(testGallery.images[0]).toBe(0);
+    expect(trainGallery.images[0]).toBeCloseTo(100 / 255);
+    expect(testGallery.images[0]).not.toBeCloseTo(trainGallery.images[0]);
+
+    const testAgain = loadDatasetGallery(idxDataset('mnist'), 'test', 2);
+    const trainAgain = loadDatasetGallery(idxDataset('mnist'), 'train', 2);
+    expect(testAgain).toBe(testPromise);
+    expect(trainAgain).toBe(trainPromise);
+    await Promise.all([testAgain, trainAgain]);
+    expect(mock).toHaveBeenCalledTimes(4);
+  });
+});
+
 describe('loadMnistGallery', () => {
   it('returns ten examples per class from the test split', async () => {
     stubFetch(await gzippedGalleryAssets());
@@ -413,6 +486,9 @@ describe('loadMnistGallery', () => {
     expect(gallery.count).toBe(100);
     expect(gallery.images).toBeInstanceOf(Float32Array);
     expect(gallery.images).toHaveLength(100 * 28 * 28);
+    // Le premier pixel vaut 0 dans le jeu de test et 100/255 dans le jeu
+    // d'entraînement : la galerie MNIST lit bien la fraction de test.
+    expect(gallery.images[0]).toBe(0);
     // Ordre classe par classe : dix 0, dix 1, …, dix 9.
     const expectedLabels: number[] = [];
     for (let label = 0; label < 10; label += 1) {
@@ -436,6 +512,14 @@ describe('loadMnistGallery', () => {
     for (let label = 0; label < 10; label += 1) {
       expect(gallery.labels.filter((value) => value === label)).toHaveLength(20);
     }
+  });
+
+  it('loads the train split when asked', async () => {
+    stubFetch(await gzippedGalleryAssets());
+    const { loadMnistGallery } = await loadLoader();
+    const gallery = await loadMnistGallery(2, 'train');
+    expect(gallery.count).toBe(20);
+    expect(gallery.images[0]).toBeCloseTo(100 / 255);
   });
 
   it('rejects a perClass above the test split size and names a class', async () => {

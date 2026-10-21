@@ -30,13 +30,20 @@ describe('dataset-registry', () => {
     }
   });
 
-  it('reports the class counts 10, 10, 5 then the MedMNIST counts', () => {
+  it('reports the class counts 10, 10, 15 then the MedMNIST counts', () => {
     expect(DATASETS.map((dataset) => datasetClassCount(dataset))).toEqual([
       10,
       10,
-      5,
+      15,
       ...MEDMNIST_CLASS_COUNTS,
     ]);
+  });
+
+  it('gives each dataset between two and fifteen classes', () => {
+    for (const dataset of DATASETS) {
+      expect(datasetClassCount(dataset)).toBeGreaterThanOrEqual(2);
+      expect(datasetClassCount(dataset)).toBeLessThanOrEqual(15);
+    }
   });
 
   it('gives each dataset positive counts and defaults between 1 and 100', () => {
@@ -48,15 +55,6 @@ describe('dataset-registry', () => {
       expect(dataset.defaultValidationPercent).toBeGreaterThanOrEqual(1);
       expect(dataset.defaultValidationPercent).toBeLessThanOrEqual(100);
     }
-  });
-
-  it('caps QuickDraw and every MedMNIST game at ten percent, leaves the IDX datasets uncapped', () => {
-    expect(getDataset('quickdraw').maxPercent).toBe(10);
-    for (const id of MEDMNIST_IDS) {
-      expect(getDataset(id).maxPercent).toBe(10);
-    }
-    expect(getDataset('mnist').maxPercent).toBeUndefined();
-    expect(getDataset('fashion-mnist').maxPercent).toBeUndefined();
   });
 
   it('narrows MNIST and Fashion-MNIST to four distinct IDX file names', () => {
@@ -76,18 +74,62 @@ describe('dataset-registry', () => {
     }
   });
 
-  it('narrows QuickDraw to five classes, an index file and 2 / 2 defaults', () => {
+  it('narrows QuickDraw to fifteen classes, an index file and 2 / 2 defaults', () => {
     const quickdraw = getDataset('quickdraw');
     expect(quickdraw.kind).toBe('sharded');
     if (quickdraw.kind !== 'sharded') {
       throw new Error('expected a sharded dataset');
     }
-    expect(quickdraw.classNames).toEqual(['livre', 'lune', 'chat', 'parapluie', 'gâteau']);
+    expect(quickdraw.classNames).toEqual([
+      'livre',
+      'lune',
+      'chat',
+      'parapluie',
+      'gâteau',
+      'chien',
+      'poisson',
+      'fleur',
+      'étoile',
+      'maison',
+      'arbre',
+      'soleil',
+      'vélo',
+      'pizza',
+      'pomme',
+    ]);
+    expect(quickdraw.trainCount).toBe(1597997);
+    expect(quickdraw.testCount).toBe(399507);
     expect(quickdraw.indexFile).toBe('index.json');
     expect(quickdraw.shardSize).toBe(1000);
     expect(quickdraw.defaultTrainPercent).toBe(2);
     expect(quickdraw.defaultValidationPercent).toBe(2);
     expect(quickdraw.downloadCommand).toBe('npm run quickdraw:data');
+  });
+
+  it('makes QuickDraw the only dataset with a selectable class subset', () => {
+    const quickdraw = getDataset('quickdraw');
+    expect(quickdraw.selectable).toBe(true);
+    expect(quickdraw.defaultSelectedClasses).toEqual([0, 1, 2, 3, 4]);
+    expect(quickdraw.cacheVersion).toBe(2);
+    for (const dataset of DATASETS) {
+      if (dataset.id === 'quickdraw') {
+        continue;
+      }
+      expect(dataset.selectable).toBeUndefined();
+      expect(dataset.defaultSelectedClasses).toBeUndefined();
+      expect(dataset.cacheVersion).toBeUndefined();
+    }
+  });
+
+  it('selects valid QuickDraw class indices by default', () => {
+    const quickdraw = getDataset('quickdraw');
+    const selected = quickdraw.defaultSelectedClasses ?? [];
+    expect(selected.length).toBeGreaterThan(0);
+    for (const index of selected) {
+      expect(Number.isInteger(index)).toBe(true);
+      expect(index).toBeGreaterThanOrEqual(0);
+      expect(index).toBeLessThan(quickdraw.classNames.length);
+    }
   });
 
   it('narrows each MedMNIST game to a sharded index with 10 / 10 defaults', () => {

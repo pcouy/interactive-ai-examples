@@ -937,13 +937,6 @@ export async function main(argv = process.argv.slice(2), options = {}) {
       const bytes = await fetchRawFile(file, rawPath, { fetchImpl, force: parsed.force });
       const archive = readArchive(bytes, file);
       const classNames = MEDMNIST_CLASS_NAMES[file.dataset];
-      for (const [classIndex, count] of archive.train.counts.entries()) {
-        if (count < GALLERY_PER_CLASS) {
-          throw new RangeError(
-            `convert-medmnist: ${file.name}: class ${classIndex} has ${count} train images, below the ${GALLERY_PER_CLASS} needed for the train gallery`,
-          );
-        }
-      }
       for (const [classIndex, count] of archive.test.counts.entries()) {
         if (count < GALLERY_PER_CLASS) {
           throw new RangeError(
@@ -967,22 +960,42 @@ export async function main(argv = process.argv.slice(2), options = {}) {
       });
       totalBytes += trainResult.totalBytes + testResult.totalBytes;
 
-      const trainGalleryImages = new Uint8Array(GALLERY_PER_CLASS * classNames.length * IMAGE_SIZE);
-      const trainGalleryLabels = new Uint8Array(GALLERY_PER_CLASS * classNames.length);
+      // Une classe absente de la division d'apprentissage ne peut pas remplir
+      // une galerie de dix images : elle est omise au lieu de lire un décalage
+      // indéfini. Les classes suivantes gardent leur décalage réel.
+      const trainGalleryClasses = archive.train.counts.filter(
+        (count) => count >= GALLERY_PER_CLASS,
+      ).length;
+      const trainGalleryImages = new Uint8Array(
+        GALLERY_PER_CLASS * trainGalleryClasses * IMAGE_SIZE,
+      );
+      const trainGalleryLabels = new Uint8Array(GALLERY_PER_CLASS * trainGalleryClasses);
+      let trainGalleryOffset = 0;
+      let trainGalleryLabelOffset = 0;
+      archive.train.counts.forEach((count, classIndex) => {
+        if (count >= GALLERY_PER_CLASS) {
+          trainGalleryImages.set(
+            archive.train.images.subarray(
+              trainGalleryLabelOffset * IMAGE_SIZE,
+              (trainGalleryLabelOffset + GALLERY_PER_CLASS) * IMAGE_SIZE,
+            ),
+            trainGalleryOffset * IMAGE_SIZE,
+          );
+          trainGalleryLabels.fill(
+            classIndex,
+            trainGalleryOffset,
+            trainGalleryOffset + GALLERY_PER_CLASS,
+          );
+          trainGalleryOffset += GALLERY_PER_CLASS;
+        }
+        trainGalleryLabelOffset += count;
+      });
+
       const galleryImages = new Uint8Array(GALLERY_PER_CLASS * classNames.length * IMAGE_SIZE);
       const galleryLabels = new Uint8Array(GALLERY_PER_CLASS * classNames.length);
       let galleryOffset = 0;
-      let trainGalleryLabelOffset = 0;
       let galleryLabelOffset = 0;
       archive.test.counts.forEach((count, classIndex) => {
-        trainGalleryImages.set(
-          archive.train.images.subarray(
-            trainGalleryLabelOffset * IMAGE_SIZE,
-            (trainGalleryLabelOffset + GALLERY_PER_CLASS) * IMAGE_SIZE,
-          ),
-          galleryOffset * IMAGE_SIZE,
-        );
-        trainGalleryLabels.fill(classIndex, galleryOffset, galleryOffset + GALLERY_PER_CLASS);
         galleryImages.set(
           archive.test.images.subarray(
             galleryLabelOffset * IMAGE_SIZE,
@@ -992,7 +1005,6 @@ export async function main(argv = process.argv.slice(2), options = {}) {
         );
         galleryLabels.fill(classIndex, galleryOffset, galleryOffset + GALLERY_PER_CLASS);
         galleryOffset += GALLERY_PER_CLASS;
-        trainGalleryLabelOffset += archive.train.counts[classIndex];
         galleryLabelOffset += count;
       });
 

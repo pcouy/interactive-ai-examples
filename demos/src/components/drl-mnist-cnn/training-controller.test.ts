@@ -1,5 +1,6 @@
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import type { MnistCnnFilters, MnistCnnWeights } from '../../core/mnist-cnn.js';
+import type { SegmentLoader, SegmentPlan } from '../../core/mnist-cnn-segmented.js';
 import type {
   MnistCnnTfjsTrainer,
   MnistCnnTrainingConfig,
@@ -7,10 +8,11 @@ import type {
   MnistTrainingStatus,
   MnistTrainSource,
 } from '../../core/mnist-cnn-tfjs.js';
-import type { MnistIdxDataset } from '../../core/mnist-data.js';
+import type { MnistIdxDataset, MnistSample } from '../../core/mnist-data.js';
 import type { MnistSplits } from './mnist-assets.js';
 import {
   type MnistRunRequest,
+  type MnistSegmentedRun,
   MnistTrainingController,
   type MnistTrainingPorts,
 } from './training-controller.js';
@@ -37,6 +39,43 @@ function makeWeights(tag: number): MnistCnnWeights {
   return {
     conv: [layer(9, 1), layer(9, 1), layer(9, 1), layer(9, 1)],
     dense: [layer(200, 8), layer(80, 10)],
+  };
+}
+
+/** Plan segmenté minimal : aucun round matérialisé n'est demandé par les tests. */
+function makeSegmentPlan(totalCount: number): SegmentPlan {
+  return {
+    classes: 2,
+    shardSize: 10,
+    totalCount,
+    roundsPerEpoch: 1,
+    roundsForEpoch: () => [],
+  };
+}
+
+/** Chargeur segmenté minimal : aucun fragment n'est lu par les tests. */
+function makeSegmentLoader(totalCount: number): SegmentLoader {
+  return {
+    totalCount,
+    loadRound: async () => {
+      throw new Error('unused segment loader');
+    },
+    prefetchRound: () => undefined,
+    releaseRound: () => undefined,
+  };
+}
+
+/** Exemple déjà matérialisé, utilisé comme jeu de validation segmenté. */
+function makeSample(count: number): MnistSample {
+  return { count, images: new Float32Array(count * 784), labels: new Uint8Array(count) };
+}
+
+/** Run segmentée minimale, avec validation en mémoire si `validationCount` est fourni. */
+function makeSegmentedRun(trainCount: number, validationCount?: number): MnistSegmentedRun {
+  return {
+    trainPlan: makeSegmentPlan(trainCount),
+    trainLoader: makeSegmentLoader(trainCount),
+    ...(validationCount === undefined ? {} : { validation: makeSample(validationCount) }),
   };
 }
 
@@ -80,6 +119,7 @@ function makeProgress(status: MnistTrainingStatus): MnistTrainingProgress {
 class FakeTrainer {
   appliedWeights: MnistCnnWeights[] = [];
   trainOptions: unknown[] = [];
+  lastSegmentedOptions: unknown | null = null;
   cancelCount = 0;
   disposeCount = 0;
   disposed = false;
@@ -109,6 +149,14 @@ class FakeTrainer {
       return new Promise<MnistTrainingProgress>((resolve) => {
         this.runResolve = resolve;
       });
+    }
+    return makeProgress('completed');
+  }
+
+  async trainSegmented(options: unknown): Promise<MnistTrainingProgress> {
+    this.lastSegmentedOptions = options;
+    if (this.trainError !== null) {
+      throw this.trainError;
     }
     return makeProgress('completed');
   }
@@ -156,6 +204,8 @@ class FakePorts implements MnistTrainingPorts {
   trainers: FakeTrainer[] = [];
   /** Résultat de `selectIndices` (et therefore des effectifs rapportés). */
   selectIndicesResult: Uint32Array = new Uint32Array(10);
+  /** Nombre d'appels à `loadSplits`. */
+  loadSplitsCalls = 0;
   /** Erreur levée par `loadSplits`. */
   loadSplitsError: Error | null = null;
   /** Configuration du prochain entraîneur créé. */
@@ -166,8 +216,28 @@ class FakePorts implements MnistTrainingPorts {
   nextTrainerTrainError: Error | null = null;
   /** Crochet appelé dans `createTrainer` (abandon pendant la préparation). */
   createTrainerHook: (() => void) | null = null;
+  /** Requêtes reçues par `loadSegments`. */
+  loadSegmentsCalls: MnistRunRequest[] = [];
+  /** Run segmentée retournée par `loadSegments`, ou null pour le chemin actuel. */
+  segmentedRun: MnistSegmentedRun | null = null;
+  /** Erreur levée par `loadSegments`. */
+  loadSegmentsError: Error | null = null;
+  /** Porte pour suspendre `loadSegments` (abandon pendant le chargement). */
+  loadSegmentsGate: Promise<void> | null = null;
+
+  async loadSegments(request: MnistRunRequest): Promise<MnistSegmentedRun | null> {
+    this.loadSegmentsCalls.push(request);
+    if (this.loadSegmentsGate !== null) {
+      await this.loadSegmentsGate;
+    }
+    if (this.loadSegmentsError !== null) {
+      throw this.loadSegmentsError;
+    }
+    return this.segmentedRun;
+  }
 
   async loadSplits(): Promise<MnistSplits> {
+    this.loadSplitsCalls += 1;
     if (this.loadSplitsError !== null) {
       throw this.loadSplitsError;
     }
@@ -360,6 +430,118 @@ describe('MnistTrainingController.startRun', () => {
     expect(ports.selectIndicesCalls[0].seed).toBe(7);
     expect(ports.selectIndicesCalls[1].seed).toBe(7);
     expect(ports.countsChanges).toEqual([[10, 10]]);
+  });
+});
+
+describe('MnistTrainingController segmented runs', () => {
+  it('trains with the segmented plan, reports its counts and exports the weights', async () => {
+    const ports = new FakePorts();
+    const controller = new MnistTrainingController(ports);
+    const segmented = makeSegmentedRun(120, 30);
+    ports.segmentedRun = segmented;
+    await controller.startRun(makeRequest({ epochs: 3 }));
+    expect(ports.loadSegmentsCalls).toHaveLength(1);
+    expect(ports.loadSplitsCalls).toBe(0);
+    expect(ports.selectIndicesCalls).toHaveLength(0);
+    expect(ports.trainers[0].trainOptions).toHaveLength(0);
+    const options = ports.trainers[0].lastSegmentedOptions as {
+      trainPlan: SegmentPlan;
+      trainLoader: SegmentLoader;
+      validation?: MnistSample;
+      epochs: number;
+    };
+    expect(options.trainPlan).toBe(segmented.trainPlan);
+    expect(options.trainLoader).toBe(segmented.trainLoader);
+    expect(options.validation).toBe(segmented.validation);
+    expect(options.epochs).toBe(3);
+    expect(ports.countsChanges).toEqual([[120, 30]]);
+    expect(ports.trainers[0].exportCount).toBe(1);
+    expect(ports.weightsChanges).toHaveLength(1);
+    expect(controller.state).toBe('trained');
+  });
+
+  it('falls back to loadSplits and train when loadSegments returns null', async () => {
+    const ports = new FakePorts();
+    const controller = new MnistTrainingController(ports);
+    ports.segmentedRun = null;
+    await controller.startRun(makeRequest());
+    expect(ports.loadSegmentsCalls).toHaveLength(1);
+    expect(ports.selectIndicesCalls).toHaveLength(2);
+    expect(ports.trainers[0].trainOptions).toHaveLength(1);
+    expect(ports.trainers[0].lastSegmentedOptions).toBeNull();
+    expect(ports.loadSplitsCalls).toBe(1);
+  });
+
+  it('uses request.segmented without calling the loadSegments port', async () => {
+    const ports = new FakePorts();
+    const controller = new MnistTrainingController(ports);
+    const requested = makeSegmentedRun(84, 12);
+    ports.segmentedRun = makeSegmentedRun(999);
+    await controller.startRun(makeRequest({ segmented: requested }));
+    expect(ports.loadSegmentsCalls).toHaveLength(0);
+    expect(ports.trainers[0].lastSegmentedOptions).not.toBeNull();
+    expect(ports.countsChanges).toEqual([[84, 12]]);
+  });
+
+  it('falls back to the validation plan count without an in-memory sample', async () => {
+    const ports = new FakePorts();
+    const controller = new MnistTrainingController(ports);
+    const validationPlan = makeSegmentPlan(42);
+    ports.segmentedRun = {
+      ...makeSegmentedRun(120),
+      validationPlan,
+      validationLoader: makeSegmentLoader(42),
+    };
+    await controller.startRun(makeRequest());
+    expect(ports.countsChanges).toEqual([[120, 42]]);
+  });
+
+  it('forwards the validation plan and loader to trainSegmented', async () => {
+    const ports = new FakePorts();
+    const controller = new MnistTrainingController(ports);
+    const validationPlan = makeSegmentPlan(42);
+    const validationLoader = makeSegmentLoader(42);
+    ports.segmentedRun = {
+      ...makeSegmentedRun(120),
+      validationPlan,
+      validationLoader,
+    };
+    await controller.startRun(makeRequest());
+    const options = ports.trainers[0].lastSegmentedOptions as {
+      validationPlan?: SegmentPlan;
+      validationLoader?: SegmentLoader;
+    };
+    expect(options.validationPlan).toBe(validationPlan);
+    expect(options.validationLoader).toBe(validationLoader);
+  });
+
+  it('does not report an error when the run is cancelled during loadSegments', async () => {
+    const ports = new FakePorts();
+    const controller = new MnistTrainingController(ports);
+    ports.segmentedRun = makeSegmentedRun(120);
+    let release = (): void => undefined;
+    ports.loadSegmentsGate = new Promise<void>((resolve) => {
+      release = resolve;
+    });
+    const pending = controller.startRun(makeRequest());
+    await flushMicrotasks();
+    expect(controller.state).toBe('training');
+    await controller.pause();
+    release();
+    await pending;
+    expect(controller.state).toBe('paused');
+    expect(ports.errors).toHaveLength(0);
+    expect(ports.trainers).toHaveLength(0);
+    expect(ports.countsChanges).toHaveLength(0);
+  });
+
+  it('reports a loadSegments failure once and leaves an inactive state', async () => {
+    const ports = new FakePorts();
+    const controller = new MnistTrainingController(ports);
+    ports.loadSegmentsError = new Error('segments unavailable');
+    await controller.startRun(makeRequest());
+    expect(ports.errors).toEqual(['segments unavailable']);
+    expect(controller.state).not.toBe('training');
   });
 });
 
