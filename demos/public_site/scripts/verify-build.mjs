@@ -1,3 +1,4 @@
+import { createHash } from 'node:crypto';
 import { readFile, readdir, stat } from 'node:fs/promises';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
@@ -6,6 +7,14 @@ const scriptDir = path.dirname(fileURLToPath(import.meta.url));
 const projectRoot = path.resolve(scriptDir, '..');
 const distDir = path.join(projectRoot, 'dist');
 const globalCssPath = path.join(projectRoot, 'src/styles/global.css');
+const demoDistBundlePath = path.resolve(projectRoot, '../dist/drl-demos.js');
+
+const BUNDLE_MARKERS = [
+  '--drl-theme-bg',
+  'Boucle agent-environnement',
+  'Dernière mise à jour',
+  'Rejeu',
+];
 
 const REQUIRED_FILES = [
   'index.html',
@@ -104,12 +113,36 @@ function checkThemeScriptOrder(html, label) {
 check(await fileIsPresent('demo/drl-demos.js'), 'dist/demo/drl-demos.js is missing.');
 
 const bundlePath = path.join(distDir, 'demo/drl-demos.js');
-const bundle = await readFile(bundlePath, 'utf8').catch(() => '');
-check(
-  bundle.includes('--drl-theme-bg'),
-  'dist/demo/drl-demos.js does not contain "--drl-theme-bg". ' +
-    'Check that demos/src/styles/tokens.ts emits the palette custom properties.',
-);
+const bundleBuffer = await readFile(bundlePath).catch(() => null);
+const bundle = bundleBuffer?.toString('utf8') ?? '';
+
+for (const marker of BUNDLE_MARKERS) {
+  check(
+    bundle.includes(marker),
+    `dist/demo/drl-demos.js does not contain ${JSON.stringify(marker)}. ` +
+      'The copied bundle is stale. Run npm --prefix .. run build, then npm run build.',
+  );
+}
+
+const demoDistBundleBuffer = await readFile(demoDistBundlePath).catch(() => null);
+if (bundleBuffer === null || demoDistBundleBuffer === null) {
+  const missingPath = bundleBuffer === null ? bundlePath : demoDistBundlePath;
+  check(
+    false,
+    `Cannot compare demo bundles: ${missingPath} is missing or unreadable. ` +
+      'The copied bundle is stale.',
+  );
+} else {
+  const copiedHash = createHash('sha256').update(bundleBuffer).digest('hex');
+  const buildHash = createHash('sha256').update(demoDistBundleBuffer).digest('hex');
+  check(
+    bundleBuffer.length === demoDistBundleBuffer.length && copiedHash === buildHash,
+    `Copied bundle is stale: ${bundlePath} ` +
+      `(${bundleBuffer.length} bytes, sha256 ${copiedHash}) differs from ` +
+      `${demoDistBundlePath} (${demoDistBundleBuffer.length} bytes, sha256 ${buildHash}). ` +
+      'Run npm --prefix .. run build, then npm run build.',
+  );
+}
 
 for (const relative of REQUIRED_FILES) {
   check(await fileIsPresent(relative), `Missing required build file: dist/${relative}.`);

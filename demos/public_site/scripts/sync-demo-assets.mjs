@@ -6,6 +6,7 @@ import { fileURLToPath, pathToFileURL } from 'node:url';
 const require = createRequire(import.meta.url);
 const scriptDir = path.dirname(fileURLToPath(import.meta.url));
 const projectRoot = path.resolve(scriptDir, '..');
+const demosRoot = path.resolve(scriptDir, '../..');
 const demoDist = path.resolve(scriptDir, '../../dist');
 const tokenFile = path.resolve(scriptDir, '../../src/styles/token-values.ts');
 
@@ -40,6 +41,11 @@ const SITE_KEYS = {
   'site-border': 'border',
 };
 const MIN_CONTRAST = 4.5;
+const DEMO_SOURCE_FILES = [
+  path.join(demosRoot, 'vite.config.ts'),
+  path.join(demosRoot, 'package.json'),
+  path.join(demosRoot, 'tsconfig.json'),
+];
 
 function fail(message) {
   console.error(`sync-demo-assets: ${message}`);
@@ -104,6 +110,43 @@ function validatePalette(name, palette) {
   }
 }
 
+function displayDemoPath(file) {
+  return path.join('demos', path.relative(demosRoot, file));
+}
+
+async function findNewestFile(directory, current = null) {
+  const entries = await readdir(directory, { withFileTypes: true });
+  let newest = current;
+
+  for (const entry of entries) {
+    const absolute = path.join(directory, entry.name);
+    if (entry.isDirectory()) {
+      newest = await findNewestFile(absolute, newest);
+      continue;
+    }
+
+    const details = await stat(absolute);
+    if (details.isFile() && (newest === null || details.mtimeMs > newest.mtimeMs)) {
+      newest = { file: absolute, mtimeMs: details.mtimeMs };
+    }
+  }
+
+  return newest;
+}
+
+async function findNewestDemoSource() {
+  let newest = await findNewestFile(path.join(demosRoot, 'src'));
+
+  for (const file of DEMO_SOURCE_FILES) {
+    const details = await stat(file);
+    if (newest === null || details.mtimeMs > newest.mtimeMs) {
+      newest = { file, mtimeMs: details.mtimeMs };
+    }
+  }
+
+  return newest;
+}
+
 function renderBlock({ selector, indent, palette, onAccent, colorScheme }) {
   const selectorIndent = selector.match(/^\s*/)[0];
   const lines = [`${indent}color-scheme: ${colorScheme};`];
@@ -158,13 +201,40 @@ function renderPaletteCss({ light, dark, onAccent }) {
 }
 
 async function syncDemoBundle() {
+  const bundlePath = path.join(demoDist, 'drl-demos.js');
+  let bundleStat;
   try {
-    const demoStat = await stat(path.join(demoDist, 'drl-demos.js'));
-    if (!demoStat.isFile()) throw new Error('not a file');
+    bundleStat = await stat(bundlePath);
+    if (!bundleStat.isFile()) throw new Error('not a file');
   } catch {
     fail(
-      `Missing ${path.join(demoDist, 'drl-demos.js')}. ` +
+      `Missing ${bundlePath}. ` +
         'Run `npm --prefix .. run build` to build the demo bundle first.',
+    );
+  }
+
+  let newestSource;
+  try {
+    newestSource = await findNewestDemoSource();
+  } catch (error) {
+    fail(`Cannot read the demo source tree: ${error.message}`);
+  }
+
+  if (process.env.SYNC_DEBUG === '1') {
+    console.log(
+      `[sync] bundle mtime: ${new Date(bundleStat.mtimeMs).toISOString()} ` +
+        `(${bundleStat.mtimeMs})`,
+    );
+    console.log(
+      `[sync] newest source: ${displayDemoPath(newestSource.file)} ` +
+        `${new Date(newestSource.mtimeMs).toISOString()} (${newestSource.mtimeMs})`,
+    );
+  }
+
+  if (bundleStat.mtimeMs < newestSource.mtimeMs) {
+    fail(
+      `demos/dist/drl-demos.js is older than ${displayDemoPath(newestSource.file)}. ` +
+        'Rebuild the demos: npm --prefix .. run build',
     );
   }
 

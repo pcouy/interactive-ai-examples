@@ -325,6 +325,10 @@ export class FrozenLake extends DemoElement {
         font-size: 0.85em;
       }
 
+      .drl-loop-action {
+        justify-self: start;
+      }
+
       .drl-phase {
         padding: 2px var(--drl-space-2);
         border: 1px solid var(--drl-border);
@@ -961,14 +965,6 @@ export class FrozenLake extends DemoElement {
         >
           Rejeu
         </button>
-        <button
-          type="button"
-          class="drl-button"
-          title="Avance d'une phase et met la lecture automatique en pause."
-          @click=${this.handleFineStep}
-        >
-          Phase suivante
-        </button>
       </div>
       <div class="drl-layout">
         <div class="drl-main">
@@ -1047,6 +1043,14 @@ export class FrozenLake extends DemoElement {
                   `,
                 )}
               </ol>
+              <button
+                type="button"
+                class="drl-button drl-loop-action"
+                title="Avance d'une phase et met la lecture automatique en pause."
+                @click=${this.handleFineStep}
+              >
+                Phase suivante
+              </button>
             </div>
           </section>
           <section class="drl-panel" aria-labelledby="drl-update-title">
