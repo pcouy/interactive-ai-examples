@@ -1,4 +1,5 @@
 ---
+import { drlPalette } from '../../../src/styles/token-values.js';
 import Footer from '../components/Footer.astro';
 import Header from '../components/Header.astro';
 import '../styles/global.css';
@@ -18,21 +19,51 @@ const {
 const cleanPath = Astro.url.pathname.replace(/\.html$/, '').replace(/\/+$/, '');
 const current =
   cleanPath === '' || cleanPath === '/index' ? 'home' : cleanPath.replace(/^\//, '');
+
+const siteName = "Jouer pour comprendre l'IA";
+const fullTitle = title.includes(siteName) ? title : `${title} | ${siteName}`;
+// `Astro.url.pathname` is absolute, so joining it directly to `Astro.site` would
+// drop the GitHub Pages subpath. Join the site path explicitly instead.
+const siteBase = Astro.site ?? Astro.url;
+const canonicalPath = Astro.url.pathname.replace(/\/index\.html$/, '/');
+const canonical = new URL(
+  `${siteBase.pathname.replace(/\/+$/, '')}${canonicalPath}`,
+  siteBase.origin,
+);
 ---
 
 <!doctype html>
-<html lang="fr">
+<html lang="fr" dir="ltr">
   <head>
     <meta charset="utf-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1" />
     <meta name="color-scheme" content="light dark" />
-    <title>{title}</title>
+    <title>{fullTitle}</title>
     <meta name="description" content={description} />
+    <link rel="canonical" href={canonical.href} />
+    <meta name="author" content="Pierre Couy" />
+    <link rel="icon" href="/favicon.svg" type="image/svg+xml" />
+    <meta property="og:type" content="website" />
+    <meta property="og:site_name" content={siteName} />
+    <meta property="og:locale" content="fr_FR" />
+    <meta property="og:title" content={fullTitle} />
+    <meta property="og:description" content={description} />
+    <meta property="og:url" content={canonical.href} />
+    <meta name="twitter:card" content="summary" />
+    <meta name="twitter:title" content={fullTitle} />
+    <meta name="twitter:description" content={description} />
+    <meta
+      name="theme-color"
+      content={drlPalette.light.bg}
+      data-light={drlPalette.light.bg}
+      data-dark={drlPalette.dark.bg}
+    />
     <script is:inline>
       (() => {
         const KEY = 'drl-theme';
         const root = document.documentElement;
         const media = window.matchMedia('(prefers-color-scheme: dark)');
+        const themeMeta = document.querySelector('meta[name="theme-color"]');
 
         let stored = null;
         try {
@@ -45,7 +76,14 @@ const current =
         const labelFor = (theme) =>
           theme === 'dark' ? 'Passer au thème clair' : 'Passer au thème sombre';
 
+        const applyThemeColor = (theme) => {
+          if (!themeMeta) return;
+          const value = theme === 'dark' ? themeMeta.dataset.dark : themeMeta.dataset.light;
+          if (value) themeMeta.setAttribute('content', value);
+        };
+
         root.dataset.theme = stored ?? (media.matches ? 'dark' : 'light');
+        applyThemeColor(root.dataset.theme);
 
         const syncToggle = () => {
           const theme = root.dataset.theme === 'dark' ? 'dark' : 'light';
@@ -63,6 +101,7 @@ const current =
 
         const apply = (theme, persist) => {
           root.dataset.theme = theme;
+          applyThemeColor(theme);
           syncToggle();
 
           if (persist) {
