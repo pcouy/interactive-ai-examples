@@ -19,6 +19,6 @@
   },
   "files": {
     "ignoreUnknown": true,
-    "includes": ["**", "!**/dist"]
+    "includes": ["**", "!**/dist", "!public_site", "!public/datasets"]
   }
 }
