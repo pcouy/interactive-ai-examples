@@ -12,6 +12,7 @@ import type {
   WeightUpdate,
 } from '../../core/neuron.js';
 import { NeuronCore } from '../../core/neuron.js';
+import { drlTokenValues } from '../../styles/token-values.js';
 import { drlTokens } from '../../styles/tokens.js';
 import {
   createLandscapeScene,
@@ -53,8 +54,8 @@ const FIELD_REBUILD_INTERVAL_MS = 200;
 /** Minimum bias delta that triggers a rebuild outside the time window. */
 const FIELD_B_STEP = 0.1;
 
-const COLOR_LOW_FALLBACK = '#2563eb';
-const COLOR_HIGH_FALLBACK = '#7c3aed';
+const COLOR_LOW_FALLBACK = drlTokenValues.accent;
+const COLOR_HIGH_FALLBACK = drlTokenValues.accent2;
 
 const PHASE_LABELS: Record<NeuronPhase, string> = {
   idle: 'Prêt',

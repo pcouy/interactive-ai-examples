@@ -623,6 +623,9 @@ describe('persistent transposition table', () => {
     expect(svg.startsWith('<svg xmlns="http://www.w3.org/2000/svg"')).toBe(true);
     expect(svg).toContain('viewBox="0 0 36 36"');
     expect(svg).not.toContain('bestMove');
+    expect(internals.ttStateSvg(ticTacToe.apply(ticTacToe.initialState(), { index: 0 }))).toContain(
+      'fill:var(--drl-accent)',
+    );
     expect(internals.ttStateSvg(state)).toBe(svg);
   });
 

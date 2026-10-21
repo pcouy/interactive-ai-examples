@@ -9,6 +9,7 @@ import {
   GradientDescentCore,
   landscapeLoss,
 } from '../../core/gradient-descent.js';
+import { drlTokenValues } from '../../styles/token-values.js';
 import { drlTokens } from '../../styles/tokens.js';
 import { createLandscapeScene, gridIndex, type LandscapeScene } from '../shared/landscape-scene.js';
 
@@ -38,7 +39,7 @@ const PATCH_LIFT = 0.03;
 const ARROW_SCALE = 0.25;
 const ARROW_MAX = 1.2;
 const ARROW_COLLECTED_OPACITY = 0.25;
-const ARROW_COLOR_FALLBACK = '#d32f2f';
+const ARROW_COLOR_FALLBACK = drlTokenValues.arrow;
 const COLLECTED_Y_STEP = 0.04;
 
 const MAX_BATCH = 12;
@@ -274,7 +275,7 @@ export class GradientDescent extends DemoElement {
       this.tmpDir = new three.Vector3();
       landscape.setHeightField(landscapeLoss, DOMAIN);
 
-      const accentTwo = this.readColor(three, '--drl-accent-2', '#ffffff');
+      const accentTwo = this.readColor(three, '--drl-accent-2', drlTokenValues.accent2);
       const arrowColor = this.readColor(three, '--drl-arrow', ARROW_COLOR_FALLBACK);
       this.buildPatchMesh(three, accentTwo);
       this.buildArrows(three, arrowColor);

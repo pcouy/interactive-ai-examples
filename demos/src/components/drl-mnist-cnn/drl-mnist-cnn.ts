@@ -54,6 +54,7 @@ import {
   selectStratifiedIndices,
 } from '../../core/mnist-data.js';
 import { createIdxTrainSource } from '../../core/mnist-train-source.js';
+import { drlTokenValues } from '../../styles/token-values.js';
 import { drlTokens } from '../../styles/tokens.js';
 import {
   classOrder,
@@ -3218,8 +3219,8 @@ export class MnistCnn extends LitElement {
         return value.length > 0 ? value : fallback;
       };
       this.paletteCache = {
-        positive: hexToRgb(read('--drl-accent', '#2563eb')),
-        negative: hexToRgb(read('--drl-accent-2', '#7c3aed')),
+        positive: hexToRgb(read('--drl-accent', drlTokenValues.accent)),
+        negative: hexToRgb(read('--drl-accent-2', drlTokenValues.accent2)),
       };
     }
     return this.paletteCache;

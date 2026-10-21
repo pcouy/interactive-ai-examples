@@ -976,9 +976,9 @@ export function createGameComponent<S, M>(
       const cell = 12;
       const width = view.cols * cell;
       const height = view.rows * cell;
-      const fills = ['#2563eb', '#7c3aed'];
+      const fills = ['var(--drl-accent)', 'var(--drl-accent-2)'];
       const parts: string[] = [
-        `<rect x="0" y="0" width="${width}" height="${height}" style="fill:var(--drl-surface,#ffffff)"/>`,
+        `<rect x="0" y="0" width="${width}" height="${height}" style="fill:var(--drl-surface)"/>`,
       ];
       for (let row = 0; row < view.rows; row += 1) {
         const line = view.cells[row] ?? [];
@@ -987,7 +987,7 @@ export function createGameComponent<S, M>(
           const fill = owner === null ? 'none' : (fills[owner] ?? 'none');
           parts.push(
             `<rect x="${col * cell}" y="${row * cell}" width="${cell}" height="${cell}"` +
-              ` style="fill:${fill};stroke:var(--drl-border,#cbd5e1)"/>`,
+              ` style="fill:${fill};stroke:var(--drl-border)"/>`,
           );
         }
       }
