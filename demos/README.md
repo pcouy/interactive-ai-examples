@@ -16,8 +16,8 @@ npm install
 |---|---|
 | `npm run new -- <nom> [--3d]` | Génère une nouvelle démo (plop) |
 | `npm run dev` | Vite : galerie playground + pages démo avec HMR (ouvre `/playground/index.html`) |
-| `npm run build` | Génère `dist/drl-demos.js` (+ chunk `drl-three.js` si une démo 3D existe) |
-| `npm run test` / `npm run test:watch` | Vitest (logique pure dans `src/core/`) |
+| `npm run build` | Vite : `dist/drl-demos.js`, `dist/drl-three.js`, `dist/drl-index.js` et `datasets/**` |
+| `npm run test` / `npm run test:watch` | Vitest : core, tokens, garde de palette et composants |
 | `npm run typecheck` | `tsc --noEmit` (strict) |
 | `npm run lint` / `npm run format` | Biome |
 
@@ -197,24 +197,155 @@ slider.addEventListener('drl-input', (event) => {
 
 ## Thème
 
-Tous les composants consomment les tokens CSS `src/styles/tokens.ts` : `--drl-bg`,
-`--drl-surface`, `--drl-fg`, `--drl-muted`, `--drl-accent`, `--drl-accent-2`,
-`--drl-border`, `--drl-radius`, `--drl-font`, `--drl-font-size`, `--drl-space-1/2/3`.
-Les variables traversent le Shadow DOM : le site hôte les surcharge sans ajouter de CSS
-au composant.
+### Une seule source de valeurs
+
+`src/styles/token-values.ts` est la seule source des valeurs de couleur. Le fichier
+exporte deux objets :
+
+- `drlTokenValues` — 14 valeurs : 8 couleurs (`bg`, `surface`, `fg`, `muted`, `accent`,
+  `accent2`, `arrow`, `border`) et 6 valeurs de mise en forme (`radius`, `font`,
+  `fontSize`, `space1`, `space2`, `space3`). La feuille Lit (`src/styles/tokens.ts`) et
+  la scène Three.js (`src/components/shared/landscape-scene.ts`) lisent cet objet.
+- `drlPalette` — deux thèmes, `light` et `dark`. Chaque thème définit 13 couleurs. Le
+  thème clair réutilise `drlTokenValues` ; le thème sombre fournit ses propres valeurs.
+
+| Clé | Rôle | Clair | Sombre |
+|---|---|---|---|
+| `bg` | Fond de page | `#f8fafc` | `#0b1220` |
+| `surface` | Fond des panneaux, cartes et barres de contrôle | `#ffffff` | `#111a2b` |
+| `fg` | Texte principal | `#0f172a` | `#e2e8f0` |
+| `muted` | Texte secondaire, légendes | `#64748b` | `#94a3b8` |
+| `accent` | Accent principal : sélection, données positives | `#2563eb` | `#60a5fa` |
+| `accent-2` | Second accent : cible opposée, données négatives | `#7c3aed` | `#a78bfa` |
+| `arrow` | Flèches et repères directionnels | `#d32f2f` | `#f87171` |
+| `border` | Bordures et séparateurs | `#e2e8f0` | `#1e293b` |
+| `fg-2` | Texte secondaire contrasté | `#334155` | `#cbd5e1` |
+| `muted-2` | Texte discret, détails secondaires | `#94a3b8` | `#8b98ad` |
+| `warn` | État d'avertissement | `#b45309` | `#fbbf24` |
+| `danger` | État d'erreur | `#b91c1c` | `#fca5a5` |
+| `danger-2` | Erreur renforcée | `#dc2626` | `#f87171` |
+
+`fg-2`, `muted-2`, `warn`, `danger` et `danger-2` servent aux pages playground. Aucun
+composant ne les lit aujourd'hui.
+
+### `--drl-theme-*` : l'entrée de thème
+
+Chaque composant redéclare les tokens sur son `:host` :
 
 ```css
-drl-grid-world {
-  --drl-accent: #d81b60;
-  --drl-radius: 4px;
+:host {
+  --drl-accent: var(--drl-theme-accent, #2563eb);
 }
 ```
 
+La valeur de repli est la valeur claire de `drlPalette.light`.
+
+`--drl-theme-*` est l'entrée de thème prise en charge. Poser `--drl-*` sur `:root` ne
+suffit pas. Les propriétés personnalisées s'héritent, mais le `:host` de chaque composant
+déclare déjà `--drl-*`. Une déclaration locale gagne contre une valeur héritée. Dans un
+shadow root imbriqué, le composant garde donc sa valeur claire. `--drl-theme-*` n'est
+jamais redéclaré : il traverse l'héritage et alimente le `var()` du `:host`.
+
+Thème clair :
+
+```css
+:root {
+  --drl-theme-bg: #f8fafc;
+  --drl-theme-surface: #ffffff;
+  --drl-theme-fg: #0f172a;
+  --drl-theme-muted: #64748b;
+  --drl-theme-accent: #2563eb;
+  --drl-theme-accent-2: #7c3aed;
+  --drl-theme-arrow: #d32f2f;
+  --drl-theme-border: #e2e8f0;
+  --drl-theme-fg-2: #334155;
+  --drl-theme-muted-2: #94a3b8;
+  --drl-theme-warn: #b45309;
+  --drl-theme-danger: #b91c1c;
+  --drl-theme-danger-2: #dc2626;
+}
+```
+
+Thème sombre :
+
+```css
+:root[data-theme='dark'] {
+  --drl-theme-bg: #0b1220;
+  --drl-theme-surface: #111a2b;
+  --drl-theme-fg: #e2e8f0;
+  --drl-theme-muted: #94a3b8;
+  --drl-theme-accent: #60a5fa;
+  --drl-theme-accent-2: #a78bfa;
+  --drl-theme-arrow: #f87171;
+  --drl-theme-border: #1e293b;
+  --drl-theme-fg-2: #cbd5e1;
+  --drl-theme-muted-2: #8b98ad;
+  --drl-theme-warn: #fbbf24;
+  --drl-theme-danger: #fca5a5;
+  --drl-theme-danger-2: #f87171;
+}
+```
+
+### Pages playground
+
+Les pages de `playground/` chargent `/src/styles/playground-tokens.ts` en module
+différé. Le module injecte une balise `<style>` en tête de `<head>`, avec deux blocs
+`:root` : le thème clair, puis le thème sombre sous `:root[data-drl-theme='dark']`. Les
+pages écrivent `var(--drl-theme-*)`.
+
+Le module s'exécute après l'analyse du HTML. Une page de dev peut donc afficher une frame
+dans le thème clair avant l'injection du thème sombre. C'est attendu.
+
+### Garde de palette
+
+Le test `src/styles/palette-guard.test.ts` refuse toute couleur littérale dans le code. Il
+parcourt `demos/src`, `demos/playground`, `demos/plop-templates`, `demos/scripts`,
+`demos/public_site/src` et `demos/public_site/scripts`. Seuls deux fichiers échappent à la
+règle : `src/styles/token-values.ts` et la fixture du parseur MNIST
+(`src/components/drl-mnist-cnn/drl-mnist-cnn.test.ts`). Les dossiers `node_modules`,
+`dist`, `.astro`, `.cache`, `.git` et `public` sont ignorés, ainsi que
+`public_site/src/styles/palette.generated.css`.
+
+```bash
+npx vitest run src/styles/palette-guard.test.ts
+```
+
+`--drl-theme-accent` et `--drl-theme-accent-2` doivent rester en `#rrggbb`. `hexToRgb`
+les analyse dans `drl-mnist-cnn` (palette des filtres de convolution). Une autre notation
+(`rgb()`, `color-mix()`, nom de couleur) casse la palette : les deux couleurs retombent
+sur le même bleu par défaut. `public_site/scripts/sync-demo-assets.mjs` valide aussi les
+13 couleurs des deux thèmes au format `#rrggbb` et vérifie les contrastes.
+
+### Composants qui lisent la couleur au montage
+
+`drl-neuron`, `drl-mnist-cnn` et `drl-gradient-descent` lisent `--drl-accent` (et
+`--drl-accent-2`) une seule fois avec `getComputedStyle`, puis gardent le résultat. Un
+changement de thème après le montage ne met pas leurs couleurs à jour. Le site public
+pose le thème avant le chargement des composants : le script inline de `Base.astro`
+définit `data-theme` pendant l'analyse du `<head>`, et `palette.generated.css` en dérive
+les `--drl-theme-*`.
+
 ## Intégrer au site statique
 
-Après `npm run build`, copiez **tous** les fichiers de `dist/` (aujourd'hui
-`drl-demos.js`, plus `drl-three.js` dès qu'une démo `--3d` existe) côte à côte, par
-exemple dans `assets/` :
+Construisez et vérifiez le paquet avant de le copier :
+
+```bash
+npm run typecheck   # tsc --noEmit, strict
+npm run lint        # biome check .
+npm run test        # vitest run
+npm run build       # vite build
+```
+
+`npm run build` écrit dans `dist/` :
+
+| Fichier | Rôle |
+|---|---|
+| `drl-demos.js` | Bundle principal : enregistre tous les composants |
+| `drl-three.js` | Chunk Three.js, chargé par les démos 3D |
+| `drl-index.js` | Chunk TensorFlow.js, chargé par l'entraîneur MNIST |
+| `datasets/**` | Jeux de données copiés depuis `public/datasets/` |
+
+Copiez **tous** les fichiers `.js` de `dist/` côte à côte, par exemple dans `assets/` :
 
 ```html
 <script type="module" src="assets/drl-demos.js"></script>
@@ -224,7 +355,10 @@ exemple dans `assets/` :
 - Zéro CSS à ajouter : le Shadow DOM encapsule les styles.
 - L'import du module enregistre tous les composants (effet de bord
   `customElements.define`).
-- `drl-three.js` n'est téléchargé que si une démo 3D figure sur la page (dynamic import).
+- Les chunks paresseux sont obligatoires. `drl-demos.js` importe `./drl-three.js` et
+  `./drl-index.js` à la demande. Copier seulement `drl-demos.js` casse les démos MNIST et
+  3D : l'import dynamique renvoie une erreur 404.
+- `drl-three.js` n'est téléchargé que si une démo 3D figure sur la page.
 
 ## Checklist avant de considérer une démo terminée
 
