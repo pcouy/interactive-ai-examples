@@ -367,7 +367,7 @@ export class Neuron extends DemoElement {
   batchSize = 4;
 
   @property({ type: Number, attribute: 'height-scale' })
-  heightScale = 1.5;
+  heightScale = 10;
 
   /**
    * Which cached height field the 3D scene displays. The page mirrors this
