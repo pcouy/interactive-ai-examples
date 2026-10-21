@@ -197,6 +197,10 @@
           </span>
           <p id="probe-hint" class="drl-hint">Saisissez x₁ et x₂ pour évaluer le neurone en ce point.</p>
         </div>
+        <div class="drl-row">
+          <label for="show-prediction">Afficher la prédiction</label>
+          <input id="show-prediction" type="checkbox" checked />
+        </div>
         <div class="drl-row" role="radiogroup" aria-label="Surface de loss affichée">
           <label>
             <input id="surface-global" type="radio" name="surface" value="global" checked />
@@ -316,6 +320,7 @@
       const probeHint = document.getElementById('probe-hint');
       const surfaceGlobal = document.getElementById('surface-global');
       const surfaceTest = document.getElementById('surface-test');
+      const showPrediction = document.getElementById('show-prediction');
       // True while a drl-test-point handler runs, so refreshProbe does not echo
       // the event back into the component in a loop.
       let applyingTestPoint = false;
@@ -616,6 +621,12 @@
         demo?.setSurface('test');
       });
 
+      showPrediction?.addEventListener('change', () => {
+        if (demo !== null && showPrediction !== null) {
+          demo.showPrediction = showPrediction.checked;
+        }
+      });
+
       if (demo !== null) {
         if (expressionInput !== null) {
           expressionInput.value = demo.expression;
@@ -645,6 +656,9 @@
         // already shows the test surface.
         if (surfaceTest !== null) {
           surfaceTest.disabled = demo.surface !== 'test';
+        }
+        if (showPrediction !== null) {
+          showPrediction.checked = demo.showPrediction;
         }
         syncSurfaceRadios();
       }
