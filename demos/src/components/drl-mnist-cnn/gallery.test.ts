@@ -34,6 +34,10 @@ describe('galleryCacheKey', () => {
     expect(galleryCacheKey('mnist', 'train', 10)).toBe('mnist/train/10');
     expect(galleryCacheKey('quickdraw', 'test', 5)).toBe('quickdraw/test/5');
   });
+
+  it('produces different keys for the train and test splits', () => {
+    expect(galleryCacheKey('mnist', 'train', 10)).not.toBe(galleryCacheKey('mnist', 'test', 10));
+  });
 });
 
 describe('galleryPerClassCount', () => {

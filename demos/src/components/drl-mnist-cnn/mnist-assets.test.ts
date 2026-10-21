@@ -453,6 +453,29 @@ describe('loadDatasetGallery', () => {
     await loadDatasetGallery(idxDataset('mnist'), 'train', 2);
     expect(mock).toHaveBeenCalledTimes(4);
   });
+
+  it('isolates the train and test gallery cache entries', async () => {
+    const mock = stubFetch(await gzippedGalleryAssets());
+    const { loadDatasetGallery } = await loadLoader();
+
+    const testPromise = loadDatasetGallery(idxDataset('mnist'), 'test', 2);
+    const trainPromise = loadDatasetGallery(idxDataset('mnist'), 'train', 2);
+    expect(trainPromise).not.toBe(testPromise);
+
+    const [testGallery, trainGallery] = await Promise.all([testPromise, trainPromise]);
+    // Les deux fractions gardent leurs propres pixels : une clé constante
+    // renverrait la même galerie pour les deux appels.
+    expect(testGallery.images[0]).toBe(0);
+    expect(trainGallery.images[0]).toBeCloseTo(100 / 255);
+    expect(testGallery.images[0]).not.toBeCloseTo(trainGallery.images[0]);
+
+    const testAgain = loadDatasetGallery(idxDataset('mnist'), 'test', 2);
+    const trainAgain = loadDatasetGallery(idxDataset('mnist'), 'train', 2);
+    expect(testAgain).toBe(testPromise);
+    expect(trainAgain).toBe(trainPromise);
+    await Promise.all([testAgain, trainAgain]);
+    expect(mock).toHaveBeenCalledTimes(4);
+  });
 });
 
 describe('loadMnistGallery', () => {

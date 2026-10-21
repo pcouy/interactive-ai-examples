@@ -739,6 +739,33 @@ describe('loadShardedGallery', () => {
     await loadShardedGallery(SHARDED_DATASET, 'test');
     expect(mock).toHaveBeenCalledTimes(3);
   });
+
+  it('isolates the train and test gallery cache entries', async () => {
+    const mock = stubFetch(assetsForIndex(baseIndex()));
+    const { loadShardedGallery } = await loadLoader();
+
+    const testPromise = loadShardedGallery(SHARDED_DATASET, 'test');
+    const trainPromise = loadShardedGallery(SHARDED_DATASET, 'train');
+    expect(trainPromise).not.toBe(testPromise);
+
+    const [testGallery, trainGallery] = await Promise.all([testPromise, trainPromise]);
+    // Chaque fraction garde ses libellés et ses pixels : une clé constante
+    // renverrait la galerie de test pour l'appel d'entraînement.
+    expect(Array.from(testGallery.labels)).toEqual([0, 0, 0, 1, 1, 1]);
+    expect(Array.from(trainGallery.labels)).toEqual([1, 1, 1, 0, 0, 0]);
+    expect(testGallery.images[0]).toBe(0);
+    expect(trainGallery.images[0]).toBeCloseTo(100 / 255);
+    expect(testGallery.images[0]).not.toBeCloseTo(trainGallery.images[0]);
+
+    // Index + deux fichiers par fraction.
+    expect(mock).toHaveBeenCalledTimes(5);
+
+    await Promise.all([
+      loadShardedGallery(SHARDED_DATASET, 'test'),
+      loadShardedGallery(SHARDED_DATASET, 'train'),
+    ]);
+    expect(mock).toHaveBeenCalledTimes(5);
+  });
 });
 
 /** Index synthétique : `classCount` classes, `shardsPerClass` fragments pleins. */
