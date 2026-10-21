@@ -10,11 +10,11 @@ function u32Bytes(value: number): number[] {
   return [(value >>> 24) & 0xff, (value >>> 16) & 0xff, (value >>> 8) & 0xff, value & 0xff];
 }
 
-function imageIdx(count: number): Uint8Array<ArrayBuffer> {
+function imageIdx(count: number, fillBase = 0): Uint8Array<ArrayBuffer> {
   const bytes = new Uint8Array(new ArrayBuffer(16 + count * 28 * 28));
   bytes.set([...u32Bytes(IMAGE_MAGIC), ...u32Bytes(count), ...u32Bytes(28), ...u32Bytes(28)]);
   for (let index = 0; index < count * 28 * 28; index += 1) {
-    bytes[16 + index] = (index * 7) % 256;
+    bytes[16 + index] = (fillBase + index * 7) % 256;
   }
   return bytes;
 }
@@ -64,7 +64,7 @@ function baseIndex(): Record<string, unknown> {
     { file: `${prefix}-c1-s02.idx.gz`, classIndex: 1, start: 10, count: 2 },
   ];
   return {
-    version: 1,
+    version: 2,
     dataset: 'quickdraw',
     classNames: ['livre', 'lune'],
     shardSize: 2,
@@ -72,11 +72,24 @@ function baseIndex(): Record<string, unknown> {
       train: { count: 12, labelsFile: 'train-labels.idx.gz', shards: shards('train') },
       test: { count: 12, labelsFile: 'test-labels.idx.gz', shards: shards('test') },
     },
-    gallery: { imagesFile: 'gallery.idx.gz', labelsFile: 'gallery-labels.idx.gz', perClass: 3 },
+    galleries: {
+      train: {
+        imagesFile: 'train-gallery.idx.gz',
+        labelsFile: 'train-gallery-labels.idx.gz',
+        perClass: 3,
+      },
+      test: { imagesFile: 'gallery.idx.gz', labelsFile: 'gallery-labels.idx.gz', perClass: 3 },
+    },
   };
 }
 
-/** Ressources complètes pour l'index donné : index, libellés, fragments et galerie. */
+/** Libellés des galeries de test : l'entraînement et le test diffèrent. */
+const GALLERY_LABELS = new Map([
+  ['train-gallery-labels.idx.gz', [1, 1, 1, 0, 0, 0]],
+  ['gallery-labels.idx.gz', [0, 0, 0, 1, 1, 1]],
+]);
+
+/** Ressources complètes pour l'index donné : index, libellés, fragments et galeries. */
 function assetsForIndex(index: Record<string, unknown>): Map<string, Uint8Array<ArrayBuffer>> {
   const assets = new Map<string, Uint8Array<ArrayBuffer>>();
   assets.set('index.json', new TextEncoder().encode(JSON.stringify(index)));
@@ -91,13 +104,16 @@ function assetsForIndex(index: Record<string, unknown>): Map<string, Uint8Array<
       assets.set(shard.file, gz(imageIdx(shard.count)));
     }
   }
-  const gallery = index.gallery as {
-    imagesFile: string;
-    labelsFile: string;
-    perClass: number;
+  const galleries = index.galleries as {
+    train: { imagesFile: string; labelsFile: string };
+    test: { imagesFile: string; labelsFile: string };
   };
-  assets.set(gallery.imagesFile, gz(imageIdx(6)));
-  assets.set(gallery.labelsFile, gz(labelIdx([0, 0, 0, 1, 1, 1])));
+  for (const gallery of [galleries.train, galleries.test]) {
+    const labels = GALLERY_LABELS.get(gallery.labelsFile) ?? [0, 0, 0, 1, 1, 1];
+    const fillBase = gallery.imagesFile.startsWith('train') ? 100 : 0;
+    assets.set(gallery.imagesFile, gz(imageIdx(labels.length, fillBase)));
+    assets.set(gallery.labelsFile, gz(labelIdx(labels)));
+  }
   return assets;
 }
 
@@ -132,15 +148,18 @@ afterEach(() => {
 });
 
 describe('parseIndexJson', () => {
-  it('accepts a valid index', async () => {
+  it('accepts a valid version 2 index with both galleries', async () => {
     const { parseIndexJson } = await loadLoader();
     const index = parseIndexJson(JSON.stringify(baseIndex()));
-    expect(index.version).toBe(1);
+    expect(index.version).toBe(2);
     expect(index.classNames).toEqual(['livre', 'lune']);
     expect(index.shardSize).toBe(2);
     expect(index.splits.train.count).toBe(12);
     expect(index.splits.train.shards).toHaveLength(6);
     expect(index.splits.test.shards).toHaveLength(6);
+    expect(index.galleries.train.imagesFile).toBe('train-gallery.idx.gz');
+    expect(index.galleries.test.labelsFile).toBe('gallery-labels.idx.gz');
+    expect(index.galleries.test.perClass).toBe(3);
   });
 
   it('accepts the expected dataset and rejects a different one', async () => {
@@ -170,10 +189,36 @@ describe('parseIndexJson', () => {
     expect(() => parseIndexJson(JSON.stringify(index))).toThrow(/splits/);
   });
 
+  it('rejects a missing galleries field', async () => {
+    const { parseIndexJson } = await loadLoader();
+    const index = baseIndex();
+    delete index.galleries;
+    expect(() => parseIndexJson(JSON.stringify(index))).toThrow(/galleries/);
+  });
+
+  it('rejects a missing train gallery', async () => {
+    const { parseIndexJson } = await loadLoader();
+    const index = baseIndex();
+    const galleries = index.galleries as { train?: unknown };
+    delete galleries.train;
+    expect(() => parseIndexJson(JSON.stringify(index))).toThrow(/galleries\.train/);
+  });
+
+  it('rejects a version 1 index and names both rerun commands', async () => {
+    const { parseIndexJson } = await loadLoader();
+    const index = baseIndex();
+    index.version = 1;
+    const parse = () => parseIndexJson(JSON.stringify(index));
+    expect(parse).toThrow(RangeError);
+    expect(parse).toThrow(/version 1/);
+    expect(parse).toThrow(/npm run quickdraw:data/);
+    expect(parse).toThrow(/npm run medmnist:data/);
+  });
+
   it('rejects an unsupported version', async () => {
     const { parseIndexJson } = await loadLoader();
     const index = baseIndex();
-    index.version = 2;
+    index.version = 3;
     expect(() => parseIndexJson(JSON.stringify(index))).toThrow(/version/);
   });
 
@@ -474,8 +519,8 @@ describe('loadShardedSplits', () => {
 });
 
 describe('loadShardedGallery', () => {
-  it('returns perClass times classCount normalised samples with the right labels', async () => {
-    stubFetch(assetsForIndex(baseIndex()));
+  it('returns the test gallery with perClass times classCount normalised samples', async () => {
+    const mock = stubFetch(assetsForIndex(baseIndex()));
     const { loadShardedGallery } = await loadLoader();
 
     const gallery = await loadShardedGallery(SHARDED_DATASET);
@@ -483,17 +528,35 @@ describe('loadShardedGallery', () => {
     expect(gallery.images).toBeInstanceOf(Float32Array);
     expect(gallery.images).toHaveLength(6 * 28 * 28);
     expect(Array.from(gallery.labels)).toEqual([0, 0, 0, 1, 1, 1]);
+    // Le jeu de test n'a pas le décalage de 100 réservé à l'entraînement.
+    expect(gallery.images[0]).toBe(0);
     for (const value of gallery.images) {
       expect(value).toBeGreaterThanOrEqual(0);
       expect(value).toBeLessThanOrEqual(1);
     }
+    // Aucun fragment n'est nécessaire pour la galerie.
+    expect(fetchedShardFiles(mock)).toEqual([]);
   });
 
-  it('fetches the gallery file names from the index', async () => {
+  it('returns the train gallery when the train split is asked', async () => {
+    stubFetch(assetsForIndex(baseIndex()));
+    const { loadShardedGallery } = await loadLoader();
+
+    const gallery = await loadShardedGallery(SHARDED_DATASET, 'train');
+    expect(gallery.count).toBe(6);
+    // Libellés et pixels différents de ceux du jeu de test : la fraction
+    // demandée est bien celle qui est lue.
+    expect(Array.from(gallery.labels)).toEqual([1, 1, 1, 0, 0, 0]);
+    expect(gallery.images[0]).toBeCloseTo(100 / 255);
+  });
+
+  it('fetches the test gallery file names from the index', async () => {
     const index = baseIndex();
-    const galleryIndex = index.gallery as { imagesFile: string; labelsFile: string };
-    galleryIndex.imagesFile = 'index-gallery-images.idx.gz';
-    galleryIndex.labelsFile = 'index-gallery-labels-idx1-ubyte.gz';
+    const galleries = index.galleries as {
+      test: { imagesFile: string; labelsFile: string };
+    };
+    galleries.test.imagesFile = 'index-gallery-images.idx.gz';
+    galleries.test.labelsFile = 'index-gallery-labels-idx1-ubyte.gz';
     const mock = stubFetch(assetsForIndex(index));
     const { loadShardedGallery } = await loadLoader();
 
@@ -506,8 +569,8 @@ describe('loadShardedGallery', () => {
 
   it('rejects a gallery whose image count differs from perClass times classCount', async () => {
     const index = baseIndex();
-    const galleryIndex = index.gallery as { perClass: number };
-    galleryIndex.perClass = 4;
+    const galleries = index.galleries as { test: { perClass: number } };
+    galleries.test.perClass = 4;
     stubFetch(assetsForIndex(index));
     const { loadShardedGallery } = await loadLoader();
 
@@ -519,5 +582,35 @@ describe('loadShardedGallery', () => {
     );
     expect(error).toBeInstanceOf(RangeError);
     expect(error.message).toMatch(/expected 8/);
+  });
+
+  it('reports a missing train gallery and still loads the test gallery', async () => {
+    const assets = assetsForIndex(baseIndex());
+    assets.delete('train-gallery.idx.gz');
+    stubFetch(assets);
+    const { loadShardedGallery } = await loadLoader();
+
+    const error = await loadShardedGallery(SHARDED_DATASET, 'train').then(
+      () => {
+        throw new Error('expected the train gallery load to fail');
+      },
+      (reason: Error) => reason,
+    );
+    expect(error.message).toContain('train-gallery.idx.gz');
+    expect(error.message).toContain(SHARDED_DATASET.downloadCommand);
+
+    const gallery = await loadShardedGallery(SHARDED_DATASET, 'test');
+    expect(gallery.count).toBe(6);
+  });
+
+  it('caches a second call with the same dataset, split and perClass', async () => {
+    const mock = stubFetch(assetsForIndex(baseIndex()));
+    const { loadShardedGallery } = await loadLoader();
+
+    await loadShardedGallery(SHARDED_DATASET, 'test');
+    // Index + deux fichiers de galerie.
+    expect(mock).toHaveBeenCalledTimes(3);
+    await loadShardedGallery(SHARDED_DATASET, 'test');
+    expect(mock).toHaveBeenCalledTimes(3);
   });
 });

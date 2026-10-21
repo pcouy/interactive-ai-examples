@@ -31,6 +31,7 @@ import {
   type MnistSample,
   materializeSample,
 } from '../../core/mnist-data.js';
+import { type GallerySplit, galleryCacheKey } from './gallery.js';
 import {
   assetBaseUrl,
   fetchGzip,
@@ -74,6 +75,13 @@ export interface ShardedSplitIndex {
   readonly shards: readonly ShardEntry[];
 }
 
+/** Galerie d'une fraction : fichiers IDX et nombre d'exemples par classe. */
+export interface ShardedGalleryInfo {
+  readonly imagesFile: string;
+  readonly labelsFile: string;
+  readonly perClass: number;
+}
+
 /** Index JSON d'un jeu segmenté. */
 export interface ShardedIndex {
   readonly version: number;
@@ -81,11 +89,7 @@ export interface ShardedIndex {
   readonly classNames: readonly string[];
   readonly shardSize: number;
   readonly splits: { readonly train: ShardedSplitIndex; readonly test: ShardedSplitIndex };
-  readonly gallery: {
-    readonly imagesFile: string;
-    readonly labelsFile: string;
-    readonly perClass: number;
-  };
+  readonly galleries: { readonly train: ShardedGalleryInfo; readonly test: ShardedGalleryInfo };
 }
 
 /** Url publique d'un fichier d'un jeu, sous `datasets/<id>/`. */
@@ -183,12 +187,13 @@ function parseSplit(
 }
 
 /**
- * Valide la structure d'un index JSON et retourne un `ShardedIndex` figé par
- * le typage. Rejette une version inconnue, un nombre de classes hors de
+ * Valide la structure d'un index JSON (version 2) et retourne un `ShardedIndex`
+ * figé par le typage. Rejette une version inconnue, un nombre de classes hors de
  * `[2, 20]`, une taille de fragment non positive, une fraction sans effectif
  * positif, un fragment dont l'intervalle dépasse l'effectif de la fraction, et
- * un fragment dont `classIndex` dépasse le nombre de classes. Quand
- * `expectedDataset` est fourni, l'index doit déclarer ce même jeu de données.
+ * un fragment dont `classIndex` dépasse le nombre de classes. Un index version 1
+ * est refusé avec la commande qui le régénère. Quand `expectedDataset` est
+ * fourni, l'index doit déclarer ce même jeu de données.
  */
 export function parseIndexJson(text: string, expectedDataset?: string): ShardedIndex {
   let raw: unknown;
@@ -202,9 +207,14 @@ export function parseIndexJson(text: string, expectedDataset?: string): ShardedI
   }
   const record = raw as Record<string, unknown>;
 
-  if (record.version !== 1) {
+  if (record.version === 1) {
+    throw new RangeError(
+      'sharded-assets: index version 1 is obsolete and has no per-split galleries. Rerun "npm run quickdraw:data" (QuickDraw) or "npm run medmnist:data" (MedMNIST) to regenerate a version 2 index.',
+    );
+  }
+  if (record.version !== 2) {
     throw new Error(
-      `sharded-assets: index version ${String(record.version)} is not supported, expected 1.`,
+      `sharded-assets: index version ${String(record.version)} is not supported, expected 2.`,
     );
   }
   const dataset = requireString(record.dataset, 'dataset');
@@ -234,15 +244,12 @@ export function parseIndexJson(text: string, expectedDataset?: string): ShardedI
   const train = parseSplit(splitsRecord.train, 'train', classNames);
   const test = parseSplit(splitsRecord.test, 'test', classNames);
 
-  if (record.gallery === null || typeof record.gallery !== 'object') {
-    throw new Error('sharded-assets: index field "gallery" must be an object.');
+  if (record.galleries === null || typeof record.galleries !== 'object') {
+    throw new Error('sharded-assets: index field "galleries" must be an object.');
   }
-  const galleryRecord = record.gallery as Record<string, unknown>;
-  const gallery = {
-    imagesFile: requireString(galleryRecord.imagesFile, 'gallery.imagesFile'),
-    labelsFile: requireString(galleryRecord.labelsFile, 'gallery.labelsFile'),
-    perClass: requirePositiveInteger(galleryRecord.perClass, 'gallery.perClass'),
-  };
+  const galleriesRecord = record.galleries as Record<string, unknown>;
+  const trainGallery = parseGallery(galleriesRecord.train, 'galleries.train');
+  const testGallery = parseGallery(galleriesRecord.test, 'galleries.test');
 
   // Les fragments d'une classe sont contigus : tout fragment qui n'est pas le
   // dernier de sa classe doit remplir la taille annoncée.
@@ -250,7 +257,27 @@ export function parseIndexJson(text: string, expectedDataset?: string): ShardedI
     validateShardSizes(split, shardSize);
   }
 
-  return { version: 1, dataset, classNames, shardSize, splits: { train, test }, gallery };
+  return {
+    version: 2,
+    dataset,
+    classNames,
+    shardSize,
+    splits: { train, test },
+    galleries: { train: trainGallery, test: testGallery },
+  };
+}
+
+/** Valide et convertit une galerie de fraction décrite par l'index JSON. */
+function parseGallery(value: unknown, name: string): ShardedGalleryInfo {
+  if (value === null || typeof value !== 'object') {
+    throw new Error(`sharded-assets: index ${name} must be an object.`);
+  }
+  const record = value as Record<string, unknown>;
+  return {
+    imagesFile: requireString(record.imagesFile, `${name}.imagesFile`),
+    labelsFile: requireString(record.labelsFile, `${name}.labelsFile`),
+    perClass: requirePositiveInteger(record.perClass, `${name}.perClass`),
+  };
 }
 
 /** Vérifie que chaque fragment respecte `shardSize`, sauf le dernier de sa classe. */
@@ -606,15 +633,43 @@ export async function loadShardedSplits(
   };
 }
 
+/** Cache des galeries décodées par jeu, fraction et nombre d'exemples par classe. */
+const galleryCache = new Map<string, Promise<MnistSample>>();
+
 /**
- * Télécharge et décode la galerie d'un jeu segmenté et la retourne sous forme
- * de `MnistSample` normalisé (`Float32` dans `[0, 1]`), via `materializeSample`.
- * Les noms des fichiers viennent de l'index, qui en est la source autoritative.
- * La galerie doit contenir `perClass * classCount` exemples.
+ * Télécharge et décode la galerie d'une fraction d'un jeu segmenté et la
+ * retourne sous forme de `MnistSample` normalisé (`Float32` dans `[0, 1]`), via
+ * `materializeSample`. Les noms des fichiers viennent de `galleries[split]` de
+ * l'index, qui en est la source autoritative. La galerie doit contenir
+ * `perClass * classCount` exemples. Le résultat est mis en cache par jeu,
+ * fraction et `perClass` ; un échec n'est pas conservé. Aucun fragment n'est
+ * téléchargé.
  */
-export async function loadShardedGallery(dataset: ShardedDatasetDefinition): Promise<MnistSample> {
+export async function loadShardedGallery(
+  dataset: ShardedDatasetDefinition,
+  split: GallerySplit = 'test',
+): Promise<MnistSample> {
   const index = await loadShardedIndex(dataset);
-  const galleryIndex = index.gallery;
+  const galleryIndex = index.galleries[split];
+  const key = galleryCacheKey(dataset.id, split, galleryIndex.perClass);
+  const cached = galleryCache.get(key);
+  if (cached !== undefined) {
+    return cached;
+  }
+  const pending = downloadGallery(dataset, index, galleryIndex).catch((error: unknown) => {
+    galleryCache.delete(key);
+    throw error;
+  });
+  galleryCache.set(key, pending);
+  return pending;
+}
+
+/** Télécharge, décode et valide la galerie d'une fraction. */
+async function downloadGallery(
+  dataset: ShardedDatasetDefinition,
+  index: ShardedIndex,
+  galleryIndex: ShardedGalleryInfo,
+): Promise<MnistSample> {
   const [images, labels] = await Promise.all([
     fetchCachedBytes(dataset, galleryIndex.imagesFile, IDX_IMAGE_MAGIC),
     fetchCachedBytes(dataset, galleryIndex.labelsFile, IDX_LABEL_MAGIC),

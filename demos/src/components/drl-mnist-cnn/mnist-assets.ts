@@ -40,6 +40,7 @@ import {
   type MnistSample,
   materializeSample,
 } from '../../core/mnist-data.js';
+import { type GallerySplit, galleryCacheKey } from './gallery.js';
 
 /** Répertoire public des ressources des jeux, relatif à la base Vite. */
 const DATASET_ASSET_DIRECTORY = 'datasets';
@@ -343,24 +344,48 @@ export function selectGalleryIndices(
 }
 
 /**
- * Galerie de `perClass` exemples par classe d'un jeu, échantillonnés dans son
- * jeu de test et matérialisés en `MnistSample` (`Float32` dans `[0, 1]`). Le
- * nombre de classes vient de `datasetClassCount(dataset)`.
+ * Une promesse de galerie par jeu, fraction et nombre d'exemples par classe :
+ * les fractions d'un même jeu ne partagent jamais leur entrée de cache.
  */
-export async function loadDatasetGallery(
-  dataset: DatasetDefinition,
+const inFlightGalleries = new Map<string, Promise<MnistSample>>();
+
+/**
+ * Galerie de `perClass` exemples par classe d'un jeu, échantillonnés dans la
+ * fraction `split` (`test` par défaut) et matérialisés en `MnistSample`
+ * (`Float32` dans `[0, 1]`). Le nombre de classes vient de
+ * `datasetClassCount(dataset)`. Le résultat est mis en cache par jeu, fraction
+ * et `perClass` ; un échec n'est pas conservé.
+ */
+export function loadDatasetGallery(
+  dataset: IdxDatasetDefinition,
+  split: GallerySplit = 'test',
   perClass: number = GALLERY_PER_CLASS,
 ): Promise<MnistSample> {
-  const idxDataset = requireIdxDataset(dataset);
-  const splits = await loadDatasetSplits(idxDataset);
-  const indices = selectGalleryIndices(splits.test, perClass, datasetClassCount(idxDataset));
-  return materializeSample(splits.test, indices);
+  const key = galleryCacheKey(dataset.id, split, perClass);
+  const cached = inFlightGalleries.get(key);
+  if (cached !== undefined) {
+    return cached;
+  }
+  const pending = (async (): Promise<MnistSample> => {
+    const splits = await loadDatasetSplits(dataset);
+    const indices = selectGalleryIndices(splits[split], perClass, datasetClassCount(dataset));
+    return materializeSample(splits[split], indices);
+  })().catch((error: unknown) => {
+    inFlightGalleries.delete(key);
+    throw error;
+  });
+  inFlightGalleries.set(key, pending);
+  return pending;
 }
 
 /**
- * Galerie de `perClass` exemples par chiffre MNIST, échantillonnés dans le jeu
- * de test officiel et matérialisés en `MnistSample` (`Float32` dans `[0, 1]`).
+ * Galerie de `perClass` exemples par chiffre MNIST, échantillonnés dans la
+ * fraction `split` (jeu de test officiel par défaut) et matérialisés en
+ * `MnistSample` (`Float32` dans `[0, 1]`).
  */
-export function loadMnistGallery(perClass: number = GALLERY_PER_CLASS): Promise<MnistSample> {
-  return loadDatasetGallery(getDataset('mnist'), perClass);
+export function loadMnistGallery(
+  perClass: number = GALLERY_PER_CLASS,
+  split: GallerySplit = 'test',
+): Promise<MnistSample> {
+  return loadDatasetGallery(requireIdxDataset(getDataset('mnist')), split, perClass);
 }
