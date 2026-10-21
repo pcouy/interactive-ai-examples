@@ -1,0 +1,80 @@
+---
+import { Content, frontmatter } from '../content/frozen-lake.md';
+import DemoPage from '../layouts/DemoPage.astro';
+import frozenLakeGlue from '../scripts/frozen-lake-demo.js?raw';
+---
+
+<DemoPage
+  title={frontmatter.title}
+  description={frontmatter.description}
+  eyebrow="Apprentissage par renforcement"
+>
+  <Fragment slot="demo">
+    <section class="demo-surface">
+      <div class="demo-stage">
+        <drl-frozen-lake id="frozen-lake-demo" speed="1"></drl-frozen-lake>
+
+        <div class="demo-controls">
+          <drl-slider
+            data-param="learning-rate"
+            label="Taux d'apprentissage"
+            min="0.01"
+            max="1"
+            step="0.01"
+            value="0.1"></drl-slider>
+          <drl-slider
+            data-param="epsilon"
+            label="Epsilon (exploration)"
+            min="0"
+            max="1"
+            step="0.01"
+            value="0.1"></drl-slider>
+          <drl-slider
+            data-param="discount-factor"
+            label="Facteur d'actualisation"
+            min="0.5"
+            max="1"
+            step="0.01"
+            value="0.99"></drl-slider>
+          <drl-slider
+            data-param="slip-probability"
+            label="Glissade (probabilité)"
+            min="0"
+            max="1"
+            step="0.05"
+            value="0"></drl-slider>
+          <drl-slider
+            data-param="initial-value"
+            label="Valeur initiale Q"
+            min="-1"
+            max="5"
+            step="0.1"
+            value="0"></drl-slider>
+          <drl-slider
+            data-param="candy-reward"
+            label="Récompense bonbon"
+            min="0"
+            max="1"
+            step="0.05"
+            value="0.1"></drl-slider>
+          <drl-slider
+            data-param="replay-batch-size"
+            label="Taille de l'échantillon"
+            min="1"
+            max="64"
+            step="1"
+            value="8"></drl-slider>
+        </div>
+
+        <drl-frozen-lake-replay></drl-frozen-lake-replay>
+      </div>
+    </section>
+  </Fragment>
+
+  <Content />
+
+  <Fragment slot="scripts">
+    <script is:inline type="module" src="/demo/drl-demos.js"></script>
+    <script is:inline type="module" set:html={frozenLakeGlue}></script>
+  </Fragment>
+</DemoPage>

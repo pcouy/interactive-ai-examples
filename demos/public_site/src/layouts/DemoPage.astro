@@ -1,0 +1,34 @@
+---
+import Base from './Base.astro';
+
+interface Props {
+  title: string;
+  description?: string;
+  eyebrow: string;
+  wide?: boolean;
+}
+
+const { title, description, eyebrow, wide = false } = Astro.props;
+---
+
+<Base title={title} description={description} wide={wide}>
+  <header class="demo-header">
+    <div>
+      <p class="eyebrow">{eyebrow}</p>
+      <h1 class="demo-title">{title}</h1>
+      {description && <p class="lede">{description}</p>}
+    </div>
+  </header>
+
+  <slot name="demo" />
+
+  <article class="prose">
+    <slot />
+  </article>
+
+  <p>
+    <a class="button button--ghost" href="/">← Toutes les démos</a>
+  </p>
+
+  <slot name="scripts" />
+</Base>

@@ -1,0 +1,28 @@
+---
+import { Content, frontmatter } from '../content/deep-blue.md';
+import DemoPage from '../layouts/DemoPage.astro';
+import deepBlueGlue from '../scripts/deep-blue-demo.js?raw';
+---
+
+<DemoPage
+  title={frontmatter.title}
+  description={frontmatter.description}
+  eyebrow="Recherche adversariale"
+  wide
+>
+  <Fragment slot="demo">
+    <section class="demo-surface">
+      <div class="demo-stage">
+        <drl-deep-blue-page id="deep-blue-demo" game="tic-tac-toe"></drl-deep-blue-page>
+        <p class="demo-log" data-demo-log aria-live="polite"></p>
+      </div>
+    </section>
+  </Fragment>
+
+  <Content />
+
+  <Fragment slot="scripts">
+    <script is:inline type="module" src="/demo/drl-demos.js"></script>
+    <script is:inline type="module" set:html={deepBlueGlue}></script>
+  </Fragment>
+</DemoPage>
