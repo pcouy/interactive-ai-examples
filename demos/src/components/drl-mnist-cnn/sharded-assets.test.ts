@@ -857,6 +857,45 @@ function differingSplitFixture(testShardsPerClass: number): SegmentFixture {
   return { json, labels: base.labels, assets };
 }
 
+/** Round de deux classes dont les fragments portent 2 et 5 exemples. */
+function unequalCountFixture(): SegmentFixture {
+  const labels = [0, 0, 1, 1, 1, 1, 1];
+  const trainShards: ShardEntry[] = [
+    { file: 'train-c0-s00.idx.gz', classIndex: 0, start: 0, count: 2 },
+    { file: 'train-c1-s00.idx.gz', classIndex: 1, start: 2, count: 5 },
+  ];
+  const testShards: ShardEntry[] = [
+    { file: 'test-c0-s00.idx.gz', classIndex: 0, start: 0, count: 2 },
+    { file: 'test-c1-s00.idx.gz', classIndex: 1, start: 2, count: 5 },
+  ];
+  const json = {
+    version: 2,
+    dataset: 'quickdraw',
+    classNames: ['courte', 'longue'],
+    shardSize: 5,
+    splits: {
+      train: { count: 7, labelsFile: 'train-labels.idx.gz', shards: trainShards },
+      test: { count: 7, labelsFile: 'test-labels.idx.gz', shards: testShards },
+    },
+    galleries: {
+      train: {
+        imagesFile: 'train-gallery.idx.gz',
+        labelsFile: 'train-gallery-labels.idx.gz',
+        perClass: 1,
+      },
+      test: { imagesFile: 'gallery.idx.gz', labelsFile: 'gallery-labels.idx.gz', perClass: 1 },
+    },
+  };
+  const assets = new Map<string, Uint8Array<ArrayBuffer>>();
+  assets.set('train-labels.idx.gz', gz(labelIdx(labels)));
+  assets.set('test-labels.idx.gz', gz(labelIdx(labels)));
+  assets.set('train-c0-s00.idx.gz', gz(imageIdx(2, 1)));
+  assets.set('train-c1-s00.idx.gz', gz(imageIdx(5, 8)));
+  assets.set('test-c0-s00.idx.gz', gz(imageIdx(2, 1)));
+  assets.set('test-c1-s00.idx.gz', gz(imageIdx(5, 8)));
+  return { json, labels, assets };
+}
+
 /** URL publique d'une ressource du jeu de test `quickdraw`. */
 function segmentUrl(file: string): string {
   return `/datasets/quickdraw/${file}`;
@@ -1266,6 +1305,32 @@ describe('SegmentStore', () => {
     const otherRef = segmentRound(first.index, [0, 1, 2], 1, 1);
     const other = await first.store.loadRound(otherRef);
     expect(Array.from(other.images)).not.toEqual(Array.from(roundA.images));
+  });
+
+  it('keeps the shorter entry in the first cycle of an unequal round', async () => {
+    const fixture = unequalCountFixture();
+    stubCaches();
+    stubFetch(fixture.assets);
+    const { index, store } = await createSegmentStore(fixture, [0, 1]);
+    const ref = segmentRound(index, [0, 1], 0);
+
+    const round = await store.loadRound(ref);
+
+    expect(round.count).toBe(7);
+    const labels = Array.from(round.labels);
+    // Le premier cycle prend un exemple de chaque entrée.
+    expect(new Set(labels.slice(0, 2))).toEqual(new Set([0, 1]));
+    // L'entrée courte a deux exemples : elle contribue encore au cycle suivant.
+    expect(labels.slice(2, 4).filter((label) => label === 0)).toHaveLength(1);
+    // Une fois l'entrée courte épuisée, seules les positions de l'entrée longue restent.
+    expect(labels.slice(4)).toEqual([1, 1, 1]);
+    const signatures = new Set<string>();
+    for (let position = 0; position < round.count; position += 1) {
+      signatures.add(round.images.slice(position * 28 * 28, (position + 1) * 28 * 28).join(','));
+    }
+    expect(signatures.size).toBe(7);
+    expect(round.shardsInRange?.(0, 2)).toBe(2);
+    expect(round.shardsInRange?.(0, 7)).toBe(2);
   });
 
   it('fetches no shard outside the selected classes', async () => {

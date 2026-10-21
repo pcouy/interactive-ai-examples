@@ -43,11 +43,12 @@ function makeWeights(tag: number): MnistCnnWeights {
 }
 
 /** Plan segmenté minimal : aucun round matérialisé n'est demandé par les tests. */
-function makeSegmentPlan(totalCount: number): SegmentPlan {
+function makeSegmentPlan(totalCount: number, epochCount = totalCount): SegmentPlan {
   return {
     classes: 2,
     shardSize: 10,
     totalCount,
+    epochCount,
     roundsPerEpoch: 1,
     roundsForEpoch: () => [],
   };
@@ -481,6 +482,19 @@ describe('MnistTrainingController segmented runs', () => {
     expect(ports.loadSegmentsCalls).toHaveLength(0);
     expect(ports.trainers[0].lastSegmentedOptions).not.toBeNull();
     expect(ports.countsChanges).toEqual([[84, 12]]);
+  });
+
+  it('reports the training epoch count for a segmented run', async () => {
+    const ports = new FakePorts();
+    const controller = new MnistTrainingController(ports);
+    const trainPlan = makeSegmentPlan(120, 96);
+    ports.segmentedRun = {
+      trainPlan,
+      trainLoader: makeSegmentLoader(120),
+      validation: makeSample(30),
+    };
+    await controller.startRun(makeRequest());
+    expect(ports.countsChanges).toEqual([[96, 30]]);
   });
 
   it('falls back to the validation plan count without an in-memory sample', async () => {

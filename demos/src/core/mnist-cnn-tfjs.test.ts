@@ -1823,6 +1823,7 @@ describe('segmented training', () => {
       classes: 2,
       shardSize: 2,
       totalCount: 4,
+      epochCount: 4,
       roundsPerEpoch: 1,
       roundsForEpoch: () => [ref],
     };
@@ -1849,6 +1850,76 @@ describe('segmented training', () => {
     );
     expect(firstBatch?.windowShards).toBe(2);
     expect(result.windowShards).toBe(2);
+  });
+
+  it('reports the distinct shards of a multi-batch loss window', async () => {
+    const trainer = await makeTrainer(SMALL_FILTERS, {
+      batchSize: 2,
+      seed: 9,
+      outputClasses: 4,
+    });
+    const base = roundFromSample(makeSample(8, 12, 4));
+    const files = [
+      'a.idx.gz',
+      'b.idx.gz',
+      'c.idx.gz',
+      'd.idx.gz',
+      'a.idx.gz',
+      'b.idx.gz',
+      'c.idx.gz',
+      'd.idx.gz',
+    ];
+    const calls: Array<[number, number]> = [];
+    const round: SegmentRound = {
+      ...base,
+      shardsInRange(start: number, end: number): number {
+        calls.push([start, end]);
+        return new Set(files.slice(start, end)).size;
+      },
+    };
+    const ref: RoundRef = {
+      index: 0,
+      entries: [
+        { file: 'a.idx.gz', classIndex: 0, start: 0, count: 2 },
+        { file: 'b.idx.gz', classIndex: 1, start: 2, count: 2 },
+        { file: 'c.idx.gz', classIndex: 2, start: 4, count: 2 },
+        { file: 'd.idx.gz', classIndex: 3, start: 6, count: 2 },
+      ],
+    };
+    const plan: SegmentPlan = {
+      classes: 4,
+      shardSize: 2,
+      totalCount: 8,
+      epochCount: 8,
+      roundsPerEpoch: 1,
+      roundsForEpoch: () => [ref],
+    };
+    const loader: SegmentLoader = {
+      totalCount: 8,
+      loadRound: () => Promise.resolve(round),
+      prefetchRound: () => undefined,
+      releaseRound: () => undefined,
+    };
+    const events: MnistTrainingProgress[] = [];
+    const result = await trainer.trainSegmented({
+      trainPlan: plan,
+      trainLoader: loader,
+      epochs: 1,
+      lossSampleEvery: 2,
+      progressIntervalMs: 0,
+      onProgress: (progress) => events.push(progress),
+    });
+
+    // Deux lots de deux exemples couvrent quatre fragments distincts.
+    expect(calls.filter(([start, end]) => start < end)).toEqual([
+      [0, 4],
+      [4, 8],
+    ]);
+    const secondBatch = events.find(
+      (event) => event.status === 'running' && event.batchesProcessed === 2,
+    );
+    expect(secondBatch?.windowShards).toBe(4);
+    expect(result.windowShards).toBe(4);
   });
 
   it('aggregates segmented validation with weighted loss and accuracy', async () => {
