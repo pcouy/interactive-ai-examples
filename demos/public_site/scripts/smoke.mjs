@@ -249,7 +249,7 @@ function checkFrozenLakePage(html) {
 
   const demoOpen = html.indexOf('<drl-frozen-lake');
   const demoClose = html.indexOf('</drl-frozen-lake>');
-  const controls = html.indexOf('class="demo-controls"');
+  const controls = html.search(/class="[^"]*\bdemo-controls\b/);
   check(
     demoOpen !== -1 && demoClose > demoOpen && controls > demoOpen && controls < demoClose,
     `${label}: controls sit inside the demo element`,

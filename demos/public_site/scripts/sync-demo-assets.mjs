@@ -340,7 +340,10 @@ for (const theme of ['light', 'dark']) {
   const accent2Ratio = contrastRatio(palette['accent-2'], palette.bg);
   ratios[theme]['accent-2/bg'] = accent2Ratio;
   if (accent2Ratio < MIN_CONTRAST) {
-    fail(`accent-2 contrast on ${theme} is ${accent2Ratio.toFixed(2)}, below ${MIN_CONTRAST}`);
+    fail(
+      `accent-2 contrast on ${theme} is ${accent2Ratio.toFixed(2)}, ` +
+        `below ${MIN_CONTRAST}. Adjust ${tokenFile}.`,
+    );
   }
 }
 
