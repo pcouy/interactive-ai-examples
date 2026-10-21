@@ -113,6 +113,15 @@ Chaque fragment est aussi mis en cache compressé dans la Cache API
 (`drl-datasets-v<version>-<jeu>`), avec un repli en mémoire si le quota ou
 l'API n'est pas disponible.
 
+L'entraînement suit un `zip` des listes de fragments par classe : chaque round
+prend un fragment par classe, et une époque compte autant de rounds que la plus
+courte liste. Les listes sont mélangées à chaque époque, donc les fragments non
+retenus une époque le sont à la suivante. La validation, elle, couvre tous les
+fragments de la fraction (les classes plus courtes recyclent leurs fragments)
+afin que la perte et l'exactitude restent comparables d'une époque à l'autre.
+L'effectif d'entraînement affiché correspond au volume d'une époque, pas au
+total sélectionné.
+
 À 2 % sur les quinze classes QuickDraw, le navigateur demande 30 fragments
 d'apprentissage (30 000 images) et 15 fragments de validation : la plus grande fraction
 reste sous le seuil et le jeu complet est matérialisé. À 10 %, quinze classes demandent
