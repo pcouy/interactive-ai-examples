@@ -23,7 +23,7 @@ export const FINE_STEP_PHASES: readonly FineStepPhase[] = ['observe', 'act', 'tr
 export interface FineStepState {
   /** Phase the loop is in. The next {@link FrozenLakeCore.advanceFineStep} call runs it. */
   readonly phase: FineStepPhase;
-  /** Phase that the next {@link FrozenLakeCore.advanceFineStep} call runs. */
+  /** Phase that follows {@link FineStepState.phase}. The next advanceFineStep call enters it. */
   readonly nextPhase: FineStepPhase;
   /** Observation the agent acts on in this step. */
   readonly observation: number;

@@ -1,4 +1,4 @@
-import type { FrozenLakeAction } from '../../core/frozen-lake.js';
+import type { FineStepState, FrozenLakeAction } from '../../core/frozen-lake.js';
 import type { QUpdateResult, Transition } from '../../core/q-learning.js';
 
 /** Event name the Frozen Lake demo dispatches with the current replay state. */
@@ -55,7 +55,6 @@ export function replayRows(state: FrozenLakeReplayState): ReplayRow[] {
 
 /** Formatted values and formulas for the last Q-learning update. */
 export interface UpdateView {
-  readonly title: string;
   readonly reward: string;
   readonly gamma: string;
   readonly nextValue: string;
@@ -84,7 +83,6 @@ export function updateView(update: QUpdateResult<number, FrozenLakeAction>): Upd
   const alpha = formatNumber(update.learningRate);
   const updated = formatNumber(update.updatedValue);
   return {
-    title: 'Dernière mise à jour',
     reward,
     gamma,
     nextValue,
@@ -95,5 +93,51 @@ export function updateView(update: QUpdateResult<number, FrozenLakeAction>): Upd
     updated,
     targetFormula: `r + γ · max Q(s', a') = ${reward} + ${gamma} × ${nextValue} = ${target}`,
     updateFormula: `Q(s, a) ← ${previous} + ${alpha} × (${target} − ${previous}) = ${updated}`,
+  };
+}
+
+/** Values shown on the fine-step schematic. */
+export interface SchematicView {
+  readonly observation: number | null;
+  readonly action: FrozenLakeAction | null;
+  readonly nextObservation: number | null;
+  readonly reward: number | null;
+  readonly fallback: boolean;
+}
+
+/**
+ * Builds the schematic of the current fine step. The observe phase has no
+ * action yet, so it falls back to the last update. Every field then comes from
+ * that one transition, never from a mix of the state and the transition.
+ */
+export function schematicView(
+  state: FineStepState,
+  lastUpdate: QUpdateResult<number, FrozenLakeAction> | null,
+): SchematicView {
+  if (state.action !== null) {
+    return {
+      observation: state.observation,
+      action: state.action,
+      nextObservation: state.nextObservation,
+      reward: state.reward,
+      fallback: false,
+    };
+  }
+  if (lastUpdate !== null) {
+    const transition = lastUpdate.transition;
+    return {
+      observation: transition.observation,
+      action: transition.action,
+      nextObservation: transition.nextObservation,
+      reward: transition.reward,
+      fallback: true,
+    };
+  }
+  return {
+    observation: state.observation,
+    action: null,
+    nextObservation: null,
+    reward: null,
+    fallback: false,
   };
 }

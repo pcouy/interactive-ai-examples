@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import type { FrozenLakeAction } from '../../core/frozen-lake.js';
+import type { FineStepState, FrozenLakeAction } from '../../core/frozen-lake.js';
 import type { QUpdateResult, Transition } from '../../core/q-learning.js';
 import {
   ACTION_GLYPHS,
@@ -7,6 +7,7 @@ import {
   type FrozenLakeReplayState,
   replayHeader,
   replayRows,
+  schematicView,
   updateView,
 } from './frozen-lake-ui.js';
 
@@ -31,6 +32,20 @@ function replayState(
   capacity = 1000,
 ): FrozenLakeReplayState {
   return { enabled: true, batch, bufferSize, capacity };
+}
+
+/** Fine-step state in the observe phase, with no action yet. */
+function fineStep(overrides: Partial<FineStepState> = {}): FineStepState {
+  return {
+    phase: 'observe',
+    nextPhase: 'act',
+    observation: 0,
+    action: null,
+    nextObservation: null,
+    reward: null,
+    done: null,
+    ...overrides,
+  };
 }
 
 describe('ACTION_GLYPHS', () => {
@@ -97,6 +112,105 @@ describe('replayHeader', () => {
   });
 });
 
+describe('schematicView', () => {
+  /** Dummy update whose transition fields are easy to tell apart from a state. */
+  function updateResult(
+    overrides: Partial<Transition<number, FrozenLakeAction>> = {},
+  ): QUpdateResult<number, FrozenLakeAction> {
+    return {
+      transition: transition(overrides),
+      previousValue: 0,
+      nextValue: 0,
+      discountFactor: 0.9,
+      bootstrap: 0,
+      target: 0,
+      tdError: 0,
+      learningRate: 0.1,
+      updatedValue: 0,
+    };
+  }
+
+  it('shows only the observation in the observe phase without an update', () => {
+    expect(schematicView(fineStep({ observation: 5 }), null)).toEqual({
+      observation: 5,
+      action: null,
+      nextObservation: null,
+      reward: null,
+      fallback: false,
+    });
+  });
+
+  it('shows the observation and the action in the act phase', () => {
+    const state = fineStep({
+      phase: 'act',
+      nextPhase: 'transition',
+      observation: 4,
+      action: 'up',
+    });
+    // Live state wins over the stale update.
+    const staleUpdate = updateResult({
+      observation: 30,
+      action: 'left',
+      reward: -2,
+      nextObservation: 31,
+      done: true,
+    });
+    expect(schematicView(state, staleUpdate)).toEqual({
+      observation: 4,
+      action: 'up',
+      nextObservation: null,
+      reward: null,
+      fallback: false,
+    });
+  });
+
+  it('shows the full transition in the transition phase', () => {
+    const state = fineStep({
+      phase: 'transition',
+      nextPhase: 'observe',
+      observation: 4,
+      action: 'down',
+      nextObservation: 9,
+      reward: 0.5,
+      done: false,
+    });
+    // Live state wins over the stale update.
+    const staleUpdate = updateResult({
+      observation: 30,
+      action: 'left',
+      reward: -2,
+      nextObservation: 31,
+      done: true,
+    });
+    expect(schematicView(state, staleUpdate)).toEqual({
+      observation: 4,
+      action: 'down',
+      nextObservation: 9,
+      reward: 0.5,
+      fallback: false,
+    });
+  });
+
+  it('uses one whole transition as the fallback in the observe phase', () => {
+    const lastUpdate = updateResult({
+      observation: 3,
+      action: 'right',
+      reward: 1,
+      nextObservation: 7,
+      done: true,
+    });
+    // The state observation differs, so a mixed mapping would be visible.
+    const state = fineStep({ observation: 6 });
+    expect(schematicView(state, lastUpdate)).toEqual({
+      observation: 3,
+      action: 'right',
+      nextObservation: 7,
+      reward: 1,
+      fallback: true,
+    });
+  });
+});
+
 describe('updateView', () => {
   /** Fixed update whose target and updated value follow the Q-learning rule. */
   const update: QUpdateResult<number, FrozenLakeAction> = {
@@ -113,7 +227,6 @@ describe('updateView', () => {
 
   it('formats every value with three decimals', () => {
     expect(updateView(update)).toMatchObject({
-      title: 'Dernière mise à jour',
       reward: '1.000',
       gamma: '0.900',
       nextValue: '0.500',
