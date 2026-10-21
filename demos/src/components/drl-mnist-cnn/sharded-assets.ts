@@ -792,17 +792,24 @@ export interface SegmentStoreOptions {
   readonly cacheName: string;
   /** Fraction servie par le magasin (`train` par défaut). */
   readonly split?: 'train' | 'test';
-  /** Nombre maximal de fragments décompressés résidents (défaut 60). */
+  /**
+   * Fragments exacts retenus pour cette fraction, par exemple le résultat de
+   * `selectShardEntries`. Par défaut, tous les fragments des classes
+   * sélectionnées.
+   */
+  readonly entries?: readonly RoundEntry[];
+  /**
+   * Borne dure du nombre de fragments décompressés résidents (défaut 60). La
+   * protection des rounds est au mieux quand l'ensemble de travail dépasse
+   * cette borne.
+   */
   readonly maxShards?: number;
   /** Implémentation de `fetch`, remplaçable pour les tests. */
   readonly fetchImpl?: typeof fetch;
 }
 
-/** Corps téléchargé (compressé ou déjà décodé) et encodage annoncé. */
-interface DownloadedBytes {
-  readonly bytes: Uint8Array;
-  readonly contentEncoding: string | null;
-}
+/** Décode un corps téléchargé en payload IDX validé. */
+type PayloadDecoder = (bytes: Uint8Array, contentEncoding: string | null) => Promise<Uint8Array>;
 
 /** Fragment décodé résident : payload d'images sans en-tête IDX. */
 interface ResidentShard {
@@ -903,13 +910,16 @@ function readRoundBatch(
  *
  * Les fragments compressés passent par trois niveaux : la mémoire du magasin,
  * le cache Cache API (`cacheName`, clé = URL du fragment), puis le réseau avec
- * au plus quatre téléchargements simultanés. Une panne du cache (absence de
- * `caches`, quota dépassé) ne fait jamais échouer un chargement.
+ * au plus quatre téléchargements simultanés. Un corps n'est mis en cache
+ * qu'après un décodage réussi. Une panne du cache (absence de `caches`, quota
+ * dépassé) ne fait jamais échouer un chargement.
  *
  * Les fragments décompressés résidents sont bornés par `maxShards` (60 par
- * défaut). L'éviction choisit le fragment le moins récemment utilisé qui n'est
- * ni chargé, ni référencé par le round courant, un round préchargé ou un round
- * résident, et elle garde un fragment par classe quand la borne le permet.
+ * défaut). `maxShards` est une borne dure. La protection des rounds est au
+ * mieux quand l'ensemble de travail dépasse cette borne. L'éviction choisit le
+ * fragment le moins récemment utilisé qui n'est ni chargé, ni référencé par le
+ * round courant, un round préchargé ou un round résident, et elle garde un
+ * fragment par classe quand la borne le permet.
  */
 export class SegmentStore implements SegmentLoader {
   readonly totalCount: number;
@@ -927,6 +937,8 @@ export class SegmentStore implements SegmentLoader {
   private readonly classPositions: ReadonlyMap<number, number>;
 
   private readonly splitByShard: ReadonlyMap<string, ShardedSplitIndex>;
+
+  private readonly selectedEntries: ReadonlyMap<string, RoundEntry>;
 
   private readonly limiter = new FetchLimiter(FETCH_CONCURRENCY);
 
@@ -948,9 +960,9 @@ export class SegmentStore implements SegmentLoader {
 
   private readonly roundLoads = new Map<string, Promise<SegmentRound>>();
 
-  private readonly downloads = new Map<string, Promise<DownloadedBytes>>();
+  private readonly downloads = new Map<string, Promise<Uint8Array>>();
 
-  private readonly memoryBytes = new Map<string, DownloadedBytes>();
+  private readonly memoryPayloads = new Map<string, Uint8Array>();
 
   private readonly loadingShards = new Map<string, number>();
 
@@ -1017,19 +1029,57 @@ export class SegmentStore implements SegmentLoader {
     for (const shard of splitIndex.shards) {
       splitByShard.set(shard.file, splitIndex);
     }
-    for (const classIndex of classIndices) {
-      if (!splitIndex.shards.some((shard) => shard.classIndex === classIndex)) {
+
+    const indexedShards = new Map(splitIndex.shards.map((shard) => [shard.file, shard] as const));
+    const selectedShards =
+      options.entries === undefined
+        ? splitIndex.shards.filter((shard) => positions.has(shard.classIndex))
+        : [...options.entries];
+    const selectedEntries = new Map<string, RoundEntry>();
+    for (const entry of selectedShards) {
+      const indexed = indexedShards.get(entry.file);
+      if (indexed === undefined) {
         throw new RangeError(
-          `sharded-assets: selected class ${classIndex} has no shard in the ${split} split.`,
+          `sharded-assets: entry "${entry.file}" is not in the ${split} split of the dataset index.`,
+        );
+      }
+      if (
+        indexed.classIndex !== entry.classIndex ||
+        indexed.start !== entry.start ||
+        indexed.count !== entry.count
+      ) {
+        throw new RangeError(
+          `sharded-assets: entry "${entry.file}" does not match the ${split} split of the dataset index.`,
+        );
+      }
+      if (!positions.has(entry.classIndex)) {
+        throw new RangeError(
+          `sharded-assets: entry "${entry.file}" has classIndex ${entry.classIndex}, which is not selected.`,
+        );
+      }
+      if (selectedEntries.has(entry.file)) {
+        throw new RangeError(
+          `sharded-assets: entry "${entry.file}" appears more than once in the selected shards.`,
+        );
+      }
+      selectedEntries.set(entry.file, {
+        file: entry.file,
+        classIndex: entry.classIndex,
+        start: entry.start,
+        count: entry.count,
+      });
+    }
+    for (const classIndex of classIndices) {
+      if (![...selectedEntries.values()].some((entry) => entry.classIndex === classIndex)) {
+        throw new RangeError(
+          `sharded-assets: selected class ${classIndex} has no shard in the selected entries for the ${split} split.`,
         );
       }
     }
 
     let totalCount = 0;
-    for (const shard of splitIndex.shards) {
-      if (positions.has(shard.classIndex)) {
-        totalCount += shard.count;
-      }
+    for (const entry of selectedEntries.values()) {
+      totalCount += entry.count;
     }
     if (totalCount < 1) {
       throw new RangeError('sharded-assets: SegmentStore selected no images.');
@@ -1042,6 +1092,7 @@ export class SegmentStore implements SegmentLoader {
     this.fetchImpl = options.fetchImpl ?? fetch;
     this.classPositions = positions;
     this.splitByShard = splitByShard;
+    this.selectedEntries = selectedEntries;
     this.totalCount = totalCount;
   }
 
@@ -1136,6 +1187,7 @@ export class SegmentStore implements SegmentLoader {
       })
       .finally(() => {
         this.releaseLoading(files);
+        this.discardedRounds.delete(key);
         if (!retained) {
           for (const file of files) {
             if (!this.isNeeded(file)) {
@@ -1166,9 +1218,19 @@ export class SegmentStore implements SegmentLoader {
             `sharded-assets: shard "${entry.file}" is not in the ${this.split} split of the dataset index.`,
           );
         }
-        if (!this.classPositions.has(entry.classIndex)) {
+        const selected = this.selectedEntries.get(entry.file);
+        if (selected === undefined) {
           throw new RangeError(
-            `sharded-assets: shard "${entry.file}" has classIndex ${entry.classIndex}, which is not selected.`,
+            `sharded-assets: shard "${entry.file}" is not in the selected shard set for the ${this.split} split.`,
+          );
+        }
+        if (
+          selected.classIndex !== entry.classIndex ||
+          selected.start !== entry.start ||
+          selected.count !== entry.count
+        ) {
+          throw new RangeError(
+            `sharded-assets: shard "${entry.file}" does not match its selected entry (classIndex ${entry.classIndex}, start ${entry.start}, count ${entry.count}).`,
           );
         }
         splits.set(split.labelsFile, split);
@@ -1272,10 +1334,27 @@ export class SegmentStore implements SegmentLoader {
   /** Décompresse un fragment, retire son en-tête et valide sa longueur. */
   private async decodeShardSource(entry: RoundEntry): Promise<ResidentShard> {
     const url = datasetAssetUrl(this.dataset, entry.file);
-    const downloaded = await this.readBytes(url);
+    const payload = await this.readDecoded(url, (bytes, contentEncoding) =>
+      this.decodeShardPayload(entry, bytes, contentEncoding),
+    );
+    this.useCounter += 1;
+    return {
+      file: entry.file,
+      classIndex: entry.classIndex,
+      payload,
+      lastUsed: this.useCounter,
+    };
+  }
+
+  /** Décode et valide le payload d'un fragment. */
+  private async decodeShardPayload(
+    entry: RoundEntry,
+    bytes: Uint8Array,
+    contentEncoding: string | null,
+  ): Promise<Uint8Array> {
     let decoded: Uint8Array;
     try {
-      decoded = await decodeIdxPayload(downloaded.bytes, downloaded.contentEncoding);
+      decoded = await decodeIdxPayload(bytes, contentEncoding);
     } catch (error) {
       throw new Error(
         `sharded-assets: could not decode shard "${entry.file}". (${(error as Error).message})`,
@@ -1288,13 +1367,7 @@ export class SegmentStore implements SegmentLoader {
         `sharded-assets: shard "${entry.file}" has ${payload.length} image bytes, expected ${expectedBytes}.`,
       );
     }
-    this.useCounter += 1;
-    return {
-      file: entry.file,
-      classIndex: entry.classIndex,
-      payload,
-      lastUsed: this.useCounter,
-    };
+    return payload;
   }
 
   /** Charge et décode les libellés globaux d'une fraction, une seule fois. */
@@ -1318,30 +1391,39 @@ export class SegmentStore implements SegmentLoader {
 
   private async decodeLabels(split: ShardedSplitIndex): Promise<ResidentLabels> {
     const url = datasetAssetUrl(this.dataset, split.labelsFile);
-    const downloaded = await this.readBytes(url);
+    const payload = await this.readDecoded(url, (bytes, contentEncoding) =>
+      this.decodeLabelsPayload(split, bytes, contentEncoding),
+    );
+    const resident = { file: split.labelsFile, payload };
+    this.labels.set(split.labelsFile, resident);
+    return resident;
+  }
+
+  /** Décode et valide le payload d'un fichier de libellés. */
+  private async decodeLabelsPayload(
+    split: ShardedSplitIndex,
+    bytes: Uint8Array,
+    contentEncoding: string | null,
+  ): Promise<Uint8Array> {
     let decoded: Uint8Array;
     try {
-      decoded = await decodeIdxPayload(downloaded.bytes, downloaded.contentEncoding);
+      decoded = await decodeIdxPayload(bytes, contentEncoding);
     } catch (error) {
       throw new Error(
         `sharded-assets: could not decode labels "${split.labelsFile}". (${(error as Error).message})`,
       );
     }
-    const resident = {
-      file: split.labelsFile,
-      payload: labelPayload(decoded, split.labelsFile, split.count),
-    };
-    this.labels.set(split.labelsFile, resident);
-    return resident;
+    return labelPayload(decoded, split.labelsFile, split.count);
   }
 
   /**
-   * Lit un fichier depuis la mémoire, puis le cache Cache API, puis le réseau.
-   * Un échec de cache est ignoré ; un échec réseau rejette la promesse et sera
-   * retenté au prochain appel.
+   * Lit et décode un fichier depuis la mémoire, puis le cache Cache API, puis le
+   * réseau. Un corps qui ne se décode pas n'est jamais mis en cache. Un corps
+   * de cache invalide est supprimé, puis retéléchargé une fois. Un échec réseau
+   * rejette la promesse et sera retenté au prochain appel.
    */
-  private readBytes(url: string): Promise<DownloadedBytes> {
-    const cached = this.memoryBytes.get(url);
+  private readDecoded(url: string, decode: PayloadDecoder): Promise<Uint8Array> {
+    const cached = this.memoryPayloads.get(url);
     if (cached !== undefined) {
       return Promise.resolve(cached);
     }
@@ -1349,7 +1431,7 @@ export class SegmentStore implements SegmentLoader {
     if (pending !== undefined) {
       return pending;
     }
-    const promise = this.download(url).finally(() => {
+    const promise = this.downloadDecoded(url, decode).finally(() => {
       if (this.downloads.get(url) === promise) {
         this.downloads.delete(url);
       }
@@ -1358,27 +1440,40 @@ export class SegmentStore implements SegmentLoader {
     return promise;
   }
 
-  private async download(url: string): Promise<DownloadedBytes> {
+  private async downloadDecoded(url: string, decode: PayloadDecoder): Promise<Uint8Array> {
     const cache = await this.openCache();
     if (cache !== null) {
       try {
         const hit = await cache.match(url);
         if (hit !== undefined) {
-          const payload: DownloadedBytes = {
-            bytes: new Uint8Array(await hit.arrayBuffer()),
-            contentEncoding: hit.headers.get('content-encoding'),
-          };
-          this.memoryBytes.set(url, payload);
-          return payload;
+          try {
+            const decoded = await decode(
+              new Uint8Array(await hit.arrayBuffer()),
+              hit.headers.get('content-encoding'),
+            );
+            this.memoryPayloads.set(url, decoded);
+            return decoded;
+          } catch {
+            // Le corps du cache est invalide : il ne doit pas bloquer un retrait.
+            try {
+              await cache.delete(url);
+            } catch {
+              // Un cache qui refuse la suppression ne doit pas bloquer le réseau.
+            }
+          }
         }
       } catch {
         // Une lecture de cache en échec ne doit pas empêcher le téléchargement.
       }
     }
-    return this.limiter.run(() => this.fetchBytes(url, cache));
+    return this.limiter.run(() => this.fetchDecoded(url, cache, decode));
   }
 
-  private async fetchBytes(url: string, cache: Cache | null): Promise<DownloadedBytes> {
+  private async fetchDecoded(
+    url: string,
+    cache: Cache | null,
+    decode: PayloadDecoder,
+  ): Promise<Uint8Array> {
     let response: Response;
     try {
       response = await this.fetchImpl(url);
@@ -1421,10 +1516,7 @@ export class SegmentStore implements SegmentLoader {
         ),
       );
     }
-    const payload: DownloadedBytes = {
-      bytes,
-      contentEncoding: response.headers.get('content-encoding'),
-    };
+    const decoded = await decode(bytes, response.headers.get('content-encoding'));
     if (cache !== null && copy !== undefined) {
       try {
         await cache.put(url, copy);
@@ -1432,8 +1524,8 @@ export class SegmentStore implements SegmentLoader {
         // Quota dépassé ou cache indisponible : la mémoire reste la seule copie.
       }
     }
-    this.memoryBytes.set(url, payload);
-    return payload;
+    this.memoryPayloads.set(url, decoded);
+    return decoded;
   }
 
   /** Ouvre le cache nommé, ou retourne `null` si Cache API est indisponible. */
@@ -1499,10 +1591,10 @@ export class SegmentStore implements SegmentLoader {
     }
   }
 
-  /** Retire un fragment résident et sa copie compressée en mémoire. */
+  /** Retire un fragment résident et son payload décodé en mémoire. */
   private evictShard(file: string): void {
     this.shards.delete(file);
-    this.memoryBytes.delete(datasetAssetUrl(this.dataset, file));
+    this.memoryPayloads.delete(datasetAssetUrl(this.dataset, file));
   }
 
   /** Vrai si un round résident, préchargé ou en cours utilise ce fragment. */

@@ -847,6 +847,10 @@ class TestCache {
   async put(url: string, response: Response): Promise<void> {
     this.entries.set(url, response.clone());
   }
+
+  async delete(url: string): Promise<boolean> {
+    return this.entries.delete(url);
+  }
 }
 
 class TestCacheStorage {
@@ -968,6 +972,86 @@ describe('SegmentStore', () => {
     expect(round.count).toBe(4);
   });
 
+  it('never caches an undecodable body and retries after the failure', async () => {
+    const fixture = segmentFixture(15, 4);
+    const module = await loadLoader();
+    const index = module.parseIndexJson(JSON.stringify(fixture.json));
+    const ref = segmentRound(index, [0, 1], 0);
+    const failing = ref.entries[0].file;
+    let returnsGarbage = true;
+    const mock = vi.fn(async (input: RequestInfo | URL): Promise<Response> => {
+      const name = String(input).split('/').pop() ?? '';
+      if (returnsGarbage && name === failing) {
+        returnsGarbage = false;
+        return new Response('<html>not an IDX file</html>', { status: 200 });
+      }
+      const body = fixture.assets.get(name);
+      if (body === undefined) {
+        return new Response('missing', { status: 404, statusText: 'Not Found' });
+      }
+      return new Response(body, { status: 200 });
+    });
+    const storage = stubCaches();
+    const cache = await storage.open('test-cache');
+    vi.stubGlobal('fetch', mock);
+    const store = new module.SegmentStore({
+      dataset: SHARDED_DATASET,
+      index,
+      classIndices: [0, 1],
+      cacheName: 'test-cache',
+    });
+
+    const error = await store.loadRound(ref).then(
+      () => {
+        throw new Error('expected the round to fail');
+      },
+      (reason: Error) => reason,
+    );
+    expect(error.message).toContain(failing);
+    expect(cache.entries.has(segmentUrl(failing))).toBe(false);
+
+    const round = await store.loadRound(ref);
+    expect(round.count).toBe(4);
+    expect(cache.entries.has(segmentUrl(failing))).toBe(true);
+    const calls = mock.mock.calls.filter((call) => String(call[0]).endsWith(failing));
+    expect(calls).toHaveLength(2);
+  });
+
+  it('deletes an undecodable cached body and refetches it once', async () => {
+    const fixture = segmentFixture(15, 4);
+    const module = await loadLoader();
+    const index = module.parseIndexJson(JSON.stringify(fixture.json));
+    const ref = segmentRound(index, [0, 1], 0);
+    const failing = ref.entries[0].file;
+    const storage = stubCaches();
+    const cache = await storage.open('test-cache');
+    cache.entries.set(segmentUrl(failing), new Response('<html>bad cache</html>'));
+    const mock = stubFetch(fixture.assets);
+    const store = new module.SegmentStore({
+      dataset: SHARDED_DATASET,
+      index,
+      classIndices: [0, 1],
+      cacheName: 'test-cache',
+    });
+
+    const round = await store.loadRound(ref);
+
+    expect(round.count).toBe(4);
+    expect(cache.entries.has(segmentUrl(failing))).toBe(true);
+    const calls = mock.mock.calls.filter((call) => String(call[0]).endsWith(failing));
+    expect(calls).toHaveLength(1);
+
+    const before = mock.mock.calls.length;
+    const second = new module.SegmentStore({
+      dataset: SHARDED_DATASET,
+      index,
+      classIndices: [0, 1],
+      cacheName: 'test-cache',
+    });
+    await second.loadRound(ref);
+    expect(mock.mock.calls.length).toBe(before);
+  });
+
   it('loads when cache.put rejects with QuotaExceededError', async () => {
     const fixture = segmentFixture(15, 4);
     const storage = stubCaches();
@@ -997,13 +1081,13 @@ describe('SegmentStore', () => {
     expect(round.count).toBe(4);
   });
 
-  it('never keeps more than 60 resident shards with 15 classes and 4 shards each', async () => {
-    const fixture = segmentFixture(15, 4);
+  it('never keeps more than 60 resident shards with 15 classes and 5 shards each', async () => {
+    const fixture = segmentFixture(15, 5);
     stubCaches();
     stubFetch(fixture.assets);
     const { index, store } = await createSegmentStore(fixture, FIFTEEN_CLASSES);
 
-    for (let ordinal = 0; ordinal < 4; ordinal += 1) {
+    for (let ordinal = 0; ordinal < 5; ordinal += 1) {
       await store.loadRound(segmentRound(index, FIFTEEN_CLASSES, ordinal, ordinal));
       expect(store.residentShards).toBeLessThanOrEqual(60);
     }
@@ -1084,6 +1168,67 @@ describe('SegmentStore', () => {
     );
   });
 
+  it('pins the selected shard set and totalCount', async () => {
+    const fixture = segmentFixture(15, 4);
+    stubCaches();
+    stubFetch(fixture.assets);
+    const module = await loadLoader();
+    const index = module.parseIndexJson(JSON.stringify(fixture.json));
+    const candidates = index.splits.train.shards.filter(
+      (shard) => shard.classIndex === 2 || shard.classIndex === 5,
+    );
+    const pinned = candidates.filter((shard) => shard.file.endsWith('-s00.idx.gz'));
+    const store = new module.SegmentStore({
+      dataset: SHARDED_DATASET,
+      index,
+      classIndices: [2, 5],
+      cacheName: 'test-cache',
+      entries: pinned,
+    });
+
+    expect(store.totalCount).toBe(4);
+    const ref: RoundRef = {
+      index: 0,
+      entries: pinned.map(({ file, classIndex, start, count }) => ({
+        file,
+        classIndex,
+        start,
+        count,
+      })),
+    };
+    const round = await store.loadRound(ref);
+    expect(round.count).toBe(4);
+    expect(Array.from(round.labels)).toEqual([0, 0, 1, 1]);
+
+    const outside = candidates.find((shard) => shard.file.endsWith('-s01.idx.gz'));
+    if (outside === undefined) {
+      throw new Error('fixture: expected an unpinned shard');
+    }
+    const outsideError = await store.loadRound({ index: 1, entries: [outside] }).then(
+      () => {
+        throw new Error('expected the unpinned shard to fail');
+      },
+      (reason: Error) => reason,
+    );
+    expect(outsideError.message).toContain(outside.file);
+    expect(outsideError.message).toMatch(/not in the selected shard set/);
+
+    const pinnedEntry = pinned[0];
+    const mismatchError = await store
+      .loadRound({
+        index: 2,
+        entries: [{ ...pinnedEntry, count: pinnedEntry.count + 1 }],
+      })
+      .then(
+        () => {
+          throw new Error('expected the mismatched shard to fail');
+        },
+        (reason: Error) => reason,
+      );
+    expect(mismatchError.message).toContain(pinnedEntry.file);
+    expect(mismatchError.message).toMatch(/does not match its selected entry/);
+  });
+
   it('accepts a labels file that is already remapped', async () => {
     const fixture = segmentFixture(15, 4);
     const module = await loadLoader();
@@ -1141,16 +1286,42 @@ describe('SegmentStore', () => {
     expect(error.message).toMatch(/784 image bytes, expected 1568/);
   });
 
-  it('shares the in-flight prefetch promise with loadRound', async () => {
+  it('waits for an in-flight prefetch without starting a second build', async () => {
     const fixture = segmentFixture(15, 4);
     stubCaches();
-    const mock = stubFetch(fixture.assets);
-    const { index, store } = await createSegmentStore(fixture, [0, 1]);
+    let releaseFetch = (): void => {};
+    const gate = new Promise<void>((resolve) => {
+      releaseFetch = resolve;
+    });
+    const mock = vi.fn(async (input: RequestInfo | URL): Promise<Response> => {
+      await gate;
+      const name = String(input).split('/').pop() ?? '';
+      const body = fixture.assets.get(name);
+      if (body === undefined) {
+        return new Response('missing', { status: 404, statusText: 'Not Found' });
+      }
+      return new Response(body, { status: 200 });
+    });
+    vi.stubGlobal('fetch', mock);
+    const { module, index, store } = await createSegmentStore(fixture, [0, 1]);
     const ref = segmentRound(index, [0, 1], 0);
+    const prototype = module.SegmentStore.prototype as unknown as {
+      buildRound: (round: RoundRef) => Promise<unknown>;
+    };
+    const buildSpy = vi.spyOn(prototype, 'buildRound');
 
     store.prefetchRound(ref);
-    const round = await store.loadRound(ref);
+    const roundPromise = store.loadRound(ref);
 
+    expect(buildSpy).toHaveBeenCalledTimes(1);
+    await vi.waitFor(() => {
+      expect(mock.mock.calls.length).toBe(ref.entries.length);
+    });
+
+    releaseFetch();
+    const round = await roundPromise;
+
+    expect(buildSpy).toHaveBeenCalledTimes(1);
     expect(round.count).toBe(4);
     for (const entry of ref.entries) {
       const calls = mock.mock.calls.filter((call) => String(call[0]).endsWith(entry.file));
