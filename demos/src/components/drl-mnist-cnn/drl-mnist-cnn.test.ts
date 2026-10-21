@@ -396,33 +396,49 @@ describe('galleryClassLabel', () => {
 });
 
 describe('galleryInputSource', () => {
-  it('names the dataset and the plain digit for MNIST', () => {
-    expect(galleryInputSource(getDataset('mnist'), 3)).toBe('Exemple MNIST (3)');
+  it('names the split, the dataset and the plain digit for MNIST', () => {
+    expect(galleryInputSource(getDataset('mnist'), 3, 'test')).toBe(
+      'Galerie de validation · Exemple MNIST (3)',
+    );
+    expect(galleryInputSource(getDataset('mnist'), 3, 'train')).toBe(
+      "Galerie d'entraînement · Exemple MNIST (3)",
+    );
   });
 
   it('names the dataset and the class for named datasets', () => {
-    expect(galleryInputSource(getDataset('fashion-mnist'), 0)).toBe(
-      'Exemple Fashion-MNIST (0 — T-shirt)',
+    expect(galleryInputSource(getDataset('fashion-mnist'), 0, 'test')).toBe(
+      'Galerie de validation · Exemple Fashion-MNIST (0 — T-shirt)',
     );
-    expect(galleryInputSource(getDataset('quickdraw'), 2)).toBe('Exemple QuickDraw (2 — chat)');
+    expect(galleryInputSource(getDataset('quickdraw'), 2, 'test')).toBe(
+      'Galerie de validation · Exemple QuickDraw (2 — chat)',
+    );
+    expect(galleryInputSource(getDataset('quickdraw'), 2, 'train')).toBe(
+      "Galerie d'entraînement · Exemple QuickDraw (2 — chat)",
+    );
   });
 });
 
 describe('galleryInputHint', () => {
-  it('names the dataset and the expected class', () => {
-    expect(galleryInputHint(getDataset('mnist'), 3)).toBe(
-      'Exemple de la galerie MNIST : la classe attendue est « 3 ».',
+  it('names the split, the dataset and the expected class', () => {
+    expect(galleryInputHint(getDataset('mnist'), 3, 'test')).toBe(
+      'Exemple de la galerie de validation MNIST : la classe attendue est « 3 ».',
     );
-    expect(galleryInputHint(getDataset('fashion-mnist'), 0)).toBe(
-      'Exemple de la galerie Fashion-MNIST : la classe attendue est « T-shirt ».',
+    expect(galleryInputHint(getDataset('mnist'), 3, 'train')).toBe(
+      "Exemple de la galerie d'entraînement MNIST : la classe attendue est « 3 ».",
     );
-    expect(galleryInputHint(getDataset('quickdraw'), 2)).toBe(
-      'Exemple de la galerie QuickDraw : la classe attendue est « chat ».',
+    expect(galleryInputHint(getDataset('fashion-mnist'), 0, 'train')).toBe(
+      "Exemple de la galerie d'entraînement Fashion-MNIST : la classe attendue est « T-shirt ».",
+    );
+    expect(galleryInputHint(getDataset('quickdraw'), 2, 'test')).toBe(
+      'Exemple de la galerie de validation QuickDraw : la classe attendue est « chat ».',
+    );
+    expect(galleryInputHint(getDataset('quickdraw'), 2, 'train')).toBe(
+      "Exemple de la galerie d'entraînement QuickDraw : la classe attendue est « chat ».",
     );
   });
 
   it('names the dataset in the drawing prompt when no class is chosen', () => {
-    const hint = galleryInputHint(getDataset('quickdraw'), null);
+    const hint = galleryInputHint(getDataset('quickdraw'), null, 'test');
     expect(hint).toContain('QuickDraw');
     expect(hint).toContain('Dessinez');
   });

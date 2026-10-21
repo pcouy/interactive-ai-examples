@@ -80,6 +80,20 @@ import {
   type RectLike,
 } from './filter-links.js';
 import {
+  FILTER_TABS,
+  type FilterTab,
+  filterTabId,
+  filterTabLabel,
+  filterTabPanelId,
+  nextFilterTab,
+} from './filter-tabs.js';
+import {
+  GALLERY_SPLITS,
+  type GallerySplit,
+  gallerySourceLabel,
+  gallerySplitLabel,
+} from './gallery.js';
+import {
   fetchMnistCnnManifest,
   loadDatasetGallery,
   loadDatasetSplits,
@@ -187,8 +201,9 @@ export {
  * qu'un poids a été édité à la main sans run active.
  * La galerie et les jeux IDX ne sont téléchargés ni à l'affichage ni au
  * chargement : seule la première ouverture du sélecteur d'exemples ou le premier
- * clic sur « Précédent » ou « Suivant » les déclenche. Chaque chiffre propose
- * dix exemples du jeu de test, parcourus avec « Précédent » et « Suivant ».
+ * clic sur « Précédent » ou « Suivant » les déclenche. Chaque classe propose
+ * dix exemples de la fraction choisie — validation par défaut — parcourus avec
+ * « Précédent » et « Suivant ».
  *
  * Éditeur de poids : un clic sur une liaison sélectionne le couple (canal d'entrée,
  * canal de sortie) à une frontière entre couches ; un second clic sur la même
@@ -512,17 +527,25 @@ export function galleryClassLabel(dataset: DatasetDefinition, index: number): st
 }
 
 /** Libellé de la source d'entrée quand l'entrée est un exemple de la galerie. */
-export function galleryInputSource(dataset: DatasetDefinition, index: number): string {
-  return `Exemple ${dataset.name} (${galleryClassLabel(dataset, index)})`;
+export function galleryInputSource(
+  dataset: DatasetDefinition,
+  index: number,
+  split: GallerySplit,
+): string {
+  return `Galerie ${gallerySourceLabel(split)} · Exemple ${dataset.name} (${galleryClassLabel(dataset, index)})`;
 }
 
 /** Texte d'aide sous la surface de dessin pour le jeu courant. */
-export function galleryInputHint(dataset: DatasetDefinition, classIndex: number | null): string {
+export function galleryInputHint(
+  dataset: DatasetDefinition,
+  classIndex: number | null,
+  split: GallerySplit,
+): string {
   if (classIndex === null) {
     return `Dessinez une entrée à la souris ou au doigt, ou choisissez un exemple de ${dataset.name} ; l'inférence se met à jour pendant le tracé.`;
   }
   const name = dataset.classNames[classIndex] ?? String(classIndex);
-  return `Exemple de la galerie ${dataset.name} : la classe attendue est « ${name} ».`;
+  return `Exemple de la galerie ${gallerySourceLabel(split)} ${dataset.name} : la classe attendue est « ${name} ».`;
 }
 
 /**
@@ -981,6 +1004,84 @@ export class MnistCnn extends LitElement {
         font-size: 0.85em;
       }
 
+      /* Onglets du panneau latéral : une rangée qui défile plutôt que de
+         casser la mise en page quand les libellés sont longs. */
+      .drl-tabs {
+        display: flex;
+        gap: var(--drl-space-1);
+        border-bottom: 1px solid var(--drl-border);
+        overflow-x: auto;
+      }
+
+      .drl-tab {
+        flex: none;
+        font: inherit;
+        padding: var(--drl-space-1) var(--drl-space-2);
+        background: none;
+        border: none;
+        border-bottom: 2px solid transparent;
+        color: var(--drl-muted);
+        cursor: pointer;
+        white-space: nowrap;
+      }
+
+      .drl-tab:hover {
+        color: var(--drl-fg);
+      }
+
+      .drl-tab[aria-selected='true'] {
+        color: var(--drl-fg);
+        border-bottom-color: var(--drl-accent);
+      }
+
+      .drl-tab:focus-visible {
+        outline: 2px solid var(--drl-accent);
+        outline-offset: 2px;
+      }
+
+      .drl-tabpanel {
+        display: grid;
+        gap: var(--drl-space-2);
+        align-content: start;
+      }
+
+      /* Le panneau masqué doit sortir du flux et du focus : la grille ci-dessus
+         écraserait sinon l'attribut hidden du navigateur. */
+      .drl-tabpanel[hidden] {
+        display: none;
+      }
+
+      .drl-source-field {
+        margin: 0;
+        padding: var(--drl-space-2);
+        border: 1px solid var(--drl-border);
+        border-radius: calc(var(--drl-radius) / 2);
+        background: var(--drl-bg);
+      }
+
+      .drl-source-field legend {
+        padding: 0 var(--drl-space-1);
+        color: var(--drl-muted);
+        font-size: 0.85em;
+      }
+
+      .drl-source-options {
+        display: flex;
+        flex-wrap: wrap;
+        gap: var(--drl-space-2);
+      }
+
+      .drl-source-option {
+        display: flex;
+        align-items: center;
+        gap: var(--drl-space-1);
+        font-size: 0.85em;
+      }
+
+      .drl-example-class {
+        max-width: 16rem;
+      }
+
       canvas.drl-canvas {
         display: block;
         background: var(--drl-surface);
@@ -994,6 +1095,12 @@ export class MnistCnn extends LitElement {
         height: auto;
         cursor: crosshair;
         touch-action: none;
+      }
+
+      /* Toile de l'onglet « Exemples » : plus compacte que la surface
+         principale, même geste de dessin. */
+      .drl-canvas--example {
+        max-width: 220px;
       }
 
       .drl-canvas--filter {
@@ -1532,6 +1639,10 @@ export class MnistCnn extends LitElement {
   @state()
   private filterCounts: MnistCnnFilters = DEFAULT_FILTER_COUNTS;
 
+  /** Onglet actif du panneau latéral : filtres ou exemples. */
+  @state()
+  private filterTab: FilterTab = 'filters';
+
   @state()
   private convLayers = DEFAULT_CONV_LAYERS;
 
@@ -1601,9 +1712,13 @@ export class MnistCnn extends LitElement {
   @state()
   private manifestError: string | null = null;
 
-  /** Galerie de dix exemples par chiffre, extraits du jeu de test (vide avant la fin du chargement). */
+  /** Galerie de dix exemples par classe, extraits de la fraction choisie (vide avant le chargement). */
   @state()
   private gallerySample: MnistSample | null = null;
+
+  /** Fraction du jeu affichée par la galerie : validation par défaut. */
+  @state()
+  private gallerySplit: GallerySplit = 'test';
 
   /** Chiffre affiché par la galerie, ou null avant le premier chargement. */
   @state()
@@ -1772,6 +1887,11 @@ export class MnistCnn extends LitElement {
         return null;
       }
       const index = this.shardedIndex ?? (await loadShardedIndex(dataset));
+      // Un changement de jeu pendant le téléchargement rend cet index obsolète :
+      // le nouveau jeu porte son propre index.
+      if (dataset !== this.currentDataset) {
+        return null;
+      }
       this.shardedIndex = index;
       return this.buildSegmentRun(dataset, index);
     },
@@ -1907,7 +2027,7 @@ export class MnistCnn extends LitElement {
   }
 
   private get inputHint(): string {
-    return galleryInputHint(this.currentDataset, this.galleryLabel);
+    return galleryInputHint(this.currentDataset, this.galleryLabel, this.gallerySplit);
   }
 
   /** Nombre d'exemples proposés par classe dans la galerie chargée. */
@@ -1997,7 +2117,7 @@ export class MnistCnn extends LitElement {
     }
     this.inputPixels.set(pixels);
     this.galleryLabel = classIndex;
-    this.inputSource = galleryInputSource(this.currentDataset, classIndex);
+    this.inputSource = galleryInputSource(this.currentDataset, classIndex, this.gallerySplit);
     this.runInference();
   }
 
@@ -2138,7 +2258,7 @@ export class MnistCnn extends LitElement {
    * sélecteur avec l'option de recharger et un message : l'inférence reste
    * utilisable.
    */
-  private async loadGallery(): Promise<void> {
+  private async loadGallery(split: GallerySplit = this.gallerySplit): Promise<void> {
     if (this.galleryLoading) {
       return;
     }
@@ -2156,7 +2276,7 @@ export class MnistCnn extends LitElement {
           return;
         }
         this.shardedIndex = shardedIndex;
-        gallerySample = await loadShardedGallery(dataset);
+        gallerySample = await loadShardedGallery(dataset, split);
       } else {
         const splits = await loadDatasetSplits(dataset);
         // Un changement de jeu a pris un jeton plus récent : cet ancien
@@ -2165,12 +2285,13 @@ export class MnistCnn extends LitElement {
           return;
         }
         this.splits = splits;
-        gallerySample = await loadDatasetGallery(dataset);
+        gallerySample = await loadDatasetGallery(dataset, split);
       }
       if (token !== this.galleryLoadToken) {
         return;
       }
       this.gallerySample = gallerySample;
+      this.gallerySplit = split;
       this.galleryClass = nextGalleryClass(this.galleryClassIndices, this.galleryClass);
       this.galleryIndex = 0;
       this.galleryError = null;
@@ -2599,6 +2720,8 @@ export class MnistCnn extends LitElement {
     this.galleryClass = null;
     this.galleryLabel = null;
     this.galleryIndex = 0;
+    this.filterTab = 'filters';
+    this.gallerySplit = 'test';
     this.galleryError = null;
     this.trainPercent = dataset.defaultTrainPercent;
     this.validationPercent = dataset.defaultValidationPercent;
@@ -2717,6 +2840,35 @@ export class MnistCnn extends LitElement {
     this.batchSize = size;
   }
 
+  /**
+   * Change la fraction affichée par la galerie. La classe courante reste
+   * affichée quand elle existe dans la nouvelle galerie ; l'index repart au
+   * premier exemple. Un chargement en vol vise l'ancienne fraction : un jeton
+   * neuf le périme pour que sa réponse tardive ne gagne pas.
+   */
+  private setGallerySplit(split: GallerySplit): void {
+    if (split === this.gallerySplit) {
+      return;
+    }
+    this.gallerySplit = split;
+    this.galleryIndex = 0;
+    this.galleryError = null;
+    this.galleryLoadToken += 1;
+    this.galleryLoading = false;
+    void this.loadGallery(split);
+  }
+
+  /** Change la fraction de la galerie depuis les boutons radio de source. */
+  private readonly handleGallerySplitChange = (event: Event): void => {
+    const target = event.currentTarget;
+    if (!(target instanceof HTMLInputElement) || !target.checked) {
+      return;
+    }
+    if (target.value === 'train' || target.value === 'test') {
+      this.setGallerySplit(target.value);
+    }
+  };
+
   /** Applique le chiffre choisi et remet la position au premier exemple. */
   private readonly handleGallerySelect = (event: Event): void => {
     const target = event.currentTarget;
@@ -2770,6 +2922,38 @@ export class MnistCnn extends LitElement {
     }
   };
 
+  /**
+   * Affiche l'onglet demandé. Le panneau masqué n'est plus rendu dans la mise
+   * en page : les toiles sont redessinées après la mise à jour, et le panneau
+   * des filtres repositionne ses liaisons.
+   */
+  private setFilterTab(tab: FilterTab): void {
+    if (tab === this.filterTab) {
+      return;
+    }
+    this.filterTab = tab;
+    this.canvasesDirty = true;
+    void this.updateComplete.then(() => {
+      this.renderRoot.querySelector<HTMLButtonElement>(`#${filterTabId(tab)}`)?.focus();
+      if (tab === 'filters') {
+        this.positionFilterLinks();
+      }
+    });
+  }
+
+  /** Navigation clavier du tablist : flèches, Home et End. */
+  private readonly handleFilterTabKeyDown = (event: KeyboardEvent): void => {
+    const next = nextFilterTab(this.filterTab, event.key);
+    if (next === null) {
+      return;
+    }
+    event.preventDefault();
+    this.setFilterTab(next);
+    void this.updateComplete.then(() => {
+      this.renderRoot.querySelector<HTMLButtonElement>(`#${filterTabId(next)}`)?.focus();
+    });
+  };
+
   protected override updated(): void {
     if (this.canvasesDirty) {
       this.canvasesDirty = false;
@@ -2819,6 +3003,10 @@ export class MnistCnn extends LitElement {
     if (!cell) {
       return;
     }
+    // Le tracé remplace l'exemple de la galerie : la classe attendue n'a plus
+    // de sens, l'entrée redevient un dessin.
+    this.galleryLabel = null;
+    this.inputSource = 'Dessin';
     paintDisc(this.inputPixels, cell[0], cell[1]);
     this.runInference();
   }
@@ -3039,20 +3227,26 @@ export class MnistCnn extends LitElement {
   }
 
   private drawCanvases(): void {
-    this.drawInputCanvas(
-      this.renderRoot.querySelector<HTMLCanvasElement>('canvas.drl-canvas--input'),
-    );
+    for (const canvas of Array.from(
+      this.renderRoot.querySelectorAll<HTMLCanvasElement>('canvas.drl-canvas--input'),
+    )) {
+      this.drawInputCanvas(canvas);
+    }
     const result = this.result;
     if (!result) {
       return;
     }
-    for (const canvas of Array.from(
-      this.renderRoot.querySelectorAll<HTMLCanvasElement>('canvas.drl-canvas--filter'),
-    )) {
-      const layer = Number(canvas.dataset.layer);
-      const channel = Number(canvas.dataset.channel);
-      if (Number.isInteger(layer) && Number.isInteger(channel)) {
-        this.drawFilterCanvas(canvas, layer, channel);
+    // Le panneau des filtres masqué n'a pas de taille : ses toiles et ses
+    // liaisons sont redessinées au retour sur l'onglet.
+    if (this.filterTab === 'filters') {
+      for (const canvas of Array.from(
+        this.renderRoot.querySelectorAll<HTMLCanvasElement>('canvas.drl-canvas--filter'),
+      )) {
+        const layer = Number(canvas.dataset.layer);
+        const channel = Number(canvas.dataset.channel);
+        if (Number.isInteger(layer) && Number.isInteger(channel)) {
+          this.drawFilterCanvas(canvas, layer, channel);
+        }
       }
     }
     for (const canvas of Array.from(
@@ -3065,7 +3259,9 @@ export class MnistCnn extends LitElement {
         this.drawFeatureMapCanvas(canvas, featureMap, channel);
       }
     }
-    this.positionFilterLinks();
+    if (this.filterTab === 'filters') {
+      this.positionFilterLinks();
+    }
   }
 
   private drawInputCanvas(canvas: HTMLCanvasElement | null): void {
@@ -3540,11 +3736,6 @@ export class MnistCnn extends LitElement {
                         )
                 }
               </select>
-              ${
-                this.galleryError !== null
-                  ? html`<p class="drl-hint">Galerie indisponible : ${this.galleryError}</p>`
-                  : nothing
-              }
             </div>
             <div
               class="drl-toolbar"
@@ -3831,48 +4022,178 @@ export class MnistCnn extends LitElement {
 
       <div class="drl-panels-row">
         <section class="drl-panel drl-panel--filters" aria-label="Filtres de convolution">
-          <h4 class="drl-panel-title">Filtres de convolution 3×3</h4>
-          <p class="drl-panel-subtitle">${filterPanelSubtitle(this.selection)}</p>
-          ${this.renderWeightEditor()}
-          ${
-            this.convLayers === 0
-              ? html`<p class="drl-hint">Aucune couche de convolution : l'entrée 28×28 est aplatie vers les couches denses.</p>`
-              : result
-                ? repeat(
-                    Array.from({ length: this.convLayers }, (_, layer) => layer),
-                    (name) => name,
-                    (_name, layer) => html`
-                    <div class="drl-layer-block">
-                      <h5 class="drl-layer-title">${convLayerName(layer)} — ${this.filterCounts[layer]} canal(aux)</h5>
-                      <div class="drl-cells-grid">
-                        ${repeat(
-                          Array.from({ length: this.filterCounts[layer] }, (_, channel) => channel),
-                          (channel) => channel,
-                          (channel) => html`
-                            <figure class="drl-cell">
-                              <canvas
-                                class="drl-canvas drl-canvas--filter"
-                                data-layer=${layer}
-                                data-channel=${channel}
-                                width=${FILTER_CANVAS_SIZE}
-                                height=${FILTER_CANVAS_SIZE}
-                                role="img"
-                                aria-label=${`Filtre ${convLayerName(layer)}, canal de sortie ${channel + 1}, biais ${formatValue(this.filterBias(layer, channel), 3)}`}
-                                @pointerdown=${this.handleFilterCellClick}
-                              ></canvas>
-                              <figcaption>
-                                ${filterBiasCaption(channel, this.filterBias(layer, channel))}
-                              </figcaption>
-                            </figure>
-                          `,
-                        )}
+          <div class="drl-tabs" role="tablist" aria-label="Filtres de convolution et exemples">
+            ${FILTER_TABS.map(
+              (tab) => html`
+                <button
+                  class="drl-tab"
+                  id=${filterTabId(tab)}
+                  role="tab"
+                  aria-selected=${this.filterTab === tab}
+                  aria-controls=${filterTabPanelId(tab)}
+                  tabindex=${this.filterTab === tab ? 0 : -1}
+                  @click=${() => this.setFilterTab(tab)}
+                  @keydown=${this.handleFilterTabKeyDown}
+                >
+                  ${filterTabLabel(tab)}
+                </button>
+              `,
+            )}
+          </div>
+
+          <div
+            class="drl-tabpanel"
+            id=${filterTabPanelId('filters')}
+            role="tabpanel"
+            aria-labelledby=${filterTabId('filters')}
+            ?hidden=${this.filterTab !== 'filters'}
+          >
+            <h4 class="drl-panel-title">Filtres de convolution 3×3</h4>
+            <p class="drl-panel-subtitle">${filterPanelSubtitle(this.selection)}</p>
+            ${this.renderWeightEditor()}
+            ${
+              this.convLayers === 0
+                ? html`<p class="drl-hint">Aucune couche de convolution : l'entrée 28×28 est aplatie vers les couches denses.</p>`
+                : result
+                  ? repeat(
+                      Array.from({ length: this.convLayers }, (_, layer) => layer),
+                      (name) => name,
+                      (_name, layer) => html`
+                      <div class="drl-layer-block">
+                        <h5 class="drl-layer-title">${convLayerName(layer)} — ${this.filterCounts[layer]} canal(aux)</h5>
+                        <div class="drl-cells-grid">
+                          ${repeat(
+                            Array.from(
+                              { length: this.filterCounts[layer] },
+                              (_, channel) => channel,
+                            ),
+                            (channel) => channel,
+                            (channel) => html`
+                              <figure class="drl-cell">
+                                <canvas
+                                  class="drl-canvas drl-canvas--filter"
+                                  data-layer=${layer}
+                                  data-channel=${channel}
+                                  width=${FILTER_CANVAS_SIZE}
+                                  height=${FILTER_CANVAS_SIZE}
+                                  role="img"
+                                  aria-label=${`Filtre ${convLayerName(layer)}, canal de sortie ${channel + 1}, biais ${formatValue(this.filterBias(layer, channel), 3)}`}
+                                  @pointerdown=${this.handleFilterCellClick}
+                                ></canvas>
+                                <figcaption>
+                                  ${filterBiasCaption(channel, this.filterBias(layer, channel))}
+                                </figcaption>
+                              </figure>
+                            `,
+                          )}
+                        </div>
                       </div>
-                    </div>
+                    `,
+                    )
+                  : html`<p class="drl-hint">En attente du premier passage avant.</p>`
+            }
+            ${this.renderFilterLinks()}
+          </div>
+
+          <div
+            class="drl-tabpanel drl-examples"
+            id=${filterTabPanelId('examples')}
+            role="tabpanel"
+            aria-labelledby=${filterTabId('examples')}
+            ?hidden=${this.filterTab !== 'examples'}
+          >
+            <canvas
+              class="drl-canvas drl-canvas--input drl-canvas--example"
+              width=${INPUT_CANVAS_SIZE}
+              height=${INPUT_CANVAS_SIZE}
+              role="img"
+              aria-label="Exemple de la galerie, surface de dessin 28 par 28 pixels"
+              @pointerdown=${this.onDrawPointerDown}
+              @pointermove=${this.onDrawPointerMove}
+              @pointerup=${this.onDrawPointerUp}
+              @pointercancel=${this.onDrawPointerUp}
+            ></canvas>
+            <p class="drl-hint">${this.inputHint}</p>
+            <fieldset class="drl-source-field">
+              <legend>Source des exemples</legend>
+              <div class="drl-source-options">
+                ${GALLERY_SPLITS.map(
+                  (split) => html`
+                    <label class="drl-source-option">
+                      <input
+                        type="radio"
+                        name="drl-mnist-cnn-gallery-split"
+                        value=${split}
+                        .checked=${this.gallerySplit === split}
+                        @change=${this.handleGallerySplitChange}
+                      />
+                      ${gallerySplitLabel(split)}
+                    </label>
                   `,
-                  )
-                : html`<p class="drl-hint">En attente du premier passage avant.</p>`
-          }
-          ${this.renderFilterLinks()}
+                )}
+              </div>
+            </fieldset>
+            <div class="drl-field drl-example-class">
+              <label class="drl-field-label" for="drl-mnist-cnn-sample-tab"
+                >Exemple ${this.currentDataset.name} (onglet Exemples)</label
+              >
+              <select
+                id="drl-mnist-cnn-sample-tab"
+                aria-label="Choisir un exemple de ${this.currentDataset.name} dans l'onglet Exemples"
+                @click=${this.handleSampleSelectorOpen}
+                @change=${this.handleGallerySelect}
+              >
+                ${
+                  this.galleryLoading
+                    ? html`<option>Chargement de la galerie…</option>`
+                    : this.gallerySample === null
+                      ? html`<option value="">Charger la galerie…</option>`
+                      : repeat(
+                          this.galleryClassIndices,
+                          (index) => index,
+                          (index) =>
+                            html`<option value=${index} ?selected=${index === this.galleryClass}>
+                              ${galleryClassLabel(this.currentDataset, index)}
+                            </option>`,
+                        )
+                }
+              </select>
+            </div>
+            ${
+              this.galleryError !== null
+                ? html`<p class="drl-hint" role="alert">
+                    Galerie indisponible : ${this.galleryError}
+                  </p>`
+                : this.gallerySample === null && !this.galleryLoading
+                  ? html`<p class="drl-hint">
+                      Choisissez « Charger la galerie… » dans la liste pour afficher des exemples.
+                    </p>`
+                  : nothing
+            }
+            <div
+              class="drl-toolbar"
+              role="group"
+              aria-label="Parcourir les exemples de la galerie"
+            >
+              <button
+                type="button"
+                class="drl-button"
+                ?disabled=${this.galleryLoading}
+                @click=${this.handleGalleryPrevious}
+              >
+                ← Précédent
+              </button>
+              <span class="drl-gallery-counter">${this.galleryCounterText}</span>
+              <button
+                type="button"
+                class="drl-button"
+                ?disabled=${this.galleryLoading}
+                @click=${this.handleGalleryNext}
+              >
+                Suivant →
+              </button>
+            </div>
+          </div>
         </section>
 
         <section class="drl-panel" aria-label="Cartes de caractéristiques">
