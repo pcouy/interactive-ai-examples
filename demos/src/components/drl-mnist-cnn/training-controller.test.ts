@@ -119,7 +119,7 @@ function makeProgress(status: MnistTrainingStatus): MnistTrainingProgress {
 class FakeTrainer {
   appliedWeights: MnistCnnWeights[] = [];
   trainOptions: unknown[] = [];
-  segmentedOptions: unknown[] = [];
+  lastSegmentedOptions: unknown | null = null;
   cancelCount = 0;
   disposeCount = 0;
   disposed = false;
@@ -154,7 +154,7 @@ class FakeTrainer {
   }
 
   async trainSegmented(options: unknown): Promise<MnistTrainingProgress> {
-    this.segmentedOptions.push(options);
+    this.lastSegmentedOptions = options;
     if (this.trainError !== null) {
       throw this.trainError;
     }
@@ -204,6 +204,8 @@ class FakePorts implements MnistTrainingPorts {
   trainers: FakeTrainer[] = [];
   /** Résultat de `selectIndices` (et therefore des effectifs rapportés). */
   selectIndicesResult: Uint32Array = new Uint32Array(10);
+  /** Nombre d'appels à `loadSplits`. */
+  loadSplitsCalls = 0;
   /** Erreur levée par `loadSplits`. */
   loadSplitsError: Error | null = null;
   /** Configuration du prochain entraîneur créé. */
@@ -235,6 +237,7 @@ class FakePorts implements MnistTrainingPorts {
   }
 
   async loadSplits(): Promise<MnistSplits> {
+    this.loadSplitsCalls += 1;
     if (this.loadSplitsError !== null) {
       throw this.loadSplitsError;
     }
@@ -438,9 +441,10 @@ describe('MnistTrainingController segmented runs', () => {
     ports.segmentedRun = segmented;
     await controller.startRun(makeRequest({ epochs: 3 }));
     expect(ports.loadSegmentsCalls).toHaveLength(1);
+    expect(ports.loadSplitsCalls).toBe(0);
     expect(ports.selectIndicesCalls).toHaveLength(0);
     expect(ports.trainers[0].trainOptions).toHaveLength(0);
-    const options = ports.trainers[0].segmentedOptions[0] as {
+    const options = ports.trainers[0].lastSegmentedOptions as {
       trainPlan: SegmentPlan;
       trainLoader: SegmentLoader;
       validation?: MnistSample;
@@ -464,7 +468,8 @@ describe('MnistTrainingController segmented runs', () => {
     expect(ports.loadSegmentsCalls).toHaveLength(1);
     expect(ports.selectIndicesCalls).toHaveLength(2);
     expect(ports.trainers[0].trainOptions).toHaveLength(1);
-    expect(ports.trainers[0].segmentedOptions).toHaveLength(0);
+    expect(ports.trainers[0].lastSegmentedOptions).toBeNull();
+    expect(ports.loadSplitsCalls).toBe(1);
   });
 
   it('uses request.segmented without calling the loadSegments port', async () => {
@@ -474,7 +479,7 @@ describe('MnistTrainingController segmented runs', () => {
     ports.segmentedRun = makeSegmentedRun(999);
     await controller.startRun(makeRequest({ segmented: requested }));
     expect(ports.loadSegmentsCalls).toHaveLength(0);
-    expect(ports.trainers[0].segmentedOptions).toHaveLength(1);
+    expect(ports.trainers[0].lastSegmentedOptions).not.toBeNull();
     expect(ports.countsChanges).toEqual([[84, 12]]);
   });
 
@@ -489,6 +494,25 @@ describe('MnistTrainingController segmented runs', () => {
     };
     await controller.startRun(makeRequest());
     expect(ports.countsChanges).toEqual([[120, 42]]);
+  });
+
+  it('forwards the validation plan and loader to trainSegmented', async () => {
+    const ports = new FakePorts();
+    const controller = new MnistTrainingController(ports);
+    const validationPlan = makeSegmentPlan(42);
+    const validationLoader = makeSegmentLoader(42);
+    ports.segmentedRun = {
+      ...makeSegmentedRun(120),
+      validationPlan,
+      validationLoader,
+    };
+    await controller.startRun(makeRequest());
+    const options = ports.trainers[0].lastSegmentedOptions as {
+      validationPlan?: SegmentPlan;
+      validationLoader?: SegmentLoader;
+    };
+    expect(options.validationPlan).toBe(validationPlan);
+    expect(options.validationLoader).toBe(validationLoader);
   });
 
   it('does not report an error when the run is cancelled during loadSegments', async () => {

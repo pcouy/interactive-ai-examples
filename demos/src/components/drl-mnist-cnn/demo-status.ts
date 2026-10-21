@@ -142,6 +142,9 @@ export function statusLine(input: DemoStatusInput): string {
   ) {
     parts.push(`round ${input.roundIndex}/${input.roundsPerEpoch}`);
   }
+  if (input.completedRounds !== null && input.completedRounds !== undefined) {
+    parts.push(`rounds ${input.completedRounds}`);
+  }
   if (input.windowShards !== null && input.windowShards !== undefined) {
     parts.push(`fenêtre ${input.windowShards} fragments`);
   }
