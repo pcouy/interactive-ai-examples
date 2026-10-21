@@ -216,7 +216,7 @@ exporte deux objets :
 | `fg` | Texte principal | `#0f172a` | `#e2e8f0` |
 | `muted` | Texte secondaire, légendes | `#64748b` | `#94a3b8` |
 | `accent` | Accent principal : sélection, données positives | `#2563eb` | `#60a5fa` |
-| `accent-2` | Second accent : cible opposée, données négatives | `#7c3aed` | `#a78bfa` |
+| `accent-2` | Second accent : cible opposée, données négatives | `#c81e3a` | `#fb7185` |
 | `arrow` | Flèches et repères directionnels | `#d32f2f` | `#f87171` |
 | `border` | Bordures et séparateurs | `#e2e8f0` | `#1e293b` |
 | `fg-2` | Texte secondaire contrasté | `#334155` | `#cbd5e1` |
@@ -255,7 +255,7 @@ Thème clair :
   --drl-theme-fg: #0f172a;
   --drl-theme-muted: #64748b;
   --drl-theme-accent: #2563eb;
-  --drl-theme-accent-2: #7c3aed;
+  --drl-theme-accent-2: #c81e3a;
   --drl-theme-arrow: #d32f2f;
   --drl-theme-border: #e2e8f0;
   --drl-theme-fg-2: #334155;
@@ -275,7 +275,7 @@ Thème sombre :
   --drl-theme-fg: #e2e8f0;
   --drl-theme-muted: #94a3b8;
   --drl-theme-accent: #60a5fa;
-  --drl-theme-accent-2: #a78bfa;
+  --drl-theme-accent-2: #fb7185;
   --drl-theme-arrow: #f87171;
   --drl-theme-border: #1e293b;
   --drl-theme-fg-2: #cbd5e1;

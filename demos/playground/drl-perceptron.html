@@ -83,7 +83,7 @@
           <p class="formula-label">Avec les variables</p>
           <p class="formula-expression">w₁·x₁ + w₂·x₂ = y</p>
           <p class="formula-rule">y ≥ seuil ⇒ décision 1 (classe bleue)</p>
-          <p class="formula-rule">y &lt; seuil ⇒ décision 2 (classe violette)</p>
+          <p class="formula-rule">y &lt; seuil ⇒ décision 2 (classe rouge)</p>
 
           <p class="formula-label">Avec les valeurs courantes</p>
           <p class="formula-expression" id="formula-substituted">…</p>
@@ -161,9 +161,9 @@
           `${formatProduct(state.w2, state.x2, false)}`;
         const relation = state.y >= state.threshold ? '≥' : '<';
         const decision =
-          state.decision === 1 ? 'décision 1 (classe bleue)' : 'décision 2 (classe violette)';
+          state.decision === 1 ? 'décision 1 (classe bleue)' : 'décision 2 (classe rouge)';
         const expected =
-          state.expected === 1 ? 'décision 1 (classe bleue)' : 'décision 2 (classe violette)';
+          state.expected === 1 ? 'décision 1 (classe bleue)' : 'décision 2 (classe rouge)';
         const isError = state.expected !== null && state.expected !== state.decision;
         formulaSample.textContent =
           `${substitution} = ${formatValue(state.y)} ${relation} ` +

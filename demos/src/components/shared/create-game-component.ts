@@ -1673,7 +1673,7 @@ export const TIC_TAC_TOE_GAME_CONFIG: GameComponentConfig<TicTacToeState, TicTac
 export const CONNECT4_GAME_CONFIG: GameComponentConfig<Connect4State, Connect4Move> = {
   game: connect4,
   title: 'Puissance 4',
-  playerNames: ['Bleus', 'Violets'],
+  playerNames: ['Bleus', 'Rouges'],
   defaultDepth: 4,
   defaultCellSize: 48,
   pieceStyle: 'discs',

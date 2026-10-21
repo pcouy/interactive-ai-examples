@@ -468,7 +468,7 @@ export function describeLinkLabel(
  * le signale, sinon l'affichage contredirait le sous-titre.
  */
 export function filterPanelSubtitle(selection: WeightSelection): string {
-  const mean = `Moyenne des canaux d'entrée pour chaque canal de sortie ; bleu = positif, violet = négatif.`;
+  const mean = `Moyenne des canaux d'entrée pour chaque canal de sortie ; bleu = positif, rouge = négatif.`;
   return selection === null
     ? mean
     : `${mean} La toile du couple sélectionné montre le noyau 3×3 exact.`;

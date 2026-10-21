@@ -91,7 +91,7 @@ function formatCoord(value: number | undefined): string {
 }
 
 function classLabel(label: 0 | 1): string {
-  return label === 1 ? 'classe bleue' : 'classe violette';
+  return label === 1 ? 'classe bleue' : 'classe rouge';
 }
 
 function weightWidth(weight: number): number {
@@ -875,7 +875,7 @@ export class Perceptron extends DemoElement {
           aria-pressed=${this.activeClass === 0 ? 'true' : 'false'}
           @click=${this.handleClassClick}
         >
-          <span class="drl-dot drl-dot--0" aria-hidden="true"></span>Classe violette
+          <span class="drl-dot drl-dot--0" aria-hidden="true"></span>Classe rouge
         </button>
         <button type="button" class="drl-button" @click=${this.handleClear}>Effacer</button>
       </div>
