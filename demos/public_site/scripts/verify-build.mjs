@@ -20,6 +20,7 @@ const REQUIRED_FILES = [
   'index.html',
   'deep-blue.html',
   'frozen-lake.html',
+  'favicon.svg',
   'demo/drl-demos.js',
   'demo/drl-three.js',
   'demo/drl-index.js',

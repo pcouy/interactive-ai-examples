@@ -50,6 +50,7 @@ const PAGES = [
 ];
 
 const ASSETS = [
+  { path: `${PREFIX}favicon.svg`, type: 'image/svg+xml' },
   { path: `${PREFIX}demo/drl-demos.js`, type: 'text/javascript' },
   { path: `${PREFIX}demo/drl-three.js`, type: 'text/javascript' },
   { path: `${PREFIX}demo/drl-index.js`, type: 'text/javascript' },
