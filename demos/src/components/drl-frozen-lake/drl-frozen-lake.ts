@@ -1,12 +1,18 @@
 import type { BaseType, Selection } from 'd3';
 import { select } from 'd3';
 import type { PropertyValues, TemplateResult } from 'lit';
-import { css, html, nothing } from 'lit';
+import { css, html } from 'lit';
 import { customElement, property } from 'lit/decorators.js';
 import { DemoElement } from '../../base/demo-element.js';
-import type { FrozenLakeAction, FrozenLakeSize } from '../../core/frozen-lake.js';
-import { FROZEN_LAKE_ACTIONS, FrozenLakeCore } from '../../core/frozen-lake.js';
+import type { FineStepPhase, FrozenLakeAction, FrozenLakeSize } from '../../core/frozen-lake.js';
+import { FINE_STEP_PHASES, FROZEN_LAKE_ACTIONS, FrozenLakeCore } from '../../core/frozen-lake.js';
 import { drlTokens } from '../../styles/tokens.js';
+import {
+  ACTION_GLYPHS,
+  FROZEN_LAKE_REPLAY_EVENT,
+  type FrozenLakeReplayState,
+  updateView,
+} from './frozen-lake-ui.js';
 
 const GRID_SIZE = 480;
 const CURVE_WIDTH = 480;
@@ -24,12 +30,14 @@ const ACTION_ROTATION: Record<FrozenLakeAction, number> = {
   up: 270,
 };
 
-const ACTION_GLYPHS: Record<FrozenLakeAction, string> = {
-  left: '←',
-  down: '↓',
-  right: '→',
-  up: '↑',
+const PHASE_LABELS: Record<FineStepPhase, string> = {
+  observe: 'Observation',
+  act: 'Action',
+  transition: 'Transition',
 };
+
+// Shown for a schematic field that has no value yet.
+const EMPTY_VALUE = '—';
 
 type SingleSelection<ElementType extends BaseType> = Selection<
   ElementType,
@@ -200,37 +208,234 @@ export class FrozenLake extends DemoElement {
         stroke-width: 2;
       }
 
-      .drl-replay {
-        margin-bottom: var(--drl-space-2);
+      .drl-layout {
+        display: grid;
+        grid-template-columns: minmax(0, 1fr) minmax(0, 22rem);
+        gap: var(--drl-space-3);
+        align-items: start;
       }
 
-      .drl-replay-header {
-        margin: 0 0 var(--drl-space-1);
+      @media (max-width: 900px) {
+        .drl-layout {
+          grid-template-columns: minmax(0, 1fr);
+        }
+      }
+
+      .drl-main,
+      .drl-side {
+        min-width: 0;
+      }
+
+      .drl-side {
+        display: grid;
+        gap: var(--drl-space-3);
+      }
+
+      .drl-panel {
+        min-width: 0;
+        padding: var(--drl-space-3);
+        background: var(--drl-surface);
+        border: 1px solid var(--drl-border);
+        border-radius: var(--drl-radius);
+      }
+
+      .drl-panel-title {
+        margin: 0 0 var(--drl-space-2);
+        font-size: 1em;
+      }
+
+      .drl-panel-text {
+        margin: 0 0 var(--drl-space-2);
         color: var(--drl-muted);
+        font-size: 0.9em;
+      }
+
+      .drl-panel-note {
+        margin: var(--drl-space-2) 0 0;
+        color: var(--drl-muted);
+        font-size: 0.85em;
+      }
+
+      .drl-panel-note[hidden] {
+        display: none;
+      }
+
+      .drl-loop {
+        display: grid;
+        gap: var(--drl-space-2);
+      }
+
+      .drl-loop-boxes {
+        display: grid;
+        grid-template-columns: minmax(0, 1fr) minmax(0, 1fr);
+        gap: var(--drl-space-2);
+      }
+
+      .drl-loop-box {
+        padding: var(--drl-space-2);
+        background: var(--drl-bg);
+        border: 1px solid var(--drl-border);
+        border-radius: calc(var(--drl-radius) / 2);
+      }
+
+      .drl-loop-name {
+        display: block;
+        margin-bottom: var(--drl-space-1);
+        font-weight: 700;
+      }
+
+      .drl-loop-facts {
+        display: grid;
+        gap: var(--drl-space-1);
+        margin: 0;
+      }
+
+      .drl-loop-fact {
+        display: flex;
+        justify-content: space-between;
+        gap: var(--drl-space-2);
+      }
+
+      .drl-loop-fact dt {
+        color: var(--drl-muted);
+      }
+
+      .drl-loop-fact dd {
+        margin: 0;
+        font-variant-numeric: tabular-nums;
+      }
+
+      .drl-loop-links {
+        display: grid;
+        gap: 2px;
+        margin: 0;
+        padding: 0;
+        list-style: none;
+        color: var(--drl-muted);
+        font-size: 0.85em;
+      }
+
+      .drl-phases {
+        display: flex;
+        flex-wrap: wrap;
+        margin: var(--drl-space-2) 0 0;
+        padding: 0;
+        list-style: none;
+        font-size: 0.85em;
+      }
+
+      .drl-phase {
+        padding: 2px var(--drl-space-2);
+        border: 1px solid var(--drl-border);
+        color: var(--drl-muted);
+      }
+
+      .drl-phase + .drl-phase {
+        margin-left: -1px;
+      }
+
+      .drl-phase:first-child {
+        border-radius: calc(var(--drl-radius) / 2) 0 0 calc(var(--drl-radius) / 2);
+      }
+
+      .drl-phase:last-child {
+        border-radius: 0 calc(var(--drl-radius) / 2) calc(var(--drl-radius) / 2) 0;
+      }
+
+      .drl-phase[aria-current='step'] {
+        border-color: var(--drl-accent);
+        color: var(--drl-accent);
+        font-weight: 700;
+      }
+
+      .drl-formula-line {
+        margin: 0 0 var(--drl-space-2);
+        padding: var(--drl-space-2);
+        background: var(--drl-bg);
+        border: 1px solid var(--drl-border);
+        border-radius: calc(var(--drl-radius) / 2);
+        font-family: ui-monospace, monospace;
+        font-size: 0.85em;
+        overflow-wrap: anywhere;
+      }
+
+      .drl-update-grid {
+        display: grid;
+        gap: var(--drl-space-1);
+        margin: 0 0 var(--drl-space-2);
+      }
+
+      .drl-update-row {
+        display: flex;
+        justify-content: space-between;
+        gap: var(--drl-space-2);
+      }
+
+      .drl-update-row dt {
+        color: var(--drl-muted);
+      }
+
+      .drl-update-row dd {
+        margin: 0;
+        font-variant-numeric: tabular-nums;
+      }
+
+      .drl-formula {
+        margin: var(--drl-space-1) 0 0;
+        font-family: ui-monospace, monospace;
+        font-size: 0.85em;
+        overflow-wrap: anywhere;
+      }
+
+      .drl-qtable {
+        display: grid;
+        gap: var(--drl-space-1);
+        margin-top: var(--drl-space-2);
+      }
+
+      .drl-qtable-label {
+        color: var(--drl-muted);
+        font-size: 0.85em;
+      }
+
+      .drl-qtable-cells {
+        display: grid;
+        grid-template-columns: repeat(4, minmax(0, 1fr));
+        gap: var(--drl-space-1);
+      }
+
+      .drl-qtable-cell {
+        display: grid;
+        justify-items: center;
+        gap: 2px;
+        padding: var(--drl-space-1);
+        border: 1px solid var(--drl-border);
+        border-radius: calc(var(--drl-radius) / 2);
+      }
+
+      .drl-qtable-cell--active {
+        border-color: var(--drl-accent);
+        color: var(--drl-accent);
+        font-weight: 700;
+      }
+
+      .drl-qtable-glyph {
+        font-size: 0.85em;
+      }
+
+      .drl-qtable-value {
         font-size: 0.85em;
         font-variant-numeric: tabular-nums;
       }
 
-      .drl-replay-list {
-        display: grid;
-        gap: var(--drl-space-1);
+      .drl-update-placeholder {
         margin: 0;
-        padding: 0;
-        list-style: none;
-      }
-
-      .drl-replay-row {
-        font-size: 0.9em;
-        font-variant-numeric: tabular-nums;
-      }
-
-      .drl-replay-row--last {
-        color: var(--drl-accent);
-        font-weight: 600;
-      }
-
-      .drl-replay-row--muted {
         color: var(--drl-muted);
+      }
+
+      .drl-update-placeholder[hidden],
+      .drl-update-content[hidden] {
+        display: none;
       }
     `,
   ];
@@ -352,8 +557,18 @@ export class FrozenLake extends DemoElement {
     this.requestUpdate();
   };
 
-  // The replay panel exists in the DOM only after the first toggle, so it is
-  // refreshed once the new markup has rendered, not during willUpdate.
+  // Advances exactly one phase of the MDP loop. Autoplay must stop first, so a
+  // frame between the click and the redraw cannot consume the next phase.
+  private readonly handleFineStep = (): void => {
+    if (this.running) {
+      this.running = false;
+    }
+    this.core.advanceFineStep();
+    this.draw();
+  };
+
+  // The replay event carries the current batch, so it is refreshed once the
+  // replay toggle has rendered and the core reflects the new setting.
   protected override updated(changed: PropertyValues<this>): void {
     super.updated(changed);
     if (changed.has('replayEnabled')) {
@@ -482,6 +697,20 @@ export class FrozenLake extends DemoElement {
   }
 
   private draw(): void {
+    this.drawGrid();
+    this.drawStatus();
+    this.drawCurve();
+    // Refresh the tooltip while the pointer stays on a cell during training.
+    if (this.hoveredCell !== null && this.tooltip && !this.tooltip.hidden) {
+      this.fillTooltip(this.hoveredCell);
+    }
+    this.drawSchematic();
+    this.drawUpdate();
+    this.dispatchReplayState();
+  }
+
+  /** Draws the cells, the policy arrows and the agent on the grid. */
+  private drawGrid(): void {
     const cells = this.cells;
     const arrows = this.arrows;
     const agent = this.agent;
@@ -526,77 +755,159 @@ export class FrozenLake extends DemoElement {
       .attr('cx', cx)
       .attr('cy', cy)
       .attr('r', cellSize / 12);
+  }
 
-    if (this.statusText) {
-      const { episodes, steps, successRate } = this.core.stats;
-      this.statusText.textContent = `Épisodes ${episodes} · Réussite ${Math.round(successRate * 100)} % · Pas ${steps}`;
+  private drawStatus(): void {
+    if (!this.statusText) {
+      return;
     }
+    const { episodes, steps, successRate } = this.core.stats;
+    this.statusText.textContent = `Épisodes ${episodes} · Réussite ${Math.round(successRate * 100)} % · Pas ${steps}`;
+  }
 
+  private drawCurve(): void {
     const curve = this.curve;
-    if (curve) {
-      const history = this.core.rewardHistory;
-      if (history.length === 0) {
-        curve.attr('visibility', 'hidden');
-      } else {
-        const length = history.length;
-        // Candy rewards can push a return past 1, so scale by the observed
-        // maximum instead of clipping the curve at the top edge. The floor of 1
-        // keeps early episodes at full height.
-        const maxReturn = Math.max(1, ...history);
-        const d = history
-          .map((reward, index) => {
-            const x = length === 1 ? 0 : (index / (length - 1)) * CURVE_WIDTH;
-            const y = CURVE_HEIGHT - (reward / maxReturn) * CURVE_HEIGHT;
-            return `${index === 0 ? 'M' : 'L'} ${x.toFixed(2)} ${y.toFixed(2)}`;
-          })
-          .join(' ');
-        curve.attr('visibility', 'visible').attr('d', d);
-      }
+    if (!curve) {
+      return;
     }
-
-    // Refresh the tooltip while the pointer stays on a cell during training.
-    if (this.hoveredCell !== null && this.tooltip && !this.tooltip.hidden) {
-      this.fillTooltip(this.hoveredCell);
+    const history = this.core.rewardHistory;
+    if (history.length === 0) {
+      curve.attr('visibility', 'hidden');
+      return;
     }
-
-    this.drawReplay();
+    const length = history.length;
+    // Candy rewards can push a return past 1, so scale by the observed
+    // maximum instead of clipping the curve at the top edge. The floor of 1
+    // keeps early episodes at full height.
+    const maxReturn = Math.max(1, ...history);
+    const d = history
+      .map((reward, index) => {
+        const x = length === 1 ? 0 : (index / (length - 1)) * CURVE_WIDTH;
+        const y = CURVE_HEIGHT - (reward / maxReturn) * CURVE_HEIGHT;
+        return `${index === 0 ? 'M' : 'L'} ${x.toFixed(2)} ${y.toFixed(2)}`;
+      })
+      .join(' ');
+    curve.attr('visibility', 'visible').attr('d', d);
   }
 
   /**
-   * Fills the replay panel from the last sampled batch. The panel is queried
-   * on every call because it exists in the DOM only while replay is enabled.
-   * Rows are newest first, so the batch is reversed around its last entry.
+   * Fills the agent-environment schematic from the fine-step state. An observe
+   * phase has no selected action, so the last update keeps the schematic
+   * readable during autoplay and is labelled as the last transition.
    */
-  private drawReplay(): void {
-    const header = this.renderRoot.querySelector<HTMLElement>('.drl-replay-header');
-    const list = this.renderRoot.querySelector<HTMLElement>('.drl-replay-list');
-    if (!header || !list) {
+  private drawSchematic(): void {
+    const state = this.core.fineStepState;
+    const lastUpdate = this.core.lastUpdate;
+    const fallback = state.action === null && lastUpdate !== null;
+    const action = state.action ?? (fallback ? lastUpdate.transition.action : null);
+    const nextObservation =
+      state.nextObservation ?? (fallback ? lastUpdate.transition.nextObservation : null);
+    const reward = state.reward ?? (fallback ? lastUpdate.transition.reward : null);
+    const actionText = action === null ? EMPTY_VALUE : `${ACTION_GLYPHS[action]} ${action}`;
+
+    this.setField('schematic-observation', String(state.observation));
+    this.setField('schematic-action', actionText);
+    this.setField(
+      'schematic-next',
+      nextObservation === null ? EMPTY_VALUE : String(nextObservation),
+    );
+    this.setField('schematic-reward', reward === null ? EMPTY_VALUE : reward.toFixed(3));
+
+    const source = this.renderRoot.querySelector<HTMLElement>('[data-field="schematic-source"]');
+    if (source) {
+      source.textContent = fallback ? 'Dernière transition' : '';
+      source.hidden = !fallback;
+    }
+
+    for (const phase of FINE_STEP_PHASES) {
+      const node = this.renderRoot.querySelector<HTMLElement>(`[data-phase="${phase}"]`);
+      if (node === null) {
+        continue;
+      }
+      if (phase === state.phase) {
+        node.setAttribute('aria-current', 'step');
+      } else {
+        node.removeAttribute('aria-current');
+      }
+    }
+  }
+
+  /**
+   * Fills the Q update panel from the last update. The panel nodes are queried
+   * on every call. The placeholder replaces the body until the first update.
+   */
+  private drawUpdate(): void {
+    const update = this.core.lastUpdate;
+    const placeholder = this.renderRoot.querySelector<HTMLElement>(
+      '[data-field="update-placeholder"]',
+    );
+    const content = this.renderRoot.querySelector<HTMLElement>('[data-field="update-content"]');
+    if (!placeholder || !content) {
       return;
     }
-    const batch = this.core.lastReplayBatch;
-    header.textContent = `Rejeu · échantillon ${batch.length} · mémoire ${this.core.replayBufferSize}/${this.core.replayCapacity}`;
-    list.replaceChildren();
-    if (batch.length === 0) {
-      const placeholder = document.createElement('li');
-      placeholder.className = 'drl-replay-row drl-replay-row--muted';
-      placeholder.textContent = "Aucun échantillon pour l'instant.";
-      list.append(placeholder);
+    if (update === null) {
+      placeholder.hidden = false;
+      content.hidden = true;
       return;
     }
-    const rows = [batch[batch.length - 1], ...batch.slice(0, -1)];
-    rows.forEach((transition, position) => {
-      const row = document.createElement('li');
-      row.className = position === 0 ? 'drl-replay-row drl-replay-row--last' : 'drl-replay-row';
-      let text = `case ${transition.observation} ${ACTION_GLYPHS[transition.action]} case ${transition.nextObservation} · r ${transition.reward}`;
-      if (transition.done) {
-        text += ' · fin';
+    placeholder.hidden = true;
+    content.hidden = false;
+
+    const view = updateView(update);
+    this.setField('reward', view.reward);
+    this.setField('gamma', view.gamma);
+    this.setField('next-value', view.nextValue);
+    this.setField('bootstrap', view.bootstrap);
+    this.setField('target', view.target);
+    this.setField('previous', view.previous);
+    this.setField('alpha', view.alpha);
+    this.setField('updated', view.updated);
+    this.setField('target-formula', view.targetFormula);
+    this.setField('update-formula', view.updateFormula);
+
+    const transition = update.transition;
+    const glyph = ACTION_GLYPHS[transition.action];
+    this.setField('qtable-label', `Case ${transition.observation} · ${glyph} ${transition.action}`);
+    const values = this.core.actionValues(transition.observation);
+    FROZEN_LAKE_ACTIONS.forEach((action, index) => {
+      const cell = this.renderRoot.querySelector<HTMLElement>(`[data-qtable-action="${action}"]`);
+      if (cell === null) {
+        return;
       }
-      if (position === 0) {
-        text += ' · dernier pas';
+      cell.classList.toggle('drl-qtable-cell--active', action === transition.action);
+      const cellGlyph = cell.querySelector<HTMLElement>('.drl-qtable-glyph');
+      const cellValue = cell.querySelector<HTMLElement>('.drl-qtable-value');
+      if (cellGlyph) {
+        cellGlyph.textContent = ACTION_GLYPHS[action];
       }
-      row.textContent = text;
-      list.append(row);
+      if (cellValue) {
+        cellValue.textContent = values[index].toFixed(3);
+      }
     });
+  }
+
+  /** Sets the text of the first `[data-field="name"]` node in the panel. */
+  private setField(name: string, value: string): void {
+    const node = this.renderRoot.querySelector<HTMLElement>(`[data-field="${name}"]`);
+    if (node) {
+      node.textContent = value;
+    }
+  }
+
+  /** Publishes the replay state so the page can render the replay panel. */
+  private dispatchReplayState(): void {
+    this.dispatchEvent(
+      new CustomEvent<FrozenLakeReplayState>(FROZEN_LAKE_REPLAY_EVENT, {
+        detail: {
+          enabled: this.replayEnabled,
+          batch: [...this.core.lastReplayBatch],
+          bufferSize: this.core.replayBufferSize,
+          capacity: this.core.replayCapacity,
+        },
+        bubbles: true,
+        composed: true,
+      }),
+    );
   }
 
   protected override renderHeader(): TemplateResult {
@@ -647,38 +958,160 @@ export class FrozenLake extends DemoElement {
         >
           Rejeu
         </button>
-      </div>
-      <div class="drl-grid-wrap">
-        <svg
-          class="drl-grid"
-          viewBox="0 0 ${GRID_SIZE} ${GRID_SIZE}"
-          role="img"
-          aria-label="Grille Frozen Lake"
+        <button
+          type="button"
+          class="drl-button"
+          title="Avance d'une phase et met la lecture automatique en pause."
+          @click=${this.handleFineStep}
         >
-          <g class="drl-cells"></g>
-          <g class="drl-arrows"></g>
-          <circle class="drl-agent" r="10"></circle>
-        </svg>
-        <div class="drl-tooltip" hidden></div>
+          Phase suivante
+        </button>
       </div>
-      <svg
-        class="drl-curve-svg"
-        viewBox="0 0 ${CURVE_WIDTH} ${CURVE_HEIGHT}"
-        role="img"
-        aria-label="Courbe des récompenses"
-      >
-        <path class="drl-curve" visibility="hidden"></path>
-      </svg>
-      ${
-        this.replayEnabled
-          ? html`
-            <section class="drl-replay" aria-label="Rejeu">
-              <p class="drl-replay-header"></p>
-              <ul class="drl-replay-list"></ul>
-            </section>
-          `
-          : nothing
-      }
+      <div class="drl-layout">
+        <div class="drl-main">
+          <div class="drl-grid-wrap">
+            <svg
+              class="drl-grid"
+              viewBox="0 0 ${GRID_SIZE} ${GRID_SIZE}"
+              role="img"
+              aria-label="Grille Frozen Lake"
+            >
+              <g class="drl-cells"></g>
+              <g class="drl-arrows"></g>
+              <circle class="drl-agent" r="10"></circle>
+            </svg>
+            <div class="drl-tooltip" hidden></div>
+          </div>
+          <svg
+            class="drl-curve-svg"
+            viewBox="0 0 ${CURVE_WIDTH} ${CURVE_HEIGHT}"
+            role="img"
+            aria-label="Courbe des récompenses"
+          >
+            <path class="drl-curve" visibility="hidden"></path>
+          </svg>
+        </div>
+        <aside class="drl-side">
+          <section class="drl-panel" aria-labelledby="drl-schematic-title">
+            <h3 class="drl-panel-title" id="drl-schematic-title">
+              Boucle agent-environnement
+            </h3>
+            <p class="drl-panel-text">
+              L'environnement émet une observation. L'agent choisit une action.
+              L'environnement renvoie une observation et une récompense.
+            </p>
+            <p class="drl-panel-note" data-field="schematic-source" hidden></p>
+            <div class="drl-loop">
+              <div class="drl-loop-boxes">
+                <div class="drl-loop-box">
+                  <span class="drl-loop-name">Environnement</span>
+                  <dl class="drl-loop-facts">
+                    <div class="drl-loop-fact">
+                      <dt>Observation s</dt>
+                      <dd data-field="schematic-observation">—</dd>
+                    </div>
+                    <div class="drl-loop-fact">
+                      <dt>Observation s'</dt>
+                      <dd data-field="schematic-next">—</dd>
+                    </div>
+                    <div class="drl-loop-fact">
+                      <dt>Récompense r</dt>
+                      <dd data-field="schematic-reward">—</dd>
+                    </div>
+                  </dl>
+                </div>
+                <div class="drl-loop-box">
+                  <span class="drl-loop-name">Agent</span>
+                  <dl class="drl-loop-facts">
+                    <div class="drl-loop-fact">
+                      <dt>Action a</dt>
+                      <dd data-field="schematic-action">—</dd>
+                    </div>
+                  </dl>
+                </div>
+              </div>
+              <ul class="drl-loop-links">
+                <li class="drl-loop-link">observation s : Environnement → Agent</li>
+                <li class="drl-loop-link">action a : Agent → Environnement</li>
+                <li class="drl-loop-link">
+                  observation s' et récompense r : Environnement → Agent
+                </li>
+              </ul>
+              <ol class="drl-phases" aria-label="Phases du pas">
+                ${FINE_STEP_PHASES.map(
+                  (phase) => html`
+                    <li class="drl-phase" data-phase=${phase}>${PHASE_LABELS[phase]}</li>
+                  `,
+                )}
+              </ol>
+            </div>
+          </section>
+          <section class="drl-panel" aria-labelledby="drl-update-title">
+            <h3 class="drl-panel-title" id="drl-update-title">Dernière mise à jour</h3>
+            <p class="drl-formula-line">
+              Q(s, a) ← Q(s, a) + α [ r + γ max Q(s', a') − Q(s, a) ]
+            </p>
+            <p class="drl-update-placeholder" data-field="update-placeholder">
+              Aucune mise à jour pour l'instant.
+            </p>
+            <div class="drl-update-content" data-field="update-content" hidden>
+              <dl class="drl-update-grid">
+                <div class="drl-update-row">
+                  <dt>Récompense r</dt>
+                  <dd data-field="reward"></dd>
+                </div>
+                <div class="drl-update-row">
+                  <dt>Facteur γ</dt>
+                  <dd data-field="gamma"></dd>
+                </div>
+                <div class="drl-update-row">
+                  <dt>Valeur suivante max Q(s', a')</dt>
+                  <dd data-field="next-value"></dd>
+                </div>
+                <div class="drl-update-row">
+                  <dt>Amorçage γ · max Q(s', a')</dt>
+                  <dd data-field="bootstrap"></dd>
+                </div>
+                <div class="drl-update-row">
+                  <dt>Cible</dt>
+                  <dd data-field="target"></dd>
+                </div>
+                <div class="drl-update-row">
+                  <dt>Valeur précédente Q(s, a)</dt>
+                  <dd data-field="previous"></dd>
+                </div>
+                <div class="drl-update-row">
+                  <dt>Taux α</dt>
+                  <dd data-field="alpha"></dd>
+                </div>
+                <div class="drl-update-row">
+                  <dt>Valeur mise à jour</dt>
+                  <dd data-field="updated"></dd>
+                </div>
+              </dl>
+              <p class="drl-formula" data-field="target-formula"></p>
+              <p class="drl-formula" data-field="update-formula"></p>
+              <div class="drl-qtable">
+                <span class="drl-qtable-label" data-field="qtable-label"></span>
+                <div class="drl-qtable-cells">
+                  ${FROZEN_LAKE_ACTIONS.map(
+                    (action) => html`
+                      <span class="drl-qtable-cell" data-qtable-action=${action}>
+                        <span class="drl-qtable-glyph"></span>
+                        <span class="drl-qtable-value"></span>
+                      </span>
+                    `,
+                  )}
+                </div>
+              </div>
+            </div>
+            <p class="drl-panel-note">
+              La cible utilise la valeur de l'état suivant. La mise à jour écrit la
+              nouvelle valeur dans la table apprise.
+            </p>
+          </section>
+        </aside>
+      </div>
     `;
   }
 }

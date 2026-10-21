@@ -703,6 +703,229 @@ describe('FrozenLakeCore configuration', () => {
   });
 });
 
+describe('FrozenLakeCore fine step', () => {
+  it('runs the phases in observe, act and transition order', () => {
+    const core = new FrozenLakeCore({ size: 4, slipProbability: 0, epsilon: 0, seed: 3 });
+    expect(core.fineStepState).toEqual({
+      phase: 'observe',
+      nextPhase: 'act',
+      observation: 0,
+      action: null,
+      nextObservation: null,
+      reward: null,
+      done: null,
+    });
+
+    expect(core.advanceFineStep()).toBe('act');
+    expect(core.fineStepState.phase).toBe('act');
+    expect(core.fineStepState.nextPhase).toBe('transition');
+    expect(core.fineStepState.action).not.toBeNull();
+    expect(FROZEN_LAKE_ACTIONS).toContain(core.fineStepState.action);
+
+    expect(core.advanceFineStep()).toBe('transition');
+    expect(core.fineStepState.phase).toBe('transition');
+    expect(core.fineStepState.nextPhase).toBe('observe');
+    expect(core.fineStepState.nextObservation).not.toBeNull();
+    expect(core.fineStepState.reward).not.toBeNull();
+    expect(core.fineStepState.done).not.toBeNull();
+
+    expect(core.advanceFineStep()).toBe('observe');
+    expect(core.fineStepState.phase).toBe('observe');
+    expect(core.fineStepState.nextPhase).toBe('act');
+    expect(core.fineStepState.action).toBeNull();
+    expect(core.fineStepState.nextObservation).toBeNull();
+    expect(core.fineStepState.reward).toBeNull();
+    expect(core.fineStepState.done).toBeNull();
+  });
+
+  it('counts a step only on the act to transition call', () => {
+    const core = new FrozenLakeCore({ size: 4, slipProbability: 0, seed: 3 });
+    expect(core.stats.steps).toBe(0);
+    core.advanceFineStep();
+    expect(core.stats.steps).toBe(0);
+    core.advanceFineStep();
+    expect(core.stats.steps).toBe(1);
+    core.advanceFineStep();
+    expect(core.stats.steps).toBe(1);
+  });
+
+  it('matches one tick after the three fine steps', () => {
+    const options = {
+      size: 4 as const,
+      slipProbability: 0,
+      seed: 11,
+      learningRate: 0.5,
+      discountFactor: 0.95,
+      epsilon: 0.2,
+    };
+    const fine = new FrozenLakeCore(options);
+    const ticked = new FrozenLakeCore(options);
+
+    fine.advanceFineStep();
+    fine.advanceFineStep();
+    fine.advanceFineStep();
+    ticked.tick();
+
+    expect(fine.stats).toEqual(ticked.stats);
+    expect(fine.observation).toBe(ticked.observation);
+    expect([...fine.rewardHistory]).toEqual([...ticked.rewardHistory]);
+    expect(fine.fineStepState).toEqual(ticked.fineStepState);
+    expect(fine.lastUpdate).toEqual(ticked.lastUpdate);
+  });
+
+  it('runs exactly one environment step when tick starts in act', () => {
+    const core = new FrozenLakeCore({ size: 4, slipProbability: 0, seed: 5 });
+    core.advanceFineStep();
+    expect(core.fineStepState.phase).toBe('act');
+    expect(core.stats.steps).toBe(0);
+
+    core.tick();
+    expect(core.stats.steps).toBe(1);
+    expect(core.fineStepState.phase).toBe('observe');
+  });
+
+  it('runs exactly one environment step when tick starts in transition', () => {
+    const core = new FrozenLakeCore({ size: 4, slipProbability: 0, seed: 5 });
+    core.advanceFineStep();
+    core.advanceFineStep();
+    expect(core.fineStepState.phase).toBe('transition');
+    expect(core.stats.steps).toBe(1);
+
+    core.tick();
+    expect(core.stats.steps).toBe(2);
+    expect(core.fineStepState.phase).toBe('observe');
+  });
+
+  it('clears lastUpdate on construction and on every training reset', () => {
+    const core = new FrozenLakeCore({ size: 4, slipProbability: 0, seed: 5 });
+    expect(core.lastUpdate).toBeNull();
+    core.tick();
+    expect(core.lastUpdate).not.toBeNull();
+
+    core.reset();
+    expect(core.lastUpdate).toBeNull();
+    core.tick();
+    expect(core.lastUpdate).not.toBeNull();
+
+    core.setSize(8);
+    expect(core.lastUpdate).toBeNull();
+    core.tick();
+    expect(core.lastUpdate).not.toBeNull();
+
+    core.setCustomMap(CUSTOM_4X4);
+    expect(core.lastUpdate).toBeNull();
+  });
+
+  it('links an online update result to its transition and the q-table', () => {
+    const core = new FrozenLakeCore({ size: 4, slipProbability: 0, seed: 5 });
+    const before = core.observation;
+    core.tick();
+
+    const update = core.lastUpdate;
+    expect(update).not.toBeNull();
+    if (!update) {
+      return;
+    }
+    expect(update.transition.observation).toBe(before);
+    expect(update.tdError).toBeCloseTo(update.target - update.previousValue);
+    expect(update.bootstrap).toBeCloseTo(update.discountFactor * update.nextValue);
+    expect(update.target).toBeCloseTo(update.transition.reward + update.bootstrap);
+    expect(update.updatedValue).toBeCloseTo(
+      update.previousValue + update.learningRate * update.tdError,
+    );
+
+    const values = core.actionValues(update.transition.observation);
+    expect(update.updatedValue).toBeCloseTo(
+      values[FROZEN_LAKE_ACTIONS.indexOf(update.transition.action)],
+    );
+    if (
+      !update.transition.done &&
+      update.transition.nextObservation !== update.transition.observation
+    ) {
+      expect(update.nextValue).toBeCloseTo(
+        Math.max(...core.actionValues(update.transition.nextObservation)),
+      );
+    }
+  });
+
+  it('links a replay update result to the last batch entry', () => {
+    const core = new FrozenLakeCore({
+      size: 4,
+      slipProbability: 0,
+      seed: 5,
+      replayEnabled: true,
+      replayBatchSize: 4,
+    });
+    core.tick();
+
+    const update = core.lastUpdate;
+    expect(update).not.toBeNull();
+    if (!update) {
+      return;
+    }
+    expect(update.transition).toBe(core.lastReplayBatch.at(-1));
+    expect(update.updatedValue).toBeCloseTo(
+      core.actionValues(update.transition.observation)[
+        FROZEN_LAKE_ACTIONS.indexOf(update.transition.action)
+      ],
+    );
+  });
+
+  it('delays the episode reset until the transition phase', () => {
+    // Cell 5 is the start and every neighbour is a hole, so each action ends
+    // the episode on the step that follows the observation.
+    const core = new FrozenLakeCore({
+      size: 4,
+      desc: ['FHFH', 'HSHH', 'HHHH', 'HHHG'],
+      slipProbability: 0,
+      epsilon: 0,
+      seed: 1,
+    });
+    expect(core.observation).toBe(5);
+
+    core.advanceFineStep();
+    core.advanceFineStep();
+    expect(core.fineStepState.phase).toBe('transition');
+    expect(core.fineStepState.done).toBe(true);
+    expect(core.stats.episodes).toBe(1);
+    expect(core.rewardHistory).toHaveLength(1);
+
+    // The terminal observation stays visible until the transition phase runs.
+    const terminal = core.fineStepState.nextObservation;
+    expect(terminal).not.toBeNull();
+    expect(terminal).not.toBe(5);
+    expect(core.observation).toBe(terminal);
+
+    core.advanceFineStep();
+    expect(core.observation).toBe(5);
+    expect(core.fineStepState).toMatchObject({
+      phase: 'observe',
+      action: null,
+      nextObservation: null,
+      reward: null,
+      done: null,
+    });
+  });
+
+  it('discards a pending action when the size changes during act', () => {
+    const core = new FrozenLakeCore({ size: 4, slipProbability: 0, seed: 1 });
+    core.advanceFineStep();
+    expect(core.fineStepState.phase).toBe('act');
+    expect(core.fineStepState.action).not.toBeNull();
+
+    core.setSize(8);
+    expect(core.fineStepState.phase).toBe('observe');
+    expect(core.fineStepState.action).toBeNull();
+    expect(core.fineStepState.observation).toBe(0);
+    expect(core.stats.steps).toBe(0);
+    expect(core.lastUpdate).toBeNull();
+
+    core.advanceFineStep();
+    expect(core.fineStepState.phase).toBe('act');
+    expect(core.fineStepState.action).not.toBeNull();
+  });
+});
+
 describe('FrozenLakeCore replay', () => {
   it('defaults replay to disabled with a batch size of 8 and a capacity of 1000', () => {
     const core = new FrozenLakeCore({ size: 4, seed: 1 });

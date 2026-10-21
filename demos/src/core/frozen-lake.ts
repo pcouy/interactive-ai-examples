@@ -1,4 +1,4 @@
-import { QLearningAgent, type Transition } from './q-learning.js';
+import { QLearningAgent, type QUpdateResult, type Transition } from './q-learning.js';
 import { ReplayBuffer } from './replay-buffer.js';
 
 export type FrozenLakeAction = 'left' | 'down' | 'right' | 'up';
@@ -6,6 +6,47 @@ export type FrozenLakeAction = 'left' | 'down' | 'right' | 'up';
 export type FrozenLakeCell = 'start' | 'frozen' | 'hole' | 'goal' | 'wall' | 'candy';
 
 export const FROZEN_LAKE_ACTIONS: readonly FrozenLakeAction[] = ['left', 'down', 'right', 'up'];
+
+/**
+ * Phase of the fine-step agent-environment loop. One full step runs `observe`,
+ * then `act`, then `transition`.
+ */
+export type FineStepPhase = 'observe' | 'act' | 'transition';
+
+/**
+ * Phases of one full fine step, in order. The names match {@link FineStepPhase}
+ * so a panel can list them without re-declaring the order.
+ */
+export const FINE_STEP_PHASES: readonly FineStepPhase[] = ['observe', 'act', 'transition'];
+
+/** Visible state of one {@link FrozenLakeCore} fine step. */
+export interface FineStepState {
+  /** Phase the loop is in. The next {@link FrozenLakeCore.advanceFineStep} call runs it. */
+  readonly phase: FineStepPhase;
+  /** Phase that the next {@link FrozenLakeCore.advanceFineStep} call runs. */
+  readonly nextPhase: FineStepPhase;
+  /** Observation the agent acts on in this step. */
+  readonly observation: number;
+  /** Selected action, or null before the observe phase and after the transition phase. */
+  readonly action: FrozenLakeAction | null;
+  /** Environment observation after the action, or null outside the act/transition phases. */
+  readonly nextObservation: number | null;
+  /** Reward of the step, or null outside the act/transition phases. */
+  readonly reward: number | null;
+  /** True when the step ended the episode, or null outside the act/transition phases. */
+  readonly done: boolean | null;
+}
+
+function nextFineStepPhase(phase: FineStepPhase): FineStepPhase {
+  switch (phase) {
+    case 'observe':
+      return 'act';
+    case 'act':
+      return 'transition';
+    case 'transition':
+      return 'observe';
+  }
+}
 
 const DEFAULT_SEED = 42;
 export const DEFAULT_CANDY_REWARD = 0.1;
@@ -392,6 +433,22 @@ export class FrozenLakeCore {
 
   private lastBatch: readonly Transition<number, FrozenLakeAction>[] = [];
 
+  private phase: FineStepPhase = 'observe';
+
+  private stepObservation = 0;
+
+  private stepAction: FrozenLakeAction | null = null;
+
+  private stepNextObservation: number | null = null;
+
+  private stepReward: number | null = null;
+
+  private stepDone: boolean | null = null;
+
+  private pendingReset = false;
+
+  private lastUpdateResult: QUpdateResult<number, FrozenLakeAction> | null = null;
+
   constructor(options: FrozenLakeCoreOptions = {}) {
     this.seed = options.seed ?? DEFAULT_SEED;
     this.customMap = options.desc;
@@ -419,10 +476,29 @@ export class FrozenLakeCore {
       capacity: this.replayOptions.capacity,
       rng: mulberry32((this.seed + 2) >>> 0),
     });
+    this.resetFineStep();
   }
 
   get observation(): number {
     return this.env.observation;
+  }
+
+  /** Visible state of the fine-step loop. */
+  get fineStepState(): FineStepState {
+    return {
+      phase: this.phase,
+      nextPhase: nextFineStepPhase(this.phase),
+      observation: this.stepObservation,
+      action: this.stepAction,
+      nextObservation: this.stepNextObservation,
+      reward: this.stepReward,
+      done: this.stepDone,
+    };
+  }
+
+  /** Result of the most recent Q update, or null before the first update. */
+  get lastUpdate(): QUpdateResult<number, FrozenLakeAction> | null {
+    return this.lastUpdateResult;
   }
 
   /** Current aggregate training counters. */
@@ -509,48 +585,95 @@ export class FrozenLakeCore {
   }
 
   /**
-   * Runs one environment step and trains the agent on it. With replay enabled
-   * it stores the transition and applies a replay batch of updates. Otherwise
-   * it applies a single online update. Episode boundaries update the stats and
-   * the reward history, then reset the environment.
+   * Runs one phase of the fine-step loop and returns the phase it entered.
+   *
+   * The loop starts in `observe` with the environment observation already
+   * available, so the first call selects an action and enters `act`. The `act`
+   * call steps the environment, updates the agent and enters `transition`. The
+   * `transition` call applies a pending episode reset, clears the step result
+   * and enters `observe`.
+   */
+  advanceFineStep(): FineStepPhase {
+    switch (this.phase) {
+      case 'observe': {
+        this.stepObservation = this.env.observation;
+        this.stepAction = this.agent.selectAction(this.stepObservation);
+        this.phase = 'act';
+        return this.phase;
+      }
+      case 'act': {
+        const action = this.stepAction;
+        if (action === null) {
+          throw new Error('FrozenLakeCore act phase has no selected action.');
+        }
+        const result = this.env.step(action);
+        const transition: Transition<number, FrozenLakeAction> = {
+          observation: this.stepObservation,
+          action,
+          reward: result.reward,
+          nextObservation: result.observation,
+          done: result.done,
+        };
+        if (this.replayOptions.enabled) {
+          this.replayBuffer.store(transition);
+          const batch = this.replayBuffer.sample(this.replayOptions.batchSize);
+          this.lastBatch = batch;
+          // The newest transition is last, so the final result belongs to it.
+          for (const item of batch) {
+            this.lastUpdateResult = this.agent.update(item);
+          }
+        } else {
+          this.lastUpdateResult = this.agent.update(transition);
+        }
+        this.stepNextObservation = result.observation;
+        this.stepReward = result.reward;
+        this.stepDone = result.done;
+        this.episodeReturn += result.reward;
+        this.steps += 1;
+        if (result.done) {
+          this.episodes += 1;
+          // Only the goal ends the episode as a success: an episode that
+          // collected candy and then fell in a hole has a positive return.
+          if (this.env.cellAt(result.observation) === 'goal') {
+            this.successes += 1;
+          }
+          this.history.push(this.episodeReturn);
+          if (this.history.length > REWARD_HISTORY_LIMIT) {
+            this.history.shift();
+          }
+          this.episodeReturn = 0;
+          // The transition phase reports the terminal observation, so the
+          // environment reset waits until then.
+          this.pendingReset = true;
+        }
+        this.phase = 'transition';
+        return this.phase;
+      }
+      case 'transition': {
+        if (this.pendingReset) {
+          this.env.reset();
+          this.pendingReset = false;
+        }
+        this.stepObservation = this.env.observation;
+        this.stepAction = null;
+        this.stepNextObservation = null;
+        this.stepReward = null;
+        this.stepDone = null;
+        this.phase = 'observe';
+        return this.phase;
+      }
+    }
+  }
+
+  /**
+   * Runs one environment step and trains the agent on it from any phase, then
+   * leaves the loop in the observe phase.
    */
   tick(): void {
-    const observation = this.env.observation;
-    const action = this.agent.selectAction(observation);
-    const result = this.env.step(action);
-    const transition: Transition<number, FrozenLakeAction> = {
-      observation,
-      action,
-      reward: result.reward,
-      nextObservation: result.observation,
-      done: result.done,
-    };
-    if (this.replayOptions.enabled) {
-      this.replayBuffer.store(transition);
-      const batch = this.replayBuffer.sample(this.replayOptions.batchSize);
-      this.lastBatch = batch;
-      for (const item of batch) {
-        this.agent.update(item);
-      }
-    } else {
-      this.agent.update(transition);
+    while (this.advanceFineStep() !== 'transition') {
+      // act or observe steps only.
     }
-    this.episodeReturn += result.reward;
-    this.steps += 1;
-    if (result.done) {
-      this.episodes += 1;
-      // Only the goal ends the episode as a success: an episode that
-      // collected candy and then fell in a hole has a positive return.
-      if (this.env.cellAt(result.observation) === 'goal') {
-        this.successes += 1;
-      }
-      this.history.push(this.episodeReturn);
-      if (this.history.length > REWARD_HISTORY_LIMIT) {
-        this.history.shift();
-      }
-      this.episodeReturn = 0;
-      this.env.reset();
-    }
+    this.advanceFineStep();
   }
 
   /** Rebuilds the environment from the current options and resets training. */
@@ -650,6 +773,22 @@ export class FrozenLakeCore {
     this.history = [];
     this.replayBuffer.clear();
     this.lastBatch = [];
+    this.resetFineStep();
+  }
+
+  /**
+   * Clears the fine-step loop for the current environment. The environment
+   * observation is already available, so the loop restarts in `observe`.
+   */
+  private resetFineStep(): void {
+    this.phase = 'observe';
+    this.stepObservation = this.env.observation;
+    this.stepAction = null;
+    this.stepNextObservation = null;
+    this.stepReward = null;
+    this.stepDone = null;
+    this.pendingReset = false;
+    this.lastUpdateResult = null;
   }
 
   private buildAgent(): QLearningAgent<number, FrozenLakeAction> {
