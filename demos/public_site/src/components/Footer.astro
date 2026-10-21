@@ -1,0 +1,25 @@
+---
+const year = new Date().getFullYear();
+
+const links = [
+  { label: 'Accueil', href: '/' },
+  { label: 'Deep Blue', href: '/deep-blue' },
+  { label: 'Frozen Lake', href: '/frozen-lake' },
+];
+---
+
+<footer class="site-footer">
+  <div class="site-footer__inner">
+    <div class="site-footer__brand">
+      <a class="site-brand" href="/">
+        <span class="site-brand__mark" aria-hidden="true"></span>
+        Jouer pour comprendre l'IA
+      </a>
+      <p>Démonstrations pédagogiques. Tout s'exécute dans le navigateur.</p>
+    </div>
+    <nav class="site-footer__nav" aria-label="Navigation de pied de page">
+      {links.map((link) => <a href={link.href}>{link.label}</a>)}
+    </nav>
+    <p class="site-footer__meta">© {year} Jouer pour comprendre l'IA</p>
+  </div>
+</footer>

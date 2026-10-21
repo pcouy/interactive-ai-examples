@@ -1,0 +1,75 @@
+---
+import { Content as HomeContent } from '../content/home.md';
+import Base from '../layouts/Base.astro';
+---
+
+<Base title="Jouer pour comprendre l'IA — démos interactives">
+  <section class="home-hero">
+    <div class="home-hero__inner">
+      <div>
+        <p class="eyebrow">Apprentissage par renforcement et recherche adversariale</p>
+        <h1>Comprendre les algorithmes, un pas à la fois.</h1>
+        <p class="lede">
+          Deux démonstrations interactives : la recherche adversariale de Deep Blue et
+          l'apprentissage par renforcement de Frozen Lake. Tout s'exécute dans le navigateur.
+        </p>
+        <div class="home-actions">
+          <a class="button button--primary" href="/deep-blue">Explorer Deep Blue</a>
+          <a class="button button--ghost" href="/frozen-lake">Ouvrir Frozen Lake</a>
+        </div>
+        <p class="home-meta">Deux démos · Aucune installation · Données locales</p>
+      </div>
+
+      <div class="home-motif" aria-hidden="true">
+        <span class="home-motif__cell home-motif__cell--start"></span>
+        <span class="home-motif__cell"></span>
+        <span class="home-motif__cell home-motif__cell--hole"></span>
+        <span class="home-motif__cell home-motif__cell--hole"></span>
+        <span class="home-motif__cell"></span>
+        <span class="home-motif__cell"></span>
+        <span class="home-motif__cell home-motif__cell--hole"></span>
+        <span class="home-motif__cell"></span>
+        <span class="home-motif__cell"></span>
+        <span class="home-motif__cell home-motif__cell--hole"></span>
+        <span class="home-motif__cell"></span>
+        <span class="home-motif__cell home-motif__cell--hole"></span>
+        <span class="home-motif__cell home-motif__cell--hole"></span>
+        <span class="home-motif__cell"></span>
+        <span class="home-motif__cell"></span>
+        <span class="home-motif__cell home-motif__cell--goal"></span>
+      </div>
+    </div>
+  </section>
+
+  <section class="section" aria-labelledby="demos-title">
+    <h2 class="section-title" id="demos-title">Les démos</h2>
+    <div class="card-grid">
+      <article class="card">
+        <p class="card__eyebrow">Recherche adversariale</p>
+        <h3 class="card__title">Deep Blue</h3>
+        <p class="card__body">
+          Un moteur de recherche qui évalue les coups au tic-tac-toe et au Puissance 4. Réglez
+          la profondeur et l'évaluateur, puis jouez contre l'agent.
+        </p>
+        <a class="card__link" href="/deep-blue">Voir la démo</a>
+      </article>
+
+      <article class="card">
+        <p class="card__eyebrow">Apprentissage par renforcement</p>
+        <h3 class="card__title">Frozen Lake</h3>
+        <p class="card__body">
+          Un agent Q-learning apprend à traverser un lac gelé. Suivez la table Q, les
+          récompenses et l'exploration, épisode après épisode.
+        </p>
+        <a class="card__link" href="/frozen-lake">Voir la démo</a>
+      </article>
+    </div>
+  </section>
+
+  <section class="section" aria-labelledby="about-title">
+    <h2 class="section-title" id="about-title">À propos</h2>
+    <div class="prose">
+      <HomeContent />
+    </div>
+  </section>
+</Base>

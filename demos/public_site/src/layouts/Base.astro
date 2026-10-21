@@ -1,0 +1,111 @@
+---
+import Footer from '../components/Footer.astro';
+import Header from '../components/Header.astro';
+import '../styles/global.css';
+
+interface Props {
+  title: string;
+  description?: string;
+  wide?: boolean;
+}
+
+const {
+  title,
+  description = "Démonstrations interactives pour comprendre l'apprentissage par renforcement et la recherche adversariale.",
+  wide = false,
+} = Astro.props;
+
+const cleanPath = Astro.url.pathname.replace(/\.html$/, '').replace(/\/+$/, '');
+const current =
+  cleanPath === '' || cleanPath === '/index' ? 'home' : cleanPath.replace(/^\//, '');
+---
+
+<!doctype html>
+<html lang="fr">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <meta name="color-scheme" content="light dark" />
+    <title>{title}</title>
+    <meta name="description" content={description} />
+    <script is:inline>
+      (() => {
+        const KEY = 'drl-theme';
+        const root = document.documentElement;
+        const media = window.matchMedia('(prefers-color-scheme: dark)');
+
+        let stored = null;
+        try {
+          const saved = localStorage.getItem(KEY);
+          if (saved === 'dark' || saved === 'light') stored = saved;
+        } catch {
+          stored = null;
+        }
+
+        const labelFor = (theme) =>
+          theme === 'dark' ? 'Passer au thème clair' : 'Passer au thème sombre';
+
+        root.dataset.theme = stored ?? (media.matches ? 'dark' : 'light');
+
+        const apply = (theme, persist) => {
+          root.dataset.theme = theme;
+
+          const button = document.querySelector('[data-theme-toggle]');
+          if (button) {
+            button.setAttribute('aria-pressed', String(theme === 'dark'));
+            button.setAttribute('aria-label', labelFor(theme));
+
+            const label = button.querySelector('[data-theme-label]');
+            if (label) label.textContent = labelFor(theme);
+          }
+
+          if (persist) {
+            try {
+              localStorage.setItem(KEY, theme);
+            } catch {
+              /* Storage can be unavailable in private or sandboxed contexts. */
+            }
+          }
+        };
+
+        const start = () => {
+          apply(root.dataset.theme === 'dark' ? 'dark' : 'light', false);
+
+          const button = document.querySelector('[data-theme-toggle]');
+          if (button) {
+            button.addEventListener('click', () => {
+              apply(root.dataset.theme === 'dark' ? 'light' : 'dark', true);
+            });
+          }
+
+          if (!stored) {
+            media.addEventListener('change', (event) => {
+              let saved = null;
+              try {
+                saved = localStorage.getItem(KEY);
+              } catch {
+                saved = null;
+              }
+              if (!saved) apply(event.matches ? 'dark' : 'light', false);
+            });
+          }
+        };
+
+        if (document.readyState === 'loading') {
+          document.addEventListener('DOMContentLoaded', start, { once: true });
+        } else {
+          start();
+        }
+      })();
+    </script>
+    <link rel="stylesheet" href="/katex/katex.min.css" />
+  </head>
+  <body>
+    <a class="skip-link" href="#main">Aller au contenu</a>
+    <Header current={current} />
+    <main id="main" class={wide ? 'page-wide' : 'page'} tabindex="-1">
+      <slot />
+    </main>
+    <Footer />
+  </body>
+</html>
