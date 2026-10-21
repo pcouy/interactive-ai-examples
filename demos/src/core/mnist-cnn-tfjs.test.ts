@@ -171,6 +171,20 @@ function concatSamples(samples: readonly MnistSample[]): MnistSample {
   return { count, images, labels };
 }
 
+/** Entropie croisée moyenne calculée depuis des probabilités softmax. */
+function meanCrossEntropy(
+  probabilities: Float32Array,
+  labels: Uint8Array,
+  classCount: number,
+): number {
+  let total = 0;
+  for (let index = 0; index < labels.length; index += 1) {
+    const probability = probabilities[index * classCount + labels[index]];
+    total -= Math.log(Math.max(probability, 1e-7));
+  }
+  return total / labels.length;
+}
+
 function roundFromSample(sample: MnistSample): SegmentRound {
   const images = Float32Array.from(sample.images);
   const labels = Uint8Array.from(sample.labels);
@@ -1755,13 +1769,42 @@ describe('segmented training', () => {
     expect(result.loss).toBeCloseTo(lastRoundMean, 4);
   });
 
+  it('counts the shard files covered by one loss-window batch', async () => {
+    const trainer = await makeTrainer(SMALL_FILTERS, {
+      batchSize: 2,
+      seed: 5,
+      outputClasses: 2,
+    });
+    // Un seul round de deux exemples, un par classe : le lot de taille 2
+    // traverse les deux fragments.
+    const fixture = makeSegmentFixture([[1], [1]], 8);
+    const events: MnistTrainingProgress[] = [];
+    const result = await trainer.trainSegmented({
+      trainPlan: fixture.plan,
+      trainLoader: fixture.loader,
+      epochs: 1,
+      lossSampleEvery: 1,
+      progressIntervalMs: 0,
+      onProgress: (progress) => events.push(progress),
+    });
+    expect(result.status).toBe('completed');
+    const firstBatch = events.find(
+      (event) => event.status === 'running' && event.batchesProcessed === 1,
+    );
+    expect(firstBatch).toBeDefined();
+    expect(firstBatch?.windowShards).toBe(2);
+    expect(result.windowShards).toBe(2);
+  });
+
   it('aggregates segmented validation with weighted loss and accuracy', async () => {
     const config = { batchSize: 4, seed: 21, outputClasses: 2 } as const;
     const trainFixture = makeSegmentFixture([[8], [8]], 4);
+    // Rounds de validation inégaux : 2 + 2 puis 6 + 6 exemples. Une moyenne
+    // non pondérée des deux rounds diffère donc nettement de la moyenne plate.
     const validationFixture = makeSegmentFixture(
       [
-        [4, 4],
-        [4, 4],
+        [2, 6],
+        [2, 6],
       ],
       6,
     );
@@ -1790,15 +1833,40 @@ describe('segmented training', () => {
     expect(segmentedResult.status).toBe('completed');
     expect(flatResult.validationLoss).not.toBeNull();
     expect(flatResult.validationAccuracy).not.toBeNull();
+
+    // Vérifie que les rounds ont bien des effectifs différents et que la
+    // moyenne pondérée par effectif diffère de la moyenne non pondérée.
+    const rounds = validationFixture.plan.roundsForEpoch(0);
+    const roundCounts = rounds.map((ref) =>
+      ref.entries.reduce((sum, entry) => sum + entry.count, 0),
+    );
+    expect(new Set(roundCounts)).toEqual(new Set([4, 12]));
+    const roundLosses: number[] = [];
+    let weightedLoss = 0;
+    let totalCount = 0;
+    for (let index = 0; index < rounds.length; index += 1) {
+      const sample = validationFixture.loader.sampleFor(rounds[index]);
+      const probabilities = await segmentedTrainer.predict(sample);
+      const roundLoss = meanCrossEntropy(probabilities, sample.labels, 2);
+      roundLosses.push(roundLoss);
+      weightedLoss += roundLoss * roundCounts[index];
+      totalCount += roundCounts[index];
+    }
+    const meanWeightedLoss = weightedLoss / totalCount;
+    const unweightedLoss = roundLosses.reduce((sum, value) => sum + value, 0) / roundLosses.length;
+    // L'écart dépasse la tolérance de 5 décimales de la comparaison plate.
+    expect(Math.abs(meanWeightedLoss - unweightedLoss)).toBeGreaterThan(1e-5);
+
     // Les deux entraîneurs partent de la même graine et voient les mêmes lots :
     // seule l'agrégation de validation diffère.
+    expect(segmentedResult.validationLoss).toBeCloseTo(meanWeightedLoss, 4);
     expect(segmentedResult.validationLoss).toBeCloseTo(flatResult.validationLoss ?? 0, 5);
     expect(segmentedResult.validationAccuracy).toBeCloseTo(flatResult.validationAccuracy ?? 0, 5);
     expect(validationFixture.loader.loadCalls).toHaveLength(2);
     expect(validationFixture.loader.releaseCalls.length).toBeGreaterThanOrEqual(2);
   });
 
-  it('stops between rounds and releases the current and prefetched rounds', async () => {
+  it('cancels after the last batch of a round and releases the current and prefetched rounds', async () => {
     const trainer = await makeTrainer(SMALL_FILTERS, {
       batchSize: 4,
       seed: 7,
@@ -1834,6 +1902,56 @@ describe('segmented training', () => {
     expect(fixture.loader.loadCalls).toHaveLength(1);
     expect(fixture.loader.prefetchCalls).toHaveLength(1);
     expect(fixture.loader.releaseCalls).toHaveLength(2);
+  });
+
+  it('stops before the next round when cancellation arrives from releaseRound', async () => {
+    const trainer = await makeTrainer(SMALL_FILTERS, {
+      batchSize: 4,
+      seed: 13,
+      outputClasses: 2,
+    });
+    const fixture = makeSegmentFixture(
+      [
+        [4, 4],
+        [4, 4],
+      ],
+      14,
+    );
+    const base = fixture.loader;
+    let releaseCount = 0;
+    const cancellingLoader: SegmentLoader = {
+      totalCount: base.totalCount,
+      loadRound(ref) {
+        return base.loadRound(ref);
+      },
+      prefetchRound(ref) {
+        base.prefetchRound(ref);
+      },
+      releaseRound(ref) {
+        releaseCount += 1;
+        base.releaseRound(ref);
+        if (releaseCount === 1) {
+          void trainer.cancel();
+        }
+      },
+    };
+    const result = await trainer.trainSegmented({
+      trainPlan: fixture.plan,
+      trainLoader: cancellingLoader,
+      epochs: 2,
+      lossSampleEvery: 1,
+      progressIntervalMs: 0,
+      onProgress: () => undefined,
+    });
+    expect(result.status).toBe('cancelled');
+    // Le premier round s'achève avant la libération, puis le contrôle en tête
+    // de round arrête l'époque avant le second `loadRound`.
+    expect(result.completedRounds).toBe(1);
+    expect(result.completedEpochs).toBe(0);
+    // Le round suivant est préchargé mais jamais chargé.
+    expect(base.loadCalls).toHaveLength(1);
+    expect(base.prefetchCalls).toHaveLength(1);
+    expect(base.releaseCalls).toHaveLength(2);
   });
 
   it('keeps one optimizer for the whole run', async () => {
@@ -1936,6 +2054,68 @@ describe('segmented training', () => {
       },
     });
     expect(cancelled.status).toBe('cancelled');
+    expect(tf.memory().numTensors).toBe(baseline);
+  });
+
+  it('releases the first round and its tensors when the second loadRound rejects', async () => {
+    const trainer = await makeTrainer(SMALL_FILTERS, {
+      batchSize: 4,
+      seed: 17,
+      outputClasses: 2,
+    });
+    // Première course réussie : les moments Adam existent avant la référence.
+    const warmUp = makeSegmentFixture(
+      [
+        [4, 4],
+        [4, 4],
+      ],
+      18,
+    );
+    await trainer.trainSegmented({
+      trainPlan: warmUp.plan,
+      trainLoader: warmUp.loader,
+      epochs: 1,
+      onProgress: () => undefined,
+    });
+    const baseline = tf.memory().numTensors;
+
+    const fixture = makeSegmentFixture(
+      [
+        [4, 4],
+        [4, 4],
+      ],
+      19,
+    );
+    const base = fixture.loader;
+    const failure = new Error('second round load failed');
+    let loadCount = 0;
+    const failingLoader: SegmentLoader = {
+      totalCount: base.totalCount,
+      loadRound(ref) {
+        loadCount += 1;
+        if (loadCount === 1) {
+          return base.loadRound(ref);
+        }
+        return Promise.reject(failure);
+      },
+      prefetchRound(ref) {
+        base.prefetchRound(ref);
+      },
+      releaseRound(ref) {
+        base.releaseRound(ref);
+      },
+    };
+    const rounds = fixture.plan.roundsForEpoch(0);
+    await expect(
+      trainer.trainSegmented({
+        trainPlan: fixture.plan,
+        trainLoader: failingLoader,
+        epochs: 1,
+        onProgress: () => undefined,
+      }),
+    ).rejects.toThrow('second round load failed');
+    // Le premier round est libéré avant que le second chargement n'échoue.
+    expect(base.releaseCalls[0]).toEqual(rounds[0]);
     expect(tf.memory().numTensors).toBe(baseline);
   });
 });
