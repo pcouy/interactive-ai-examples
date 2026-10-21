@@ -47,17 +47,23 @@ const current =
 
         root.dataset.theme = stored ?? (media.matches ? 'dark' : 'light');
 
+        const syncToggle = () => {
+          const theme = root.dataset.theme === 'dark' ? 'dark' : 'light';
+          const button = document.querySelector('[data-theme-toggle]');
+          if (!button) return;
+
+          button.setAttribute('aria-pressed', String(theme === 'dark'));
+          button.setAttribute('aria-label', labelFor(theme));
+
+          const label = button.querySelector('[data-theme-label]');
+          if (label) label.textContent = labelFor(theme);
+        };
+
+        window.__drlSyncThemeToggle = syncToggle;
+
         const apply = (theme, persist) => {
           root.dataset.theme = theme;
-
-          const button = document.querySelector('[data-theme-toggle]');
-          if (button) {
-            button.setAttribute('aria-pressed', String(theme === 'dark'));
-            button.setAttribute('aria-label', labelFor(theme));
-
-            const label = button.querySelector('[data-theme-label]');
-            if (label) label.textContent = labelFor(theme);
-          }
+          syncToggle();
 
           if (persist) {
             try {

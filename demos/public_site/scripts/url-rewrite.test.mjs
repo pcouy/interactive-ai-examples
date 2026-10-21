@@ -97,3 +97,35 @@ test('rewriteHtml leaves unsafe and external values untouched', () => {
 
   assert.equal(rewriteHtml(html), html);
 });
+
+test('rewriteHtml does not touch inline script bodies', () => {
+  const html = [
+    '<script>',
+    'element.href = "/deep-blue";',
+    'const background = "url(/x)";',
+    '</script>',
+  ].join('\n');
+
+  assert.equal(rewriteHtml(html), html);
+});
+
+test('rewriteHtml ignores prefixed href attributes', () => {
+  const html = '<div data-href="/x"></div><svg><use xlink:href="/x"></use></svg>';
+  assert.equal(rewriteHtml(html), html);
+});
+
+test('rewriteHtml rewrites normal href and src attributes', () => {
+  const html = '<a href="/x">x</a><img src="/x.js">';
+  assert.equal(rewriteHtml(html), '<a href="./x.html">x</a><img src="./x.js">');
+});
+
+test('rewriteHtml rewrites the src of an external script tag', () => {
+  const html = '<script src="/x.js"></script>';
+  assert.equal(rewriteHtml(html), '<script src="./x.js"></script>');
+});
+
+test('rewriteHtml rewrites url() inside a style block', () => {
+  const html = '<style>.a{background:url(/x)}</style>';
+  assert.equal(rewriteHtml(html), '<style>.a{background:url(./x)}</style>');
+});
+

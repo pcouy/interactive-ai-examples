@@ -66,8 +66,7 @@ async function fileIsPresent(relative) {
 async function referenceExists(pageFile, reference) {
   const target = reference.split(/[?#]/, 1)[0];
   try {
-    await stat(path.resolve(path.dirname(pageFile), target));
-    return true;
+    return (await stat(path.resolve(path.dirname(pageFile), target))).isFile();
   } catch {
     return false;
   }
@@ -194,7 +193,10 @@ for (const file of htmlFiles) {
       /<script\b[^>]*\bsrc=["']\.\/demo\/drl-demos\.js["']/i.test(html),
       `${label}: missing the demo bundle script ./demo/drl-demos.js.`,
     );
-    check(html.includes('demo-surface'), `${label}: missing the .demo-surface element.`);
+    check(
+      /<section\b[^>]*class=(["'])[^"']*\bdemo-surface\b[^"']*\1/i.test(html),
+      `${label}: missing the <section class="demo-surface"> element.`,
+    );
     check(
       new RegExp(`<${demoTag}(?=[\\s>])`, 'i').test(html),
       `${label}: missing the <${demoTag}> custom element.`,

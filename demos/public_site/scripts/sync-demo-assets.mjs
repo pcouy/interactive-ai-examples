@@ -278,6 +278,16 @@ const onAccent = {
   dark: onAccentFor(drlPalette.dark),
 };
 
+for (const theme of ['light', 'dark']) {
+  const ratio = contrastRatio(onAccent[theme], drlPalette[theme].accent);
+  if (ratio < MIN_CONTRAST) {
+    fail(
+      `[sync] on-accent contrast for ${theme} is ${ratio.toFixed(2)}, ` +
+        `below the required ${MIN_CONTRAST}. Adjust ${tokenFile}.`,
+    );
+  }
+}
+
 const demoSummary = await syncDemoBundle();
 const katexSummary = await syncKatex();
 

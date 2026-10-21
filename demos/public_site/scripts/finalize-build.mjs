@@ -44,8 +44,7 @@ function relativePath(directory, absolute) {
 
 async function fileExists(absolute) {
   try {
-    await stat(absolute);
-    return true;
+    return (await stat(absolute)).isFile();
   } catch {
     return false;
   }

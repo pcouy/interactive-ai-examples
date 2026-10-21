@@ -43,11 +43,6 @@ export function rewriteUrl(value, kind = 'href') {
   return `./${target.slice(1)}${suffix}`;
 }
 
-function rewriteAttribute(_match, prefix, quote, value) {
-  const kind = /href/i.test(prefix) ? 'href' : 'src';
-  return `${prefix}${quote}${rewriteUrl(value, kind)}${quote}`;
-}
-
 function rewriteCssUrl(match, quote, value) {
   if (!value.startsWith('/') || value.startsWith('//')) {
     return match;
@@ -55,18 +50,33 @@ function rewriteCssUrl(match, quote, value) {
   return `url(${quote}${rewriteUrl(value, 'asset')}${quote})`;
 }
 
+function rewriteChunk(chunk) {
+  return chunk
+    .replace(
+      /(\s)(href|src)\s*=\s*(["'])(\/(?!\/)[^"']*)\3/gi,
+      (_match, space, name, quote, value) => {
+        const kind = name.toLowerCase() === 'href' ? 'href' : 'src';
+        return `${space}${name}=${quote}${rewriteUrl(value, kind)}${quote}`;
+      },
+    )
+    .replace(/url\(\s*(["']?)(\/(?!\/)[^"')]*?)\1\s*\)/gi, rewriteCssUrl);
+}
+
 /**
  * Rewrite root-absolute `href`, `src`, and CSS `url()` values in an HTML
  * string so the static build works from any directory (including file://).
+ * Inline script bodies stay untouched because they contain JavaScript, not
+ * markup. The opening tag of an external script is still rewritten.
  */
 export function rewriteHtml(html) {
-  return html
-    .replace(
-      /(\b(?:href|src)\s*=\s*)(["'])([^"']*)\2/gi,
-      rewriteAttribute,
-    )
-    .replace(
-      /url\(\s*(["']?)(\/(?!\/)[^"')]*?)\1\s*\)/gi,
-      rewriteCssUrl,
-    );
+  const parts = html.split(/(<script\b[^>]*>[\s\S]*?<\/script>)/i);
+
+  return parts
+    .map((part, index) => {
+      if (index % 2 === 1) {
+        return part.replace(/^<script\b[^>]*>/i, (tag) => rewriteChunk(tag));
+      }
+      return rewriteChunk(part);
+    })
+    .join('');
 }
