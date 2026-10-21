@@ -8,6 +8,7 @@ import {
   type DatasetDefinition,
   datasetClassCount,
   getDataset,
+  type ShardedDatasetDefinition,
 } from '../../core/dataset-registry.js';
 import {
   activationDomain,
@@ -38,6 +39,11 @@ import {
   mnistCnnParameterCount,
 } from '../../core/mnist-cnn.js';
 import { type MnistCnnAssets, parseMnistCnnManifestJson } from '../../core/mnist-cnn-assets.js';
+import {
+  buildSegmentPlan,
+  type RoundEntry,
+  shouldUseSegments,
+} from '../../core/mnist-cnn-segmented.js';
 import {
   createMnistCnnTfjsTrainer,
   type MnistTrainingProgress,
@@ -83,8 +89,8 @@ import {
   loadShardedGallery,
   loadShardedIndex,
   loadShardedSplits,
+  SegmentStore,
   type ShardedIndex,
-  type ShardedSplitIndex,
   selectShardEntries,
 } from './sharded-assets.js';
 import {
@@ -103,7 +109,11 @@ import {
   type TrainingHistory,
   trainAccuracyPoints,
 } from './training-chart.js';
-import { type MnistRunRequest, MnistTrainingController } from './training-controller.js';
+import {
+  type MnistRunRequest,
+  type MnistSegmentedRun,
+  MnistTrainingController,
+} from './training-controller.js';
 import { isTrainingActive, type TrainingState } from './training-state.js';
 import { applyWeightDraft, weightEditorHint, weightEditorView } from './weight-editor.js';
 import {
@@ -681,22 +691,58 @@ export function clampPercent(value: number): number {
 }
 
 /**
- * Effectif exact des exemples retenus pour `percent` pourcent dans une fraction
- * d'un jeu segmenté : la somme des effectifs des fragments que `selectShardEntries`
- * garde (les premiers fragments de chaque classe). Le dernier fragment d'une
- * classe peut être partiel, donc seul le `count` de chaque fragment retenu est
- * exact. `classIndices` restreint la somme aux classes retenues.
+ * Somme des effectifs des fragments donnés. Le dernier fragment d'une classe
+ * peut être partiel, donc seul le `count` de chaque fragment est exact.
  */
-function shardedSplitExampleCount(
-  split: ShardedSplitIndex,
-  percent: number,
-  classIndices?: readonly number[] | null,
-): number {
+function shardEntryCount(entries: readonly RoundEntry[]): number {
   let total = 0;
-  for (const entry of selectShardEntries(split, percent, classIndices)) {
+  for (const entry of entries) {
     total += entry.count;
   }
   return total;
+}
+
+/**
+ * Effectif exact des exemples retenus pour `percent` pourcent dans une fraction
+ * d'un jeu segmenté : la somme des effectifs des fragments que `selectShardEntries`
+ * garde (les premiers fragments de chaque classe). `classes` restreint la somme
+ * aux classes retenues ; la sélection est celle du magasin et du plan.
+ */
+export function segmentSelectionCount(
+  index: ShardedIndex,
+  split: 'train' | 'test',
+  percent: number,
+  classes: readonly number[],
+): number {
+  return shardEntryCount(selectShardEntries(index.splits[split], percent, classes));
+}
+
+/**
+ * Regroupe des fragments par classe de sortie du réseau : la position de la
+ * classe d'origine dans `classes`. Chaque groupe garde l'ordre des entrées, donc
+ * celui des fragments figés du magasin. Rejette une entrée dont la classe n'est
+ * pas sélectionnée : elle ne peut pas être servie par un magasin qui remappe
+ * les libellés vers `0..classes.length - 1`.
+ */
+export function groupEntriesByNetworkClass(
+  entries: readonly RoundEntry[],
+  classes: readonly number[],
+): RoundEntry[][] {
+  const groups: RoundEntry[][] = classes.map(() => []);
+  const positions = new Map<number, number>();
+  classes.forEach((classIndex, position) => {
+    positions.set(classIndex, position);
+  });
+  for (const entry of entries) {
+    const position = positions.get(entry.classIndex);
+    if (position === undefined) {
+      throw new RangeError(
+        `drl-mnist-cnn: shard "${entry.file}" has classIndex ${entry.classIndex}, which is not one of the selected classes.`,
+      );
+    }
+    groups[position].push(entry);
+  }
+  return groups;
 }
 
 /** Vrai si deux tuples de filtres décrivent la même architecture. */
@@ -1522,6 +1568,13 @@ export class MnistCnn extends LitElement {
   @state()
   private shardedIndex: ShardedIndex | null = null;
 
+  /**
+   * Magasins de rounds par jeu, fraction et sélection de classes. Un magasin
+   * fige les fragments de sa fraction au moment de sa création : la carte est
+   * vidée dès qu'un choix qui décide de ces fragments change.
+   */
+  private segmentStores = new Map<string, SegmentStore>();
+
   /** Fonction d'activation des convolutions et de la couche dense cachée. */
   @state()
   private activation: MnistCnnActivation = DEFAULT_MNIST_CNN_ACTIVATION;
@@ -1712,6 +1765,15 @@ export class MnistCnn extends LitElement {
       );
       this.splits = splits;
       return splits;
+    },
+    loadSegments: async () => {
+      const dataset = this.currentDataset;
+      if (dataset.kind !== 'sharded') {
+        return null;
+      }
+      const index = this.shardedIndex ?? (await loadShardedIndex(dataset));
+      this.shardedIndex = index;
+      return this.buildSegmentRun(dataset, index);
     },
     createTrainer: (config) => createMnistCnnTfjsTrainer(config),
     createSource: (dataset, indices) => createIdxTrainSource(dataset, indices),
@@ -2137,6 +2199,90 @@ export class MnistCnn extends LitElement {
   }
 
   /**
+   * Magasin de rounds d'une fraction, mis en cache par jeu, fraction, sélection
+   * de classes et version de cache. Le magasin fige la sélection de fragments
+   * de la fraction courante : les appels suivants réutilisent ces entrées
+   * exactes, donc son `totalCount` reste celui du plan.
+   */
+  private segmentStoreFor(
+    dataset: ShardedDatasetDefinition,
+    index: ShardedIndex,
+    split: 'train' | 'test',
+  ): SegmentStore {
+    const cacheVersion = dataset.cacheVersion ?? 1;
+    const key = `${dataset.id}:${split}:${this.enabledClasses.join(',')}:${cacheVersion}`;
+    const cached = this.segmentStores.get(key);
+    if (cached !== undefined) {
+      return cached;
+    }
+    const percent = split === 'train' ? this.trainPercent : this.validationPercent;
+    const store = new SegmentStore({
+      dataset,
+      index,
+      classIndices: this.enabledClasses,
+      entries: selectShardEntries(index.splits[split], percent, this.enabledClasses),
+      cacheName: `drl-datasets-v${cacheVersion}-${dataset.id}`,
+      split,
+    });
+    this.segmentStores.set(key, store);
+    return store;
+  }
+
+  /**
+   * Prépare une run segmentée pour un jeu de fragments : fige les fragments des
+   * deux fractions, construit leurs plans et retourne les magasins correspondants.
+   * Retourne null quand la sélection d'entraînement reste dans le seuil : le
+   * chemin qui charge tout le jeu est alors conservé. La validation est toujours
+   * segmentée, ce qui évite de matérialiser la fraction de test.
+   */
+  private buildSegmentRun(
+    dataset: ShardedDatasetDefinition,
+    index: ShardedIndex,
+  ): MnistSegmentedRun | null {
+    const trainEntries = selectShardEntries(
+      index.splits.train,
+      this.trainPercent,
+      this.enabledClasses,
+    );
+    const testEntries = selectShardEntries(
+      index.splits.test,
+      this.validationPercent,
+      this.enabledClasses,
+    );
+    if (!shouldUseSegments(shardEntryCount(trainEntries))) {
+      return null;
+    }
+    const trainStore = this.segmentStoreFor(dataset, index, 'train');
+    const validationStore = this.segmentStoreFor(dataset, index, 'test');
+    const trainPlan = buildSegmentPlan({
+      shardsByClass: groupEntriesByNetworkClass(trainEntries, this.enabledClasses),
+      shardSize: index.shardSize,
+      seed: SEED,
+    });
+    const validationPlan = buildSegmentPlan({
+      shardsByClass: groupEntriesByNetworkClass(testEntries, this.enabledClasses),
+      shardSize: index.shardSize,
+      seed: SEED,
+    });
+    if (trainPlan.totalCount !== trainStore.totalCount) {
+      throw new Error(
+        `drl-mnist-cnn: segmented train plan covers ${trainPlan.totalCount} images but the store pins ${trainStore.totalCount}.`,
+      );
+    }
+    if (validationPlan.totalCount !== validationStore.totalCount) {
+      throw new Error(
+        `drl-mnist-cnn: segmented validation plan covers ${validationPlan.totalCount} images but the store pins ${validationStore.totalCount}.`,
+      );
+    }
+    return {
+      trainPlan,
+      trainLoader: trainStore,
+      validationPlan,
+      validationLoader: validationStore,
+    };
+  }
+
+  /**
    * Recalcule les effectifs affichés : exactement depuis les jeux chargés quand
    * ils le sont, par estimation sur les effectifs officiels sinon. Un jeu
    * segmenté garde déjà la fraction demandée ; un jeu IDX est échantillonné
@@ -2150,15 +2296,17 @@ export class MnistCnn extends LitElement {
       // L'index donne l'effectif exact de la fraction courante, y compris après
       // un déplacement de curseur ; les fragments déjà chargés ne couvrent que
       // l'ancienne fraction.
-      const classIndices = dataset.selectable ? this.enabledClasses : undefined;
+      const classIndices = this.enabledClasses;
       if (this.shardedIndex !== null) {
-        this.trainExampleCount = shardedSplitExampleCount(
-          this.shardedIndex.splits.train,
+        this.trainExampleCount = segmentSelectionCount(
+          this.shardedIndex,
+          'train',
           this.trainPercent,
           classIndices,
         );
-        this.validationExampleCount = shardedSplitExampleCount(
-          this.shardedIndex.splits.test,
+        this.validationExampleCount = segmentSelectionCount(
+          this.shardedIndex,
+          'test',
           this.validationPercent,
           classIndices,
         );
@@ -2446,6 +2594,7 @@ export class MnistCnn extends LitElement {
     this.trainingError = null;
     this.splits = null;
     this.shardedIndex = null;
+    this.segmentStores.clear();
     this.gallerySample = null;
     this.galleryClass = null;
     this.galleryLabel = null;
@@ -2505,6 +2654,7 @@ export class MnistCnn extends LitElement {
    */
   private applyClassSelection(enabled: readonly number[]): void {
     this.enabledClasses = enabled;
+    this.segmentStores.clear();
     void this.controller.notifySliderChanged(this.manifestMatches, true);
     this.resetMetrics();
     this.clearSelection();
@@ -2528,6 +2678,7 @@ export class MnistCnn extends LitElement {
       return;
     }
     this.trainPercent = percent;
+    this.segmentStores.clear();
     if (!this.controller.isRunActive()) {
       this.updateExampleCounts();
     }
@@ -2541,6 +2692,7 @@ export class MnistCnn extends LitElement {
       return;
     }
     this.validationPercent = percent;
+    this.segmentStores.clear();
     if (!this.controller.isRunActive()) {
       this.updateExampleCounts();
     }

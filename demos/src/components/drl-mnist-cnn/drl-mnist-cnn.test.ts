@@ -5,6 +5,12 @@ import type {
   MnistCnnLayerWeights,
   MnistCnnWeights,
 } from '../../core/mnist-cnn.js';
+import {
+  buildSegmentPlan,
+  type RoundEntry,
+  SEGMENT_IMAGE_THRESHOLD,
+  shouldUseSegments,
+} from '../../core/mnist-cnn-segmented.js';
 import type { MnistIdxDataset } from '../../core/mnist-data.js';
 import { displayClass } from './class-selection.js';
 import type { TrainingRunInput, WeightEditorEvent } from './drl-mnist-cnn.js';
@@ -34,6 +40,7 @@ import {
   galleryClassLabel,
   galleryInputHint,
   galleryInputSource,
+  groupEntriesByNetworkClass,
   hexToRgb,
   isReferenceDenseSizes,
   linkCanvasSelectors,
@@ -49,6 +56,7 @@ import {
   parseWeightInput,
   pointerToCell,
   pointerToGrid,
+  segmentSelectionCount,
   selectedWeightValue,
   stepGalleryIndex,
   stratifiedExampleCountEstimate,
@@ -57,7 +65,14 @@ import {
 import type { RectLike } from './filter-links.js';
 import { linkGeometry } from './filter-links.js';
 import { loadDatasetSplits, type MnistSplits } from './mnist-assets.js';
-import { loadShardedSplits } from './sharded-assets.js';
+import {
+  loadShardedSplits,
+  SegmentStore,
+  type ShardEntry,
+  type ShardedIndex,
+  type ShardedSplitIndex,
+  selectShardEntries,
+} from './sharded-assets.js';
 
 vi.mock('./sharded-assets.js', async (importOriginal) => {
   const actual = await importOriginal<typeof import('./sharded-assets.js')>();
@@ -137,6 +152,55 @@ function filterCellEvent(
   kx: number,
 ): WeightEditorEvent {
   return { kind: 'filterCell', layer, inputChannel, outputChannel, ky, kx };
+}
+
+/**
+ * Index synthétique de type QuickDraw : `shardsPerClass` fragments pleins par
+ * classe et par fraction, numérotés dans l'ordre de l'index.
+ */
+function shardedIndexFixture(
+  classCount: number,
+  shardsPerClass: number,
+  countPerShard = 1000,
+): ShardedIndex {
+  const split = (labelsFile: string): ShardedSplitIndex => {
+    const shards: ShardEntry[] = [];
+    let count = 0;
+    for (let classIndex = 0; classIndex < classCount; classIndex += 1) {
+      for (let shardIndex = 0; shardIndex < shardsPerClass; shardIndex += 1) {
+        shards.push({
+          file: `c${classIndex}-s${shardIndex}.idx.gz`,
+          classIndex,
+          start: count,
+          count: countPerShard,
+        });
+        count += countPerShard;
+      }
+    }
+    return { count, labelsFile, shards };
+  };
+  return {
+    version: 2,
+    dataset: 'quickdraw',
+    classNames: Array.from({ length: classCount }, (_unused, index) => `classe-${index}`),
+    shardSize: countPerShard,
+    splits: {
+      train: split('train-labels.idx1.gz'),
+      test: split('test-labels.idx1.gz'),
+    },
+    galleries: {
+      train: {
+        imagesFile: 'train-gallery-images.idx3.gz',
+        labelsFile: 'train-gallery-labels.idx1.gz',
+        perClass: 10,
+      },
+      test: {
+        imagesFile: 'test-gallery-images.idx3.gz',
+        labelsFile: 'test-gallery-labels.idx1.gz',
+        perClass: 10,
+      },
+    },
+  };
 }
 
 describe('mapCanvasSize', () => {
@@ -464,6 +528,106 @@ describe('clampPercent', () => {
     expect(clampPercent(100)).toBe(100);
     expect(clampPercent(0)).toBe(1);
     expect(clampPercent(42.4)).toBe(42);
+  });
+});
+
+describe('segmentSelectionCount', () => {
+  const allClasses = Array.from({ length: 15 }, (_unused, index) => index);
+
+  it('sums exactly the shard entries that selectShardEntries keeps', () => {
+    const index = shardedIndexFixture(15, 107);
+    for (const percent of [1, 2, 10, 100]) {
+      for (const classes of [[0, 1, 2, 3, 4], [2, 5], allClasses]) {
+        const expected = selectShardEntries(index.splits.train, percent, classes).reduce(
+          (total, entry) => total + entry.count,
+          0,
+        );
+        expect(segmentSelectionCount(index, 'train', percent, classes)).toBe(expected);
+      }
+    }
+  });
+
+  it('reads the validation percent from the test split', () => {
+    const index = shardedIndexFixture(15, 107);
+    expect(segmentSelectionCount(index, 'test', 2, [0, 1, 2, 3, 4])).toBe(10_000);
+    expect(segmentSelectionCount(index, 'test', 100, [0, 1, 2, 3, 4])).toBe(5 * 107 * 1000);
+  });
+
+  it('keeps a two-percent five-class selection on the whole path', () => {
+    const index = shardedIndexFixture(15, 107);
+    const small = segmentSelectionCount(index, 'train', 2, [0, 1, 2, 3, 4]);
+    expect(small).toBe(10_000);
+    expect(small).toBeLessThanOrEqual(SEGMENT_IMAGE_THRESHOLD);
+    expect(shouldUseSegments(small)).toBe(false);
+  });
+
+  it('switches to segments at ten percent of all classes and at full size', () => {
+    const index = shardedIndexFixture(15, 107);
+    const tenPercent = segmentSelectionCount(index, 'train', 10, allClasses);
+    const full = segmentSelectionCount(index, 'train', 100, allClasses);
+    expect(tenPercent).toBe(15 * 11 * 1000);
+    expect(full).toBe(15 * 107 * 1000);
+    expect(shouldUseSegments(tenPercent)).toBe(true);
+    expect(shouldUseSegments(full)).toBe(true);
+  });
+});
+
+describe('groupEntriesByNetworkClass', () => {
+  function entry(classIndex: number, file: string): RoundEntry {
+    return { file, classIndex, start: 0, count: 10 };
+  }
+
+  it('groups entries by network position and keeps the pinned order', () => {
+    const entries = [entry(2, 'c2-a'), entry(2, 'c2-b'), entry(5, 'c5-a')];
+    const groups = groupEntriesByNetworkClass(entries, [2, 5]);
+    expect(groups).toHaveLength(2);
+    expect(groups[0].map((item) => item.file)).toEqual(['c2-a', 'c2-b']);
+    expect(groups[1].map((item) => item.file)).toEqual(['c5-a']);
+    expect(groups[0].every((item) => item.classIndex === 2)).toBe(true);
+    expect(groups[1].every((item) => item.classIndex === 5)).toBe(true);
+  });
+
+  it('follows the order of the selected classes, not the original class order', () => {
+    const groups = groupEntriesByNetworkClass([entry(2, 'c2-a'), entry(5, 'c5-a')], [5, 2]);
+    expect(groups.map((group) => group[0].classIndex)).toEqual([5, 2]);
+  });
+
+  it('keeps an empty group for a selected class without entries', () => {
+    const groups = groupEntriesByNetworkClass([entry(2, 'c2-a')], [2, 5]);
+    expect(groups[0]).toHaveLength(1);
+    expect(groups[1]).toEqual([]);
+  });
+
+  it('rejects a shard of a class that is not selected', () => {
+    expect(() => groupEntriesByNetworkClass([entry(3, 'c3-a')], [2, 5])).toThrow(RangeError);
+  });
+
+  it('builds a plan whose total matches the pinned store on both splits', () => {
+    const index = shardedIndexFixture(15, 107);
+    const dataset = getDataset('quickdraw');
+    if (dataset.kind !== 'sharded') {
+      throw new Error('The QuickDraw dataset must be segmented.');
+    }
+    const classes = [0, 1, 2, 3, 4];
+    for (const split of ['train', 'test'] as const) {
+      const percent = split === 'train' ? 100 : 10;
+      const entries = selectShardEntries(index.splits[split], percent, classes);
+      const plan = buildSegmentPlan({
+        shardsByClass: groupEntriesByNetworkClass(entries, classes),
+        shardSize: index.shardSize,
+        seed: 42,
+      });
+      const store = new SegmentStore({
+        dataset,
+        index,
+        classIndices: classes,
+        entries,
+        cacheName: 'drl-datasets-v2-quickdraw',
+        split,
+      });
+      expect(plan.totalCount).toBe(store.totalCount);
+      expect(store.totalCount).toBe(segmentSelectionCount(index, split, percent, classes));
+    }
   });
 });
 
