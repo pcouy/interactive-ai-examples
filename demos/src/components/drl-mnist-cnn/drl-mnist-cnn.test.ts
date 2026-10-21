@@ -1,10 +1,12 @@
-import { describe, expect, it } from 'vitest';
+import { describe, expect, it, vi } from 'vitest';
 import { getDataset } from '../../core/dataset-registry.js';
 import type {
   MnistCnnFilters,
   MnistCnnLayerWeights,
   MnistCnnWeights,
 } from '../../core/mnist-cnn.js';
+import type { MnistIdxDataset } from '../../core/mnist-data.js';
+import { displayClass } from './class-selection.js';
 import type { TrainingRunInput, WeightEditorEvent } from './drl-mnist-cnn.js';
 import {
   activationRgb,
@@ -14,8 +16,8 @@ import {
   argmaxIndex,
   brushStrength,
   clampDenseSize,
+  clampPercent,
   convLayerGeometry,
-  datasetMaxPercent,
   denseCellLabel,
   denseLayerTitle,
   densePackColumns,
@@ -37,6 +39,7 @@ import {
   linkCanvasSelectors,
   linkGroupIndices,
   linkLineState,
+  loadSplitsForDataset,
   mapCanvasSize,
   mapCellSize,
   mixRgb,
@@ -52,6 +55,13 @@ import {
 } from './drl-mnist-cnn.js';
 import type { RectLike } from './filter-links.js';
 import { linkGeometry } from './filter-links.js';
+import type { MnistSplits } from './mnist-assets.js';
+import { loadShardedSplits } from './sharded-assets.js';
+
+vi.mock('./sharded-assets.js', async (importOriginal) => {
+  const actual = await importOriginal<typeof import('./sharded-assets.js')>();
+  return { ...actual, loadShardedSplits: vi.fn() };
+});
 
 function blankPixels(): Float32Array {
   return new Float32Array(784);
@@ -442,10 +452,21 @@ describe('stratifiedExampleCountEstimate', () => {
   });
 });
 
-describe('datasetMaxPercent', () => {
-  it('caps a memory-heavy dataset and leaves the others at 100', () => {
-    expect(datasetMaxPercent(getDataset('mnist'))).toBe(100);
-    expect(datasetMaxPercent(getDataset('quickdraw'))).toBe(100);
+describe('clampPercent', () => {
+  it('caps the selection percent at 100 and keeps the lower bound', () => {
+    expect(clampPercent(150)).toBe(100);
+    expect(clampPercent(100)).toBe(100);
+    expect(clampPercent(0)).toBe(1);
+    expect(clampPercent(42.4)).toBe(42);
+  });
+});
+
+describe('displayClass', () => {
+  it('maps a network output index to the original class index', () => {
+    const enabled = [0, 2, 7];
+    expect(displayClass(enabled, 0)).toBe(0);
+    expect(displayClass(enabled, 1)).toBe(2);
+    expect(displayClass(enabled, 2)).toBe(7);
   });
 });
 
@@ -1030,6 +1051,7 @@ describe('trainingRunRequest', () => {
       denseLayers: 2,
       denseSizes: [8, 8],
       outputClasses: 10,
+      enabledClasses: [0, 1, 2, 3, 4, 5, 6, 7, 8, 9],
       learningRate: 0.01,
       batchSize: 64,
       trainPercent: 25,
@@ -1087,6 +1109,12 @@ describe('trainingRunRequest', () => {
     expect(trainingRunRequest(input({ outputClasses: 5 })).outputClasses).toBe(5);
   });
 
+  it('forwards the enabled classes and the checked output width', () => {
+    const request = trainingRunRequest(input({ outputClasses: 3, enabledClasses: [0, 2, 7] }));
+    expect(request.outputClasses).toBe(3);
+    expect(request.enabledClasses).toEqual([0, 2, 7]);
+  });
+
   it('forwards the batch size from the input', () => {
     const request = trainingRunRequest(input({ batchSize: 32 }));
     expect(request.batchSize).toBe(32);
@@ -1099,6 +1127,29 @@ describe('trainingRunRequest', () => {
 
   it('forwards sigmoid from the input', () => {
     expect(trainingRunRequest(input()).activation).toBe('sigmoid');
+  });
+});
+
+describe('loadSplitsForDataset', () => {
+  function idxDataset(count: number): MnistIdxDataset {
+    return {
+      count,
+      images: new Uint8Array(count * 784),
+      labels: new Uint8Array(count),
+    };
+  }
+
+  it('passes the enabled classes to the sharded loader', async () => {
+    const splits: MnistSplits = { train: idxDataset(10), test: idxDataset(5) };
+    const loader = vi.mocked(loadShardedSplits);
+    loader.mockResolvedValueOnce(splits);
+    const dataset = getDataset('quickdraw');
+    const enabledClasses = [0, 2, 4];
+
+    await expect(loadSplitsForDataset(dataset, 2, 3, enabledClasses)).resolves.toBe(splits);
+    // Le cinquième argument est la sélection de classes : sans lui, les libellés
+    // remontent jusqu'à 14 classes alors que la sortie en compte `enabledClasses.length`.
+    expect(loader).toHaveBeenCalledWith(dataset, 2, 3, undefined, enabledClasses);
   });
 });
 

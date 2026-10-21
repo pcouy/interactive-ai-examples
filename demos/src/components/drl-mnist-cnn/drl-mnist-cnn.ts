@@ -50,6 +50,13 @@ import {
 import { createIdxTrainSource } from '../../core/mnist-train-source.js';
 import { drlTokens } from '../../styles/tokens.js';
 import {
+  classOrder,
+  defaultEnabledClasses,
+  displayClass,
+  MIN_ENABLED_CLASSES,
+  toggleEnabledClass,
+} from './class-selection.js';
+import {
   badgeText,
   type DemoStatusInput,
   formatPercent,
@@ -668,9 +675,9 @@ export function stratifiedExampleCountEstimate(
   return classCount * Math.max(1, Math.round(perClass * fraction));
 }
 
-/** Pourcentage maximal applicable à un jeu : 100, ou sa limite mémoire. */
-export function datasetMaxPercent(dataset: DatasetDefinition): number {
-  return Math.min(MAX_PERCENT, dataset.maxPercent ?? MAX_PERCENT);
+/** Borne et arrondit un pourcentage de sélection entre `MIN_PERCENT` et `MAX_PERCENT`. */
+export function clampPercent(value: number): number {
+  return clamp(Math.round(value), MIN_PERCENT, MAX_PERCENT);
 }
 
 /**
@@ -678,11 +685,15 @@ export function datasetMaxPercent(dataset: DatasetDefinition): number {
  * d'un jeu segmenté : la somme des effectifs des fragments que `selectShardEntries`
  * garde (les premiers fragments de chaque classe). Le dernier fragment d'une
  * classe peut être partiel, donc seul le `count` de chaque fragment retenu est
- * exact.
+ * exact. `classIndices` restreint la somme aux classes retenues.
  */
-function shardedSplitExampleCount(split: ShardedSplitIndex, percent: number): number {
+function shardedSplitExampleCount(
+  split: ShardedSplitIndex,
+  percent: number,
+  classIndices?: readonly number[] | null,
+): number {
   let total = 0;
-  for (const entry of selectShardEntries(split, percent)) {
+  for (const entry of selectShardEntries(split, percent, classIndices)) {
     total += entry.count;
   }
   return total;
@@ -704,6 +715,8 @@ export interface TrainingRunInput {
   readonly denseSizes: readonly number[];
   /** Nombre de classes de sortie du jeu sélectionné. */
   readonly outputClasses: number;
+  /** Classes d'origine retenues, dans l'ordre de sortie du réseau. */
+  readonly enabledClasses: readonly number[];
   readonly learningRate: number;
   readonly batchSize: number;
   readonly trainPercent: number;
@@ -727,6 +740,7 @@ export function trainingRunRequest(input: TrainingRunInput): MnistRunRequest {
     denseLayers: input.denseLayers,
     denseSizes: input.denseSizes,
     outputClasses: input.outputClasses,
+    enabledClasses: input.enabledClasses,
     learningRate: input.learningRate,
     batchSize: input.batchSize,
     seed: SEED,
@@ -736,6 +750,22 @@ export function trainingRunRequest(input: TrainingRunInput): MnistRunRequest {
     initialWeights: input.weights,
     activation: input.activation,
   };
+}
+
+/**
+ * Charge les deux fractions du jeu sélectionné. Un jeu segmenté reçoit
+ * `enabledClasses` : ses libellés sont remappés sur la sortie du réseau, qui a
+ * `enabledClasses.length` unités. Un jeu IDX n'a pas de filtre de classes.
+ */
+export async function loadSplitsForDataset(
+  dataset: DatasetDefinition,
+  trainPercent: number,
+  validationPercent: number,
+  enabledClasses: readonly number[],
+): Promise<MnistSplits> {
+  return dataset.kind === 'sharded'
+    ? loadShardedSplits(dataset, trainPercent, validationPercent, undefined, enabledClasses)
+    : loadDatasetSplits(dataset);
 }
 
 /**
@@ -1017,6 +1047,56 @@ export class MnistCnn extends LitElement {
         border-radius: calc(var(--drl-radius) / 2);
         background: var(--drl-bg);
         color: var(--drl-fg);
+      }
+
+      .drl-class-picker {
+        margin: 0;
+        padding: var(--drl-space-2);
+        border: 1px solid var(--drl-border);
+        border-radius: calc(var(--drl-radius) / 2);
+        background: var(--drl-bg);
+      }
+
+      .drl-class-picker legend {
+        padding: 0 var(--drl-space-1);
+        color: var(--drl-muted);
+        font-size: 0.85em;
+      }
+
+      .drl-class-grid {
+        display: grid;
+        grid-template-columns: repeat(3, minmax(0, 1fr));
+        gap: var(--drl-space-1) var(--drl-space-2);
+      }
+
+      .drl-class-option {
+        display: flex;
+        align-items: center;
+        gap: var(--drl-space-1);
+        min-width: 0;
+        font-size: 0.85em;
+      }
+
+      .drl-class-option input {
+        flex: none;
+      }
+
+      .drl-class-name {
+        overflow: hidden;
+        text-overflow: ellipsis;
+        white-space: nowrap;
+      }
+
+      @media (max-width: 920px) {
+        .drl-class-grid {
+          grid-template-columns: repeat(2, minmax(0, 1fr));
+        }
+      }
+
+      @media (max-width: 560px) {
+        .drl-class-grid {
+          grid-template-columns: minmax(0, 1fr);
+        }
       }
 
       .drl-toolbar {
@@ -1405,6 +1485,10 @@ export class MnistCnn extends LitElement {
   @state()
   private selectedDatasetId = 'mnist';
 
+  /** Classes retenues pour un jeu sélectionnable ; toutes pour les autres. */
+  @state()
+  private enabledClasses: readonly number[] = defaultEnabledClasses(getDataset('mnist'));
+
   /** Vrai pendant le chargement des ressources du jeu sélectionné. */
   @state()
   private datasetLoading = false;
@@ -1497,6 +1581,26 @@ export class MnistCnn extends LitElement {
   @state()
   private elapsedMs = 0;
 
+  /** Nombre d'époques achevées, ou null avant le premier évènement de progression. */
+  @state()
+  private completedEpochs: number | null = null;
+
+  /** Indice du round en cours dans l'époque, ou null hors run segmentée. */
+  @state()
+  private roundIndex: number | null = null;
+
+  /** Nombre de rounds par époque du plan segmenté, ou null hors run segmentée. */
+  @state()
+  private roundsPerEpoch: number | null = null;
+
+  /** Nombre cumulé de rounds achevés depuis le début de la run. */
+  @state()
+  private completedRounds: number | null = null;
+
+  /** Nombre de fragments couverts par la dernière fenêtre de perte lue. */
+  @state()
+  private windowShards: number | null = null;
+
   /** Historique des points de courbe, un par époque achevée (plafonné à 50). */
   @state()
   private history: TrainingHistory = emptyHistory();
@@ -1585,11 +1689,12 @@ export class MnistCnn extends LitElement {
   /** Contrôleur du cycle de vie de l'entraînement (pur, sans DOM ni TFJS). */
   private readonly controller = new MnistTrainingController({
     loadSplits: async () => {
-      const dataset = this.currentDataset;
-      const splits =
-        dataset.kind === 'sharded'
-          ? await loadShardedSplits(dataset, this.trainPercent, this.validationPercent)
-          : await loadDatasetSplits(dataset);
+      const splits = await loadSplitsForDataset(
+        this.currentDataset,
+        this.trainPercent,
+        this.validationPercent,
+        this.enabledClasses,
+      );
       this.splits = splits;
       return splits;
     },
@@ -1651,7 +1756,19 @@ export class MnistCnn extends LitElement {
 
   /** Nombre de classes de sortie du jeu sélectionné. */
   private get outputClasses(): number {
-    return datasetClassCount(this.currentDataset);
+    const dataset = this.currentDataset;
+    return dataset.selectable ? this.enabledClasses.length : datasetClassCount(dataset);
+  }
+
+  /** Classe d'origine affichée pour l'indice de sortie `index`. */
+  private displayClass(index: number): number {
+    return this.currentDataset.selectable ? displayClass(this.enabledClasses, index) : index;
+  }
+
+  /** Vrai si la sélection de classes permet une run. */
+  private get classSelectionReady(): boolean {
+    const dataset = this.currentDataset;
+    return !dataset.selectable || this.enabledClasses.length >= MIN_ENABLED_CLASSES;
   }
 
   /**
@@ -1668,11 +1785,16 @@ export class MnistCnn extends LitElement {
       loss: this.loss,
       validationAccuracy: this.validationAccuracy,
       elapsedMs: this.elapsedMs,
+      completedEpochs: this.completedEpochs,
+      roundIndex: this.roundIndex,
+      roundsPerEpoch: this.roundsPerEpoch,
+      completedRounds: this.completedRounds,
+      windowShards: this.windowShards,
       metricsStarted: this.metricsStarted,
       trainExampleCount: this.trainExampleCount,
       validationExampleCount: this.validationExampleCount,
       parameters: mnistCnnParameterCount(this.architectureConfig),
-      predictedClass: this.predictedClass,
+      predictedClass: this.predictedClass === null ? null : this.displayClass(this.predictedClass),
       inputSource: this.inputSource,
     };
   }
@@ -1713,7 +1835,17 @@ export class MnistCnn extends LitElement {
 
   /** Nombre d'exemples proposés par classe dans la galerie chargée. */
   private get galleryPerClass(): number {
-    return this.gallerySample === null ? 0 : this.gallerySample.count / this.outputClasses;
+    return this.gallerySample === null
+      ? 0
+      : this.gallerySample.count / datasetClassCount(this.currentDataset);
+  }
+
+  /** Classes proposées par le sélecteur de galerie : les classes retenues d'un jeu sélectionnable. */
+  private get galleryClassIndices(): readonly number[] {
+    const dataset = this.currentDataset;
+    return dataset.selectable
+      ? classOrder(this.enabledClasses)
+      : dataset.classNames.map((_name, index) => index);
   }
 
   /** Vrai quand la galerie est chargée et qu'un chiffre est affiché. */
@@ -2001,21 +2133,32 @@ export class MnistCnn extends LitElement {
       // L'index donne l'effectif exact de la fraction courante, y compris après
       // un déplacement de curseur ; les fragments déjà chargés ne couvrent que
       // l'ancienne fraction.
+      const classIndices = dataset.selectable ? this.enabledClasses : undefined;
       if (this.shardedIndex !== null) {
         this.trainExampleCount = shardedSplitExampleCount(
           this.shardedIndex.splits.train,
           this.trainPercent,
+          classIndices,
         );
         this.validationExampleCount = shardedSplitExampleCount(
           this.shardedIndex.splits.test,
           this.validationPercent,
+          classIndices,
         );
       } else if (this.splits !== null) {
         this.trainExampleCount = this.splits.train.count;
         this.validationExampleCount = this.splits.test.count;
       } else {
-        this.trainExampleCount = Math.round(dataset.trainCount * trainFraction);
-        this.validationExampleCount = Math.round(dataset.testCount * validationFraction);
+        // Estimation provisoire : chaque classe active fournit la même part du
+        // jeu, donc seules les classes cochées comptent.
+        const classCount = dataset.selectable
+          ? this.enabledClasses.length
+          : datasetClassCount(dataset);
+        const perClassRatio = classCount / datasetClassCount(dataset);
+        this.trainExampleCount = Math.round(dataset.trainCount * perClassRatio * trainFraction);
+        this.validationExampleCount = Math.round(
+          dataset.testCount * perClassRatio * validationFraction,
+        );
       }
       return;
     }
@@ -2046,7 +2189,7 @@ export class MnistCnn extends LitElement {
 
   /** Lance une run depuis les poids affichés, pour le nombre d'époques demandé. */
   private startTraining(epochs: number): void {
-    if (this.startingTraining || this.controller.isRunActive()) {
+    if (this.startingTraining || this.controller.isRunActive() || !this.classSelectionReady) {
       return;
     }
     this.startingTraining = true;
@@ -2058,6 +2201,7 @@ export class MnistCnn extends LitElement {
       denseLayers: this.denseLayers,
       denseSizes: this.denseSizes,
       outputClasses: this.outputClasses,
+      enabledClasses: this.enabledClasses,
       learningRate: this.learningRate,
       batchSize: this.batchSize,
       trainPercent: this.trainPercent,
@@ -2122,6 +2266,11 @@ export class MnistCnn extends LitElement {
     this.loss = null;
     this.validationAccuracy = null;
     this.elapsedMs = 0;
+    this.completedEpochs = null;
+    this.roundIndex = null;
+    this.roundsPerEpoch = null;
+    this.completedRounds = null;
+    this.windowShards = null;
     this.metricsStarted = false;
     this.history = emptyHistory();
     this.lastEmittedEpoch = 0;
@@ -2132,6 +2281,11 @@ export class MnistCnn extends LitElement {
     this.loss = Number.isFinite(progress.loss) ? progress.loss : null;
     this.validationAccuracy = progress.validationAccuracy;
     this.elapsedMs = progress.elapsedMs;
+    this.completedEpochs = progress.completedEpochs;
+    this.roundIndex = progress.roundIndex ?? null;
+    this.roundsPerEpoch = progress.roundsPerEpoch ?? null;
+    this.completedRounds = progress.completedRounds ?? null;
+    this.windowShards = progress.windowShards ?? null;
     this.metricsStarted = true;
     if (progress.completedEpochs > this.lastEmittedEpoch) {
       const point = epochPoint(progress, this.lastEmittedEpoch, this.history.epochs + 1);
@@ -2266,6 +2420,7 @@ export class MnistCnn extends LitElement {
       return;
     }
     this.selectedDatasetId = dataset.id;
+    this.enabledClasses = defaultEnabledClasses(dataset);
     this.datasetError = null;
     const token = ++this.datasetSwitchToken;
     this.datasetLoading = true;
@@ -2298,10 +2453,56 @@ export class MnistCnn extends LitElement {
     });
   }
 
+  /**
+   * Coche ou décoche une classe d'un jeu sélectionnable. La case cochée qui
+   * ferait passer la sélection sous le minimum reste bloquée : `toggleEnabledClass`
+   * retourne alors `null`.
+   */
+  private setClassEnabled(index: number, checked: boolean): void {
+    if (!this.currentDataset.selectable) {
+      return;
+    }
+    if (this.enabledClasses.includes(index) === checked) {
+      return;
+    }
+    const next = toggleEnabledClass(this.enabledClasses, index);
+    if (next === null) {
+      return;
+    }
+    this.applyClassSelection(next);
+  }
+
+  /** Case à cocher d'une classe : transmet son nouvel état à `setClassEnabled`. */
+  private readonly handleClassToggle = (index: number, event: Event): void => {
+    const target = event.currentTarget;
+    if (target instanceof HTMLInputElement) {
+      this.setClassEnabled(index, target.checked);
+    }
+  };
+
+  /**
+   * Applique une nouvelle sélection de classes : arrête la run, reconstruit les
+   * poids avec la nouvelle largeur de sortie, remet la galerie à zéro et
+   * recalcule l'inférence et les effectifs. Aucune galerie n'est rechargée : les
+   * exemples déjà en mémoire couvrent toutes les classes.
+   */
+  private applyClassSelection(enabled: readonly number[]): void {
+    this.enabledClasses = enabled;
+    void this.controller.notifySliderChanged(this.manifestMatches, true);
+    this.resetMetrics();
+    this.clearSelection();
+    this.weights = this.weightsForCurrentFilters();
+    this.galleryClass = null;
+    this.galleryIndex = 0;
+    this.galleryLabel = null;
+    this.runInference();
+    this.updateExampleCounts();
+  }
+
   /** Change la part du jeu d'entraînement : n'agit qu'à la prochaine run et
    * n'interrompt pas une run active. */
   private setTrainPercent(value: number): void {
-    const percent = clamp(Math.round(value), MIN_PERCENT, datasetMaxPercent(this.currentDataset));
+    const percent = clampPercent(value);
     if (percent === this.trainPercent) {
       return;
     }
@@ -2314,7 +2515,7 @@ export class MnistCnn extends LitElement {
   /** Change la part du jeu de validation : n'agit qu'à la prochaine run et
    * n'interrompt pas une run active. */
   private setValidationPercent(value: number): void {
-    const percent = clamp(Math.round(value), MIN_PERCENT, datasetMaxPercent(this.currentDataset));
+    const percent = clampPercent(value);
     if (percent === this.validationPercent) {
       return;
     }
@@ -2354,7 +2555,14 @@ export class MnistCnn extends LitElement {
       return;
     }
     const classValue = Number(target.value);
-    if (!Number.isInteger(classValue) || classValue < 0 || classValue >= this.outputClasses) {
+    if (!Number.isInteger(classValue)) {
+      return;
+    }
+    const dataset = this.currentDataset;
+    const valid = dataset.selectable
+      ? this.enabledClasses.includes(classValue)
+      : classValue >= 0 && classValue < datasetClassCount(dataset);
+    if (!valid) {
       return;
     }
     this.galleryClass = classValue;
@@ -3029,24 +3237,25 @@ export class MnistCnn extends LitElement {
                 )}
               </p>
               <ol class="drl-dense-output" aria-label="Probabilités par classe, maximum surligné">
-                ${Array.from(probabilities, (probability, digit) => {
+                ${Array.from(probabilities, (probability, networkIndex) => {
                   const rgb = activationRgb(probability, 'sigmoid');
-                  const isMax = digit === maximum;
+                  const isMax = networkIndex === maximum;
+                  const original = this.displayClass(networkIndex);
                   return html`
                     <li
                       class=${`drl-dense-output-cell${isMax ? ' drl-dense-output-cell--max' : ''}`}
                       aria-label=${outputCellLabel(
-                        digit,
+                        original,
                         probability,
                         isMax,
-                        this.currentDataset.classNames[digit],
+                        this.currentDataset.classNames[original],
                       )}
                     >
                       <span
                         class="drl-dense-square"
                         style=${`background: rgb(${rgb[0]}, ${rgb[1]}, ${rgb[2]})`}
                       ></span>
-                      <span class="drl-dense-digit">${digit}</span>
+                      <span class="drl-dense-digit">${original}</span>
                     </li>
                   `;
                 })}
@@ -3055,6 +3264,39 @@ export class MnistCnn extends LitElement {
           `;
         })()}
       </div>
+    `;
+  }
+
+  /**
+   * Choix des classes d'un jeu sélectionnable : une case par classe. La dernière
+   * case cochée est bloquée quand la sélection atteint le minimum.
+   */
+  private renderClassPicker(): TemplateResult | typeof nothing {
+    const dataset = this.currentDataset;
+    if (!dataset.selectable) {
+      return nothing;
+    }
+    return html`
+      <fieldset class="drl-class-picker">
+        <legend>Classes (${this.enabledClasses.length} sur ${dataset.classNames.length})</legend>
+        <div class="drl-class-grid">
+          ${dataset.classNames.map((_name, index) => {
+            const checked = this.enabledClasses.includes(index);
+            return html`
+              <label class="drl-class-option" title=${galleryClassLabel(dataset, index)}>
+                <input
+                  type="checkbox"
+                  .checked=${checked}
+                  ?disabled=${checked && this.enabledClasses.length <= MIN_ENABLED_CLASSES}
+                  @change=${(event: Event) => this.handleClassToggle(index, event)}
+                />
+                <span class="drl-class-name">${galleryClassLabel(dataset, index)}</span>
+              </label>
+            `;
+          })}
+        </div>
+        <p class="drl-hint">Deux classes minimum. Sortie : ${this.outputClasses} neurones.</p>
+      </fieldset>
     `;
   }
 
@@ -3116,7 +3358,7 @@ export class MnistCnn extends LitElement {
                     : this.gallerySample === null
                       ? html`<option value="">Charger la galerie…</option>`
                       : repeat(
-                          this.currentDataset.classNames.map((_name, index) => index),
+                          this.galleryClassIndices,
                           (index) => index,
                           (index) =>
                             html`<option value=${index} ?selected=${index === this.galleryClass}>
@@ -3171,11 +3413,12 @@ export class MnistCnn extends LitElement {
               pointillés mesure la précision d'entraînement sur l'échantillon borné ; la courbe en
               trait plein mesure la précision de validation sur le sous-ensemble tenu à l'écart.
             </p>
+            ${this.renderClassPicker()}
             <div class="drl-toolbar" role="group" aria-label="Lancer et contrôler l'entraînement">
               <button
                 type="button"
                 class="drl-button drl-primary"
-                ?disabled=${isTrainingActive(this.trainingState)}
+                ?disabled=${isTrainingActive(this.trainingState) || !this.classSelectionReady}
                 @click=${this.handleStartTraining}
               >
                 Entraîner 1 époque
@@ -3183,7 +3426,7 @@ export class MnistCnn extends LitElement {
               <button
                 type="button"
                 class="drl-button"
-                ?disabled=${isTrainingActive(this.trainingState)}
+                ?disabled=${isTrainingActive(this.trainingState) || !this.classSelectionReady}
                 @click=${this.handleStartLoopTraining}
               >
                 Entraîner en boucle
@@ -3211,7 +3454,7 @@ export class MnistCnn extends LitElement {
               <drl-slider
                 label="Données d'entraînement"
                 min=${MIN_PERCENT}
-                max=${datasetMaxPercent(this.currentDataset)}
+                max=${MAX_PERCENT}
                 step="1"
                 .value=${this.trainPercent}
                 @drl-input=${(event: CustomEvent<number>) => this.setTrainPercent(event.detail)}
@@ -3219,7 +3462,7 @@ export class MnistCnn extends LitElement {
               <drl-slider
                 label="Validation"
                 min=${MIN_PERCENT}
-                max=${datasetMaxPercent(this.currentDataset)}
+                max=${MAX_PERCENT}
                 step="1"
                 .value=${this.validationPercent}
                 @drl-input=${(event: CustomEvent<number>) => this.setValidationPercent(event.detail)}
@@ -3241,11 +3484,6 @@ export class MnistCnn extends LitElement {
                 @drl-input=${(event: CustomEvent<number>) => this.setBatchSize(event.detail)}
               ></drl-slider>
             </div>
-            ${
-              datasetMaxPercent(this.currentDataset) < MAX_PERCENT
-                ? html`<p class="drl-hint">Ce jeu est limité à ${datasetMaxPercent(this.currentDataset)} % pour rester dans la mémoire du navigateur.</p>`
-                : nothing
-            }
             <p class="drl-hint">
               ${
                 this.trainingError !== null
@@ -3269,7 +3507,7 @@ export class MnistCnn extends LitElement {
                 ${
                   this.predictedClass === null
                     ? '–'
-                    : galleryClassLabel(this.currentDataset, this.predictedClass)
+                    : galleryClassLabel(this.currentDataset, this.displayClass(this.predictedClass))
                 }
               </p>
             </div>
@@ -3293,17 +3531,18 @@ export class MnistCnn extends LitElement {
               result
                 ? repeat(
                     result.probabilities,
-                    (_probability: number, digit: number) => digit,
-                    (probability, digit) => {
-                      const label = `${galleryClassLabel(this.currentDataset, digit)} : ${formatPercent(probability * 100)}`;
+                    (_probability: number, networkIndex: number) => networkIndex,
+                    (probability, networkIndex) => {
+                      const original = this.displayClass(networkIndex);
+                      const label = `${galleryClassLabel(this.currentDataset, original)} : ${formatPercent(probability * 100)}`;
                       return html`
                     <div
-                      class="${digit === this.predictedClass ? 'drl-prob-row drl-prob-row--max' : 'drl-prob-row'}"
+                      class="${networkIndex === this.predictedClass ? 'drl-prob-row drl-prob-row--max' : 'drl-prob-row'}"
                       role="listitem"
                       aria-label=${label}
                       title=${label}
                     >
-                      <span class="drl-prob-digit">${digit}</span>
+                      <span class="drl-prob-digit">${original}</span>
                       <span class="drl-prob-bar-wrap"
                         ><span class="drl-prob-bar" style="width:${(probability * 100).toFixed(1)}%"
                         ></span
