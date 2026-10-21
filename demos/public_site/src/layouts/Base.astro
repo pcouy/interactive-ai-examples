@@ -20,11 +20,12 @@ const cleanPath = Astro.url.pathname.replace(/\.html$/, '').replace(/\/+$/, '');
 const current =
   cleanPath === '' || cleanPath === '/index' ? 'home' : cleanPath.replace(/^\//, '');
 
-const siteName = "Jouer pour comprendre l'IA";
+const siteName = 'Jouer pour comprendre l\'IA';
 const fullTitle = title.includes(siteName) ? title : `${title} | ${siteName}`;
 // `Astro.url.pathname` is absolute, so joining it directly to `Astro.site` would
 // drop the GitHub Pages subpath. Join the site path explicitly instead.
-const siteBase = Astro.site ?? Astro.url;
+const siteBase = Astro.site;
+if (!siteBase) throw new Error('Set `site` in astro.config.mjs.');
 const canonicalPath = Astro.url.pathname.replace(/\/index\.html$/, '/');
 const canonical = new URL(
   `${siteBase.pathname.replace(/\/+$/, '')}${canonicalPath}`,

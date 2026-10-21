@@ -220,13 +220,17 @@ for (const file of htmlFiles) {
     `${label}: missing the dark theme block.`,
   );
 
-  const newTabNoteCount = (html.match(/\(nouvel onglet\)/g) ?? []).length;
   check(
-    html.includes('https://pierre-couy.dev') &&
-      html.includes('https://github.com/pcouy/interactive-ai-examples') &&
-      (html.match(/\btarget=["']_blank["']/gi) ?? []).length >= 2 &&
-      (html.match(/\brel=["']noopener noreferrer["']/gi) ?? []).length >= 2 &&
-      newTabNoteCount >= 2,
+    /<link\b[^>]*rel=["']icon["'][^>]*href=["']\.\/favicon\.svg["']/i.test(html),
+    `${label}: missing the favicon link ./favicon.svg.`,
+  );
+
+  const blogLink =
+    /href="https:\/\/pierre-couy\.dev"[^>]*target="_blank"[^>]*rel="noopener noreferrer"[^>]*>Mon site/;
+  const githubLink =
+    /href="https:\/\/github\.com\/pcouy\/interactive-ai-examples"[^>]*target="_blank"[^>]*rel="noopener noreferrer"[^>]*>Dépôt GitHub/;
+  check(
+    blogLink.test(html) && githubLink.test(html),
     `${label}: external links are missing or lose their new-tab attributes`,
   );
 

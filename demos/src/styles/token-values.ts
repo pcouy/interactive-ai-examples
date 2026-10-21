@@ -1,9 +1,10 @@
 /**
- * This file is the only place in `demos/` that may contain colour literals.
- * `drlTokenValues` holds the light values shared by the Lit stylesheet
- * (`./tokens.ts`) and framework-agnostic modules (e.g. the Three.js landscape
- * scene) that cannot import Lit. `drlPalette` adds the dark theme used by the
- * playground pages.
+ * This file is the only source file in `demos/` that may contain colour
+ * literals. The palette guard scans `.astro` files only, so static assets such
+ * as `public_site/public/favicon.svg` sit outside it. `drlTokenValues` holds
+ * the light values shared by the Lit stylesheet (`./tokens.ts`) and
+ * framework-agnostic modules (e.g. the Three.js landscape scene) that cannot
+ * import Lit. `drlPalette` adds the dark theme used by the playground pages.
  */
 export const drlTokenValues = {
   bg: '#f8fafc',
