@@ -932,7 +932,7 @@ export class SegmentStore implements SegmentLoader {
 
   private readonly maxShards: number;
 
-  private readonly fetchImpl: typeof fetch;
+  private readonly fetchImpl: (input: RequestInfo | URL, init?: RequestInit) => Promise<Response>;
 
   private readonly classPositions: ReadonlyMap<number, number>;
 
@@ -1089,7 +1089,10 @@ export class SegmentStore implements SegmentLoader {
     this.cacheName = options.cacheName;
     this.split = split;
     this.maxShards = maxShards;
-    this.fetchImpl = options.fetchImpl ?? fetch;
+    // `fetch` doit être appelé comme une fonction nue : dans un navigateur,
+    // `this.fetchImpl(url)` lierait le magasin comme récepteur et `window.fetch`
+    // lèverait un TypeError d'invocation illégale.
+    this.fetchImpl = (input, init) => (options.fetchImpl ?? fetch)(input, init);
     this.classPositions = positions;
     this.splitByShard = splitByShard;
     this.selectedEntries = selectedEntries;
