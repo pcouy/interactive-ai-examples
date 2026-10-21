@@ -13,6 +13,31 @@ export interface Transition<O, A> {
   readonly done: boolean;
 }
 
+/**
+ * Values of one {@link QLearningAgent.update}. `nextValue` is 0 at a terminal
+ * transition, so `bootstrap` is 0 and `target` equals the reward.
+ */
+export interface QUpdateResult<O, A> {
+  /** The transition that produced this update. */
+  readonly transition: Transition<O, A>;
+  /** Value of the update pair before the update. */
+  readonly previousValue: number;
+  /** Bootstrapped value of the next observation, or 0 when the transition is done. */
+  readonly nextValue: number;
+  /** Discount factor that was active during the update. */
+  readonly discountFactor: number;
+  /** `discountFactor * nextValue`. */
+  readonly bootstrap: number;
+  /** `transition.reward + bootstrap`. */
+  readonly target: number;
+  /** `target - previousValue`. */
+  readonly tdError: number;
+  /** Learning rate that was active during the update. */
+  readonly learningRate: number;
+  /** Value of the update pair after the update. It is also stored in the table. */
+  readonly updatedValue: number;
+}
+
 /** Constructor options for {@link QLearningAgent}. */
 export interface QLearningOptions {
   /**
@@ -117,25 +142,40 @@ export class QLearningAgent<O, A> {
   }
 
   /**
-   * Applies one Q-learning update.
+   * Applies one Q-learning update and returns its intermediate values.
    *
    * The action must be in the agent's action space. The bootstrap uses
    * `maxValue` over the full action space. Pass `done: true` at a terminal
    * transition so the bootstrap is 0.
    */
-  update(transition: Transition<O, A>): void {
-    const bootstrap = transition.done
-      ? 0
-      : this.discountFactor * this.maxValue(transition.nextObservation);
+  update(transition: Transition<O, A>): QUpdateResult<O, A> {
+    const nextValue = transition.done ? 0 : this.maxValue(transition.nextObservation);
+    // Read both rates once so a caller that changes them mid-update cannot
+    // produce a result whose parts disagree.
+    const discountFactor = this.discountFactor;
+    const learningRate = this.learningRate;
+    const bootstrap = discountFactor * nextValue;
     const target = transition.reward + bootstrap;
-    const current = this.valueOf(transition.observation, transition.action);
-    const updated = current + this.learningRate * (target - current);
+    const previousValue = this.valueOf(transition.observation, transition.action);
+    const tdError = target - previousValue;
+    const updatedValue = previousValue + learningRate * tdError;
     const row = this.table.get(transition.observation);
     if (row) {
-      row.set(transition.action, updated);
+      row.set(transition.action, updatedValue);
     } else {
-      this.table.set(transition.observation, new Map([[transition.action, updated]]));
+      this.table.set(transition.observation, new Map([[transition.action, updatedValue]]));
     }
+    return {
+      transition,
+      previousValue,
+      nextValue,
+      discountFactor,
+      bootstrap,
+      target,
+      tdError,
+      learningRate,
+      updatedValue,
+    };
   }
 
   /** Current value of `observation` and `action`, or `initialValue` if unseen. */

@@ -90,6 +90,87 @@ describe('QLearningAgent update', () => {
   });
 });
 
+describe('QLearningAgent update result', () => {
+  it('reports the exact values of a terminal update', () => {
+    const agent = new QLearningAgent<string, number>([0, 1], {
+      learningRate: 0.5,
+      discountFactor: 0.9,
+      initialValue: 0.2,
+    });
+    const transition: Transition<string, number> = {
+      observation: 's',
+      action: 0,
+      reward: 1,
+      nextObservation: 'terminal',
+      done: true,
+    };
+
+    const result = agent.update(transition);
+
+    expect(result.transition).toBe(transition);
+    expect(result.previousValue).toBeCloseTo(0.2);
+    expect(result.nextValue).toBe(0);
+    expect(result.discountFactor).toBe(0.9);
+    expect(result.bootstrap).toBe(0);
+    expect(result.target).toBeCloseTo(1);
+    expect(result.tdError).toBeCloseTo(0.8);
+    expect(result.learningRate).toBe(0.5);
+    expect(result.updatedValue).toBeCloseTo(0.6);
+    expect(result.updatedValue).toBeCloseTo(agent.valueOf('s', 0));
+  });
+
+  it('reports the exact values of a bootstrapped update', () => {
+    const agent = new QLearningAgent<string, number>([0, 1], {
+      learningRate: 0.25,
+      discountFactor: 0.8,
+    });
+    // Seed the next state with maxValue 0.25.
+    agent.update({ observation: 'next', action: 0, reward: 1, nextObservation: 't', done: true });
+    const transition: Transition<string, number> = {
+      observation: 's',
+      action: 1,
+      reward: 0.5,
+      nextObservation: 'next',
+      done: false,
+    };
+
+    const result = agent.update(transition);
+
+    expect(result.transition).toBe(transition);
+    expect(result.previousValue).toBe(0);
+    expect(result.nextValue).toBeCloseTo(0.25);
+    expect(result.discountFactor).toBe(0.8);
+    expect(result.bootstrap).toBeCloseTo(0.2);
+    expect(result.target).toBeCloseTo(0.7);
+    expect(result.tdError).toBeCloseTo(0.7);
+    expect(result.learningRate).toBe(0.25);
+    expect(result.updatedValue).toBeCloseTo(0.175);
+    expect(result.updatedValue).toBeCloseTo(agent.valueOf('s', 1));
+  });
+
+  it('keeps the rates that were active during the update', () => {
+    const agent = new QLearningAgent<string, number>([0], {
+      learningRate: 0.1,
+      discountFactor: 0.9,
+    });
+    const result = agent.update({
+      observation: 's',
+      action: 0,
+      reward: 1,
+      nextObservation: 't',
+      done: true,
+    });
+
+    agent.learningRate = 0.9;
+    agent.discountFactor = 0.1;
+
+    expect(result.learningRate).toBe(0.1);
+    expect(result.discountFactor).toBe(0.9);
+    expect(result.updatedValue).toBeCloseTo(0.1);
+    expect(agent.valueOf('s', 0)).toBeCloseTo(0.1);
+  });
+});
+
 describe('QLearningAgent initial value', () => {
   it('reads the initial value for an unseen pair', () => {
     const agent = new QLearningAgent<string, string>(['first', 'second'], { initialValue: 0.5 });
