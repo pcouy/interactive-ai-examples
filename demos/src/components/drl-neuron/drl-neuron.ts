@@ -377,6 +377,10 @@ export class Neuron extends DemoElement {
   @property({ type: String, attribute: 'surface' })
   surface: 'global' | 'test' = 'global';
 
+  /** Shows the 16x16 prediction heatmap behind the 2D dataset points. */
+  @property({ type: Boolean, attribute: 'show-prediction' })
+  showPrediction = true;
+
   @state()
   private webglError = false;
 
@@ -1249,7 +1253,10 @@ export class Neuron extends DemoElement {
             fill="var(--drl-bg)"
           ></rect>
           <g clip-path="url(#drl-neuron-plane)">
-            <g class="drl-grid"></g>
+            <g
+              class="drl-grid"
+              visibility=${this.showPrediction ? 'visible' : 'hidden'}
+            ></g>
           </g>
           <rect
             class="drl-plane-outline"

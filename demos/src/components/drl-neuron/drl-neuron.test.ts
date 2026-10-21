@@ -1398,3 +1398,46 @@ describe('planeToData', () => {
     expect(planeToData(210, 351, 2)).toBeNull();
   });
 });
+
+describe('Neuron prediction background', () => {
+  beforeEach(() => {
+    vi.stubGlobal('requestAnimationFrame', () => 0);
+    vi.stubGlobal('cancelAnimationFrame', () => {});
+  });
+
+  afterEach(() => {
+    vi.unstubAllGlobals();
+    vi.restoreAllMocks();
+  });
+
+  function contentText(element: Neuron): string {
+    return renderTemplateTextFlat(
+      (element as unknown as { renderContent(): unknown }).renderContent(),
+    );
+  }
+
+  it('shows the prediction heatmap by default', () => {
+    const element = createNeuron();
+    expect(element.showPrediction).toBe(true);
+    expect(contentText(element)).toContain('class="drl-grid" visibility=visible');
+  });
+
+  it('hides the prediction heatmap when disabled', () => {
+    const element = createNeuron();
+    element.showPrediction = false;
+    expect(contentText(element)).toContain('class="drl-grid" visibility=hidden');
+  });
+
+  it('keeps the setting across config changes and resets', () => {
+    const element = createNeuron();
+    markUpdated(element);
+    installScene(element, fakeScene());
+    element.showPrediction = false;
+
+    runWillUpdate(element, 'expression');
+    element.regenerateDataset();
+    (element as unknown as { onReset(): void }).onReset();
+
+    expect(element.showPrediction).toBe(false);
+  });
+});
