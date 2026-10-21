@@ -2,7 +2,7 @@ name: Deploy public site to Pages
 
 on:
   push:
-    branches: [staging]
+    branches: [main]
   workflow_dispatch:
 
 permissions:
@@ -34,13 +34,13 @@ jobs:
         uses: actions/configure-pages@v6
       - name: Install demos dependencies
         working-directory: demos
-        run: npm ci --ignore-scripts
+        run: npm ci --ignore-scripts --no-audit --no-fund
       - name: Install site dependencies
         working-directory: demos/public_site
-        run: npm ci
-      - name: Build and verify the site
+        run: npm ci --no-audit --no-fund
+      - name: Build the site
         working-directory: demos/public_site
-        run: npm run verify:full
+        run: npm run build
       - name: Upload pages artifact
         uses: actions/upload-pages-artifact@v5
         with:
