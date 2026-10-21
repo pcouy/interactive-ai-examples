@@ -231,6 +231,61 @@ KaTeX et les balises de démo avec `fetch`.
 `npm run verify` échoue si un contrôle de `verify-build.mjs` échoue. Le message indique le
 fichier et la règle en cause.
 
+## Déploiement sur GitHub Pages
+
+Le site se déploie avec GitHub Actions. Le workflow se trouve dans
+`.github/workflows/deploy-pages.yml`, à la racine du dépôt.
+
+Le workflow se déclenche sur un push vers la branche `main` et sur un lancement manuel
+(`workflow_dispatch`). Un lancement manuel ne s'exécute que si la référence sélectionnée
+est `main`. Les autres branches sont ignorées. Le workflow ne se déclenche pas sur une
+pull request ni sur un fork.
+
+**Réglage initial.** Dans le dépôt GitHub, ouvrez **Settings** → **Pages** →
+**Build and deployment**, puis choisissez **Source : GitHub Actions**. Sans ce réglage,
+l'étape de déploiement échoue.
+
+Si le dépôt est privé, GitHub Pages exige une offre payante (Pro, Team ou Enterprise).
+
+**Étapes du workflow.** Le workflow exécute ces actions :
+
+1. Il installe `demos/` avec `npm ci --ignore-scripts --no-audit --no-fund`. L'option
+   `--ignore-scripts` saute le `postinstall`, donc le téléchargement optionnel des jeux
+   MNIST. Elle saute aussi le script d'installation d'esbuild. Le build Vite reste sûr,
+   car `@esbuild/linux-x64` est installé comme dépendance optionnelle et esbuild le
+   résout au runtime.
+2. Il installe `demos/public_site/` avec `npm ci --no-audit --no-fund`.
+3. Il lance `npm run build` dans `demos/public_site/`. Ce contrôle rapide construit les
+   démos, synchronise les assets, lance le build Astro et le finaliseur, puis exécute
+   `verify-build.mjs` (109 contrôles). Il saute `astro check`, les tests unitaires d'URL
+   et le contrôle HTTP `smoke`.
+4. Il envoie `demos/public_site/dist` avec `actions/upload-pages-artifact`.
+5. Il publie le site avec `actions/deploy-pages@v5`.
+
+**URL publiée.** L'URL a la forme `https://<owner>.github.io/<repo>/`. L'URL d'entrée doit
+finir par `/` ou par `index.html` :
+
+- `https://<owner>.github.io/<repo>/` fonctionne.
+- `https://<owner>.github.io/<repo>/index.html` fonctionne.
+- `https://<owner>.github.io/<repo>` peut renvoyer 404.
+
+Le build réécrit les URL absolues en URL relatives. Le sous-chemin `/<repo>/` fonctionne
+donc sans réglage `base` dans `astro.config.mjs`. Voir aussi « Hébergement dans un
+sous-chemin ».
+
+**Reproduction locale.** Pour produire le même dossier que le workflow :
+
+```bash
+cd demos
+npm ci --ignore-scripts --no-audit --no-fund
+npm run build
+cd public_site
+npm ci --no-audit --no-fund
+npm run build
+```
+
+Le workflow envoie le dossier `demos/public_site/dist/`.
+
 ## Dépannage
 
 **Bundle de démo absent.** `sync-demo-assets: Missing .../demos/dist/drl-demos.js`.
