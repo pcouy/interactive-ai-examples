@@ -4,15 +4,14 @@
  * Un jeu segmenté range les images par classe et par fragment (`shard`). Le
  * planificateur ne lit aucune image : il ordonne les fragments d'une époque en
  * « rounds », chaque round contenant exactement un fragment par classe. Le
- * nombre de rounds d'une époque est le nombre maximal de fragments d'une
- * classe ; une classe qui a moins de fragments répète les siens en cycle
- * (`r % length`), donc chaque fragment sélectionné apparaît au moins une fois
- * par époque.
+ * nombre de rounds d'une époque est le plus petit nombre de fragments d'une
+ * classe : les classes sont parcourues en parallèle (`zip`), sans cycle, donc
+ * une classe plus longue ne sert que ses premiers fragments mélangés.
  *
  * L'ordre des rounds et l'ordre des fragments de chaque classe sont mélangés
  * séparément à partir d'une graine dérivée de la graine du plan et de l'indice
  * d'époque : deux entraînements de même graine suivent exactement le même
- * ordre, et une autre époque change l'ordre sans changer la couverture.
+ * ordre, et une autre époque peut choisir d'autres fragments.
  */
 
 import type { MnistSample } from './mnist-data.js';
@@ -63,7 +62,7 @@ export interface SegmentPlan {
   readonly shardSize: number;
   /** Somme des effectifs de tous les fragments du plan. */
   readonly totalCount: number;
-  /** Nombre de rounds d'une époque : maximum de fragments par classe. */
+  /** Nombre de rounds d'une époque : minimum de fragments par classe. */
   readonly roundsPerEpoch: number;
   /** Rounds de l'époque demandée, dans un ordre mélangé déterministe. */
   roundsForEpoch(epoch: number): readonly RoundRef[];
@@ -81,6 +80,8 @@ export interface SegmentRound {
   readonly labels: Uint8Array;
   /** Retourne exactement `end - start` exemples de la plage `[start, end)`. */
   readBatch(start: number, end: number): MnistSample;
+  /** Nombre de fragments distincts couverts par la plage `[start, end)`. */
+  shardsInRange?(start: number, end: number): number;
 }
 
 /**
@@ -170,7 +171,7 @@ export function buildSegmentPlan(input: SegmentPlanInput): SegmentPlan {
 
   const classShards: RoundEntry[][] = [];
   let totalCount = 0;
-  let roundsPerEpoch = 0;
+  let roundsPerEpoch = Number.POSITIVE_INFINITY;
   for (let classIndex = 0; classIndex < classes; classIndex += 1) {
     const shards = shardsByClass[classIndex];
     if (!Array.isArray(shards) || shards.length === 0) {
@@ -178,7 +179,7 @@ export function buildSegmentPlan(input: SegmentPlanInput): SegmentPlan {
         `mnist-cnn-segmented: class ${classIndex} must have at least one shard.`,
       );
     }
-    roundsPerEpoch = Math.max(roundsPerEpoch, shards.length);
+    roundsPerEpoch = Math.min(roundsPerEpoch, shards.length);
     const copied: RoundEntry[] = [];
     for (const shard of shards) {
       if (shard === null || typeof shard !== 'object') {
@@ -223,7 +224,7 @@ export function buildSegmentPlan(input: SegmentPlanInput): SegmentPlan {
         for (let classIndex = 0; classIndex < classes; classIndex += 1) {
           const shards = classShards[classIndex];
           const order = shardOrders[classIndex];
-          entries.push(shards[order[roundIndex % shards.length]]);
+          entries.push(shards[order[roundIndex]]);
         }
         rounds.push({ index: roundIndex, entries });
       }

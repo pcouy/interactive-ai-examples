@@ -69,24 +69,41 @@ describe('buildSegmentPlan', () => {
     expect(fingerprint(first, 0)).not.toBe(fingerprint(first, 1));
   });
 
-  it('cycles shorter classes when shard counts differ', () => {
+  it('zips the classes on the shortest one when shard counts differ', () => {
     const shardsByClass: RoundEntry[][] = [];
     for (let classIndex = 0; classIndex < 8; classIndex += 1) {
       shardsByClass.push(regularShards(8, classIndex < 4 ? 3 : 7)[classIndex]);
     }
     const plan = buildSegmentPlan({ shardsByClass, shardSize: 1000, seed: 3 });
-    expect(plan.roundsPerEpoch).toBe(7);
+    expect(plan.roundsPerEpoch).toBe(3);
     expect(plan.totalCount).toBe((4 * 3 + 4 * 7) * 2);
 
     const rounds = plan.roundsForEpoch(0);
-    expect(rounds).toHaveLength(7);
+    expect(rounds).toHaveLength(3);
+    expect(new Set(rounds.map((round) => round.index))).toEqual(new Set([0, 1, 2]));
+    for (const round of rounds) {
+      expect(round.entries).toHaveLength(8);
+    }
     const ordered = [...rounds].sort((left, right) => left.index - right.index);
     for (let classIndex = 0; classIndex < 8; classIndex += 1) {
       const sequence = ordered.map((round) => round.entries[classIndex].file);
-      expect(sequence).toHaveLength(7);
-      const expectedShards = classIndex < 4 ? 3 : 7;
-      expect(new Set(sequence).size).toBe(expectedShards);
+      expect(sequence).toHaveLength(3);
+      // Chaque classe ne sert que trois fragments distincts dans l'époque.
+      expect(new Set(sequence).size).toBe(3);
     }
+  });
+
+  it('can select other shards in another epoch without cycling', () => {
+    const shardsByClass: RoundEntry[][] = [regularShards(2, 3)[0], regularShards(2, 7)[1]];
+    const plan = buildSegmentPlan({ shardsByClass, shardSize: 1000, seed: 3 });
+    expect(plan.roundsPerEpoch).toBe(3);
+    const usedInEpoch = (epoch: number): Set<string> =>
+      new Set(plan.roundsForEpoch(epoch).map((round) => round.entries[1].file));
+    const first = usedInEpoch(0);
+    const second = usedInEpoch(1);
+    expect(first.size).toBe(3);
+    expect(second.size).toBe(3);
+    expect(first).not.toEqual(second);
   });
 
   it('copies the input fragments', () => {

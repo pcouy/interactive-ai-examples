@@ -1796,6 +1796,61 @@ describe('segmented training', () => {
     expect(result.windowShards).toBe(2);
   });
 
+  it('reads windowShards from the balanced round when it reports shard ranges', async () => {
+    const trainer = await makeTrainer(SMALL_FILTERS, {
+      batchSize: 2,
+      seed: 6,
+      outputClasses: 2,
+    });
+    const sample = makeSample(4, 12, 2);
+    sample.labels.set([0, 1, 0, 1]);
+    const base = roundFromSample(sample);
+    const files = ['a.idx.gz', 'b.idx.gz', 'a.idx.gz', 'b.idx.gz'];
+    const round: SegmentRound = {
+      ...base,
+      shardsInRange(start: number, end: number): number {
+        return new Set(files.slice(start, end)).size;
+      },
+    };
+    const ref: RoundRef = {
+      index: 0,
+      entries: [
+        { file: 'a.idx.gz', classIndex: 0, start: 0, count: 2 },
+        { file: 'b.idx.gz', classIndex: 1, start: 2, count: 2 },
+      ],
+    };
+    const plan: SegmentPlan = {
+      classes: 2,
+      shardSize: 2,
+      totalCount: 4,
+      roundsPerEpoch: 1,
+      roundsForEpoch: () => [ref],
+    };
+    const loader: SegmentLoader = {
+      totalCount: 4,
+      loadRound: () => Promise.resolve(round),
+      prefetchRound: () => undefined,
+      releaseRound: () => undefined,
+    };
+    const events: MnistTrainingProgress[] = [];
+    const result = await trainer.trainSegmented({
+      trainPlan: plan,
+      trainLoader: loader,
+      epochs: 1,
+      lossSampleEvery: 1,
+      progressIntervalMs: 0,
+      onProgress: (progress) => events.push(progress),
+    });
+
+    // Le repli contigu ne verrait qu'un fragment pour `[0, 2)` ; le round
+    // équilibré en couvre deux.
+    const firstBatch = events.find(
+      (event) => event.status === 'running' && event.batchesProcessed === 1,
+    );
+    expect(firstBatch?.windowShards).toBe(2);
+    expect(result.windowShards).toBe(2);
+  });
+
   it('aggregates segmented validation with weighted loss and accuracy', async () => {
     const config = { batchSize: 4, seed: 21, outputClasses: 2 } as const;
     const trainFixture = makeSegmentFixture([[8], [8]], 4);
