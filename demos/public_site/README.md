@@ -263,7 +263,7 @@ Si le dépôt est privé, GitHub Pages exige une offre payante (Pro, Team ou Ent
 5. Il publie le site avec `actions/deploy-pages@v5`.
 
 **URL canonique.** Par défaut, l'URL canonique et `og:url` valent
-`https://pcouy.github.io/interactive-ai-examples/`. Le workflow lit la variable de dépôt
+`https://pierre-couy.dev/interactive-ai-examples/`. Le workflow lit la variable de dépôt
 `PUBLIC_SITE_URL` :
 
 1. Dans GitHub, ouvrez **Settings → Secrets and variables → Actions → Variables**.
