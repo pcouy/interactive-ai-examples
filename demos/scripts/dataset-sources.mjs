@@ -51,13 +51,26 @@ const FASHION_MNIST_FILES = [
 export const QUICKDRAW_BASE_URL =
   'https://storage.googleapis.com/quickdraw_dataset/full/numpy_bitmap/';
 
-/** Les cinq fichiers QuickDraw `.npy`, avec leur taille en octets et leur MD5. */
+/**
+ * Les quinze fichiers QuickDraw `.npy`, avec leur taille en octets et leur MD5.
+ * L'ordre fixe l'indice de classe : 0 pour `book.npy`, 14 pour `apple.npy`.
+ */
 export const QUICKDRAW_FILES = [
   { name: 'book.npy', size: 93581456, md5: '2ed1a413e8e9dc677c77804144a0a81a' },
   { name: 'moon.npy', size: 95382304, md5: 'b0461b58eca7651c581914093ab11b9e' },
   { name: 'cat.npy', size: 96590448, md5: 'e4bb2f2c14813c33b9bcc21e06eacb43' },
   { name: 'umbrella.npy', size: 97281936, md5: '04dd435714b9c2068f7f799111ef4e35' },
   { name: 'cake.npy', size: 97925600, md5: 'e816ab482b45ef6302a92f4a7f20cf2c' },
+  { name: 'dog.npy', size: 119292736, md5: '2fe0fc7ead8694479b9df60cbc16865e' },
+  { name: 'fish.npy', size: 105173680, md5: 'b56fa4f8520be853900d4110b752051a' },
+  { name: 'flower.npy', size: 113537392, md5: '64168b3e3790cf6ab164c78adbeb1632' },
+  { name: 'star.npy', size: 107893376, md5: 'a0553974af145f276eb4370a41bc3d83' },
+  { name: 'house.npy', size: 106169360, md5: '29e2548b5bea3daf71edbce83a1c9e57' },
+  { name: 'tree.npy', size: 113461344, md5: 'd201704fde61ff8d81efd0eff28d89b4' },
+  { name: 'sun.npy', size: 104884384, md5: '64e4673a572983222fc9d57a11feddb3' },
+  { name: 'bicycle.npy', size: 99197248, md5: 'db36eb97c7ff671492938b5e031ddb44' },
+  { name: 'pizza.npy', size: 102210944, md5: '21c71800183d4d2e5806a2dc966f55e7' },
+  { name: 'apple.npy', size: 113462128, md5: '8ff123bd61580ff6834c4a66998a82b3' },
 ];
 
 /** URL de base des fichiers MedMNIST sur Zenodo, dossier `files/`. */

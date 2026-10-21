@@ -2,6 +2,7 @@ import { createHash } from 'node:crypto';
 import { mkdtemp, readdir, readFile, rm, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
+import { gunzipSync } from 'node:zlib';
 import { afterEach, describe, expect, it } from 'vitest';
 import {
   buildIndex,
@@ -15,6 +16,7 @@ import {
   writeIdxImagesBytes,
   writeIdxLabelsBytes,
 } from './convert-quickdraw.mjs';
+import { QUICKDRAW_FILES } from './dataset-sources.mjs';
 
 const IMAGE_SIZE = 784;
 
@@ -186,7 +188,7 @@ describe('buildIndex', () => {
       testCounts: [500, 500],
       shardSize: 1000,
     });
-    expect(index.version).toBe(1);
+    expect(index.version).toBe(2);
     expect(index.dataset).toBe('quickdraw');
     expect(index.classNames).toEqual(['a', 'b']);
     expect(index.shardSize).toBe(1000);
@@ -202,10 +204,17 @@ describe('buildIndex', () => {
       { file: 'test-c0-s00.idx.gz', classIndex: 0, start: 0, count: 500 },
       { file: 'test-c1-s00.idx.gz', classIndex: 1, start: 500, count: 500 },
     ]);
-    expect(index.gallery).toEqual({
-      imagesFile: 'gallery.idx.gz',
-      labelsFile: 'gallery-labels-idx1-ubyte.gz',
-      perClass: 10,
+    expect(index.galleries).toEqual({
+      train: {
+        imagesFile: 'train-gallery.idx.gz',
+        labelsFile: 'train-gallery-labels-idx1-ubyte.gz',
+        perClass: 10,
+      },
+      test: {
+        imagesFile: 'gallery.idx.gz',
+        labelsFile: 'gallery-labels-idx1-ubyte.gz',
+        perClass: 10,
+      },
     });
   });
 });
@@ -235,13 +244,12 @@ describe('main with --only', () => {
     await writeFile(join(cacheDir, 'moon.npy'), npy);
 
     const md5 = createHash('md5').update(npy).digest('hex');
-    const files = [
-      { name: 'book.npy', size: 1, md5: '0'.repeat(32) },
-      { name: 'moon.npy', size: npy.length, md5 },
-      { name: 'cat.npy', size: 1, md5: '0'.repeat(32) },
-      { name: 'umbrella.npy', size: 1, md5: '0'.repeat(32) },
-      { name: 'cake.npy', size: 1, md5: '0'.repeat(32) },
-    ];
+    const files = QUICKDRAW_FILES.map((entry) => ({
+      name: entry.name,
+      size: 1,
+      md5: '0'.repeat(32),
+    }));
+    files[1] = { name: 'moon.npy', size: npy.length, md5 };
     const fetchImpl = async () => {
       throw new Error('no network in tests');
     };
@@ -263,5 +271,100 @@ describe('main with --only', () => {
       'train-c1-s00.idx.gz',
       'train-c1-s01.idx.gz',
     ]);
+  });
+});
+
+/** `.npy` synthétique de `count` images : chaque image est remplie d'une valeur unique. */
+function buildSyntheticNpy(classIndex, count = 50) {
+  const npy = buildNpyBuffer({ shape: [count, IMAGE_SIZE] });
+  const payload = npy.subarray(80);
+  for (let image = 0; image < count; image += 1) {
+    payload.fill((classIndex * count + image) % 256, image * IMAGE_SIZE, (image + 1) * IMAGE_SIZE);
+  }
+  return npy;
+}
+
+/** Écrit les quinze `.npy` synthétiques et renvoie les entrées de `files`. */
+async function writeSyntheticQuickdraw(cacheDir) {
+  const files = [];
+  for (let classIndex = 0; classIndex < QUICKDRAW_FILES.length; classIndex += 1) {
+    const npy = buildSyntheticNpy(classIndex);
+    const { name } = QUICKDRAW_FILES[classIndex];
+    await writeFile(join(cacheDir, name), npy);
+    files.push({ name, size: npy.length, md5: createHash('md5').update(npy).digest('hex') });
+  }
+  return files;
+}
+
+/** Compte les libellés valant `label` dans un fichier IDX de libellés décompressé. */
+function countLabel(idxBytes, label) {
+  return [...idxBytes.subarray(8)].filter((value) => value === label).length;
+}
+
+describe('main with fifteen classes', () => {
+  it('writes index v2 with distinct train and test galleries, then deletes the raw files', async () => {
+    const cacheDir = await makeTempDir('qd-cache-');
+    const outputDir = await makeTempDir('qd-out-');
+    const files = await writeSyntheticQuickdraw(cacheDir);
+    let fetchCount = 0;
+    const fetchImpl = async () => {
+      fetchCount += 1;
+      throw new Error('no network in tests');
+    };
+
+    expect(await main([], { files, outputDir, cacheDir, fetchImpl })).toBe(0);
+    expect(fetchCount).toBe(0);
+
+    const index = JSON.parse(await readFile(join(outputDir, 'index.json'), 'utf8'));
+    expect(index.version).toBe(2);
+    expect(index.classNames).toEqual(QUICKDRAW_CLASS_NAMES);
+    expect(index.galleries).toEqual({
+      train: {
+        imagesFile: 'train-gallery.idx.gz',
+        labelsFile: 'train-gallery-labels-idx1-ubyte.gz',
+        perClass: 10,
+      },
+      test: {
+        imagesFile: 'gallery.idx.gz',
+        labelsFile: 'gallery-labels-idx1-ubyte.gz',
+        perClass: 10,
+      },
+    });
+
+    const trainGallery = gunzipSync(await readFile(join(outputDir, 'train-gallery.idx.gz')));
+    const testGallery = gunzipSync(await readFile(join(outputDir, 'gallery.idx.gz')));
+    expect(trainGallery.length).toBe(16 + 150 * IMAGE_SIZE);
+    expect(testGallery.length).toBe(16 + 150 * IMAGE_SIZE);
+    expect(trainGallery.subarray(16, 16 + IMAGE_SIZE)).not.toEqual(
+      testGallery.subarray(16, 16 + IMAGE_SIZE),
+    );
+    const trainLabels = gunzipSync(
+      await readFile(join(outputDir, 'train-gallery-labels-idx1-ubyte.gz')),
+    );
+    for (let classIndex = 0; classIndex < QUICKDRAW_CLASS_NAMES.length; classIndex += 1) {
+      expect(countLabel(trainLabels, classIndex)).toBe(10);
+    }
+
+    const remainingRaw = (await readdir(cacheDir)).filter((name) => name.endsWith('.npy'));
+    expect(remainingRaw).toEqual([]);
+
+    // Les sorties sont complètes et les `.npy` ont disparu : le second passage ne
+    // télécharge rien et ne change pas l'index.
+    expect(await main([], { files, outputDir, cacheDir, fetchImpl })).toBe(0);
+    expect(fetchCount).toBe(0);
+  });
+
+  it('keeps the raw files with --keep-raw', async () => {
+    const cacheDir = await makeTempDir('qd-cache-');
+    const outputDir = await makeTempDir('qd-out-');
+    const files = await writeSyntheticQuickdraw(cacheDir);
+    const fetchImpl = async () => {
+      throw new Error('no network in tests');
+    };
+
+    expect(await main(['--keep-raw'], { files, outputDir, cacheDir, fetchImpl })).toBe(0);
+
+    const remainingRaw = (await readdir(cacheDir)).filter((name) => name.endsWith('.npy'));
+    expect(remainingRaw.sort()).toEqual(QUICKDRAW_FILES.map((file) => file.name).sort());
   });
 });

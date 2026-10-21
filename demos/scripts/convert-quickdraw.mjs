@@ -1,9 +1,9 @@
 #!/usr/bin/env node
 /**
- * Convertit cinq fichiers `.npy` QuickDraw en morceaux IDX d'images gzip.
+ * Convertit quinze fichiers `.npy` QuickDraw en morceaux IDX d'images gzip.
  *
  * Chaque fichier `.npy` contient `N` images 28 × 28 (784 octets) non signés,
- * rangées en ligne-major. Le script télécharge les cinq classes dans
+ * rangées en ligne-major. Le script télécharge les quinze classes dans
  * `demos/.cache/quickdraw/`, les vérifie (taille, MD5, en-tête `.npy`), les
  * répartit de façon déterministe en 80 % d'apprentissage et 20 % de test, puis
  * écrit sous `demos/public/datasets/quickdraw/` :
@@ -12,9 +12,16 @@
  *   complets de chaque partition, classes dans l'ordre ;
  * - `train-c<C>-s<NN>.idx.gz` et `test-c<C>-s<NN>.idx.gz` : les images par
  *   classe et par tranche de 1 000, pour ne télécharger que la fraction choisie ;
+ * - `train-gallery.idx.gz` et `train-gallery-labels-idx1-ubyte.gz` : dix images
+ *   d'apprentissage par classe, prises au début de chaque classe ;
  * - `gallery.idx.gz` et `gallery-labels-idx1-ubyte.gz` : dix images de test par
  *   classe, prises au début de chaque classe de test ;
  * - `index.json` : le descripteur lu par le navigateur (écrit en dernier).
+ *
+ * Le script supprime ensuite chaque `.npy` traité de `demos/.cache/quickdraw/`,
+ * sauf avec `--keep-raw`. Si un `.npy` manque mais que `index.json` et toutes
+ * les sorties qu'il décrit existent, la conversion est ignorée sans
+ * téléchargement.
  *
  * La répartition est déterministe : les indices de chaque classe sont mélangés
  * avec la graine `SPLIT_SEED` (42) par un mélange de Fisher-Yates alimenté par
@@ -24,10 +31,11 @@
  *
  * Options :
  * - `--only <classe>` : ne traite que la classe donnée ; répétable ou séparée
- *   par des virgules. La sortie (libellés, galerie, `index.json`) ne décrit
+ *   par des virgules. La sortie (libellés, galeries, `index.json`) ne décrit
  *   alors que les classes sélectionnées.
  * - `--dry-run` : affiche le plan sans télécharger ni rien écrire.
  * - `--force` : retélécharge les `.npy` et réécrit les morceaux existants.
+ * - `--keep-raw` : conserve les `.npy` téléchargés dans le cache.
  * - `--help` : affiche cette aide.
  *
  * Chaque écriture passe par un temporaire `<nom>.tmp` puis un `rename` : un
@@ -76,9 +84,26 @@ export const IMAGE_COLS = 28;
 
 /**
  * Noms de classes, dans l'ordre des fichiers `QUICKDRAW_FILES` (livre, lune,
- * chat, parapluie, gâteau) : l'indice de classe est l'indice dans ce tableau.
+ * chat, parapluie, gâteau, chien, poisson, fleur, étoile, maison, arbre,
+ * soleil, vélo, pizza, pomme) : l'indice de classe est l'indice dans ce tableau.
  */
-export const QUICKDRAW_CLASS_NAMES = ['livre', 'lune', 'chat', 'parapluie', 'gâteau'];
+export const QUICKDRAW_CLASS_NAMES = [
+  'livre',
+  'lune',
+  'chat',
+  'parapluie',
+  'gâteau',
+  'chien',
+  'poisson',
+  'fleur',
+  'étoile',
+  'maison',
+  'arbre',
+  'soleil',
+  'vélo',
+  'pizza',
+  'pomme',
+];
 
 const NPY_MAGIC = '\x93NUMPY';
 const IDX_IMAGE_MAGIC = 2051;
@@ -86,7 +111,7 @@ const IDX_LABEL_MAGIC = 2049;
 
 const USAGE = `Usage: node scripts/convert-quickdraw.mjs [options]
 
-Convertit les cinq fichiers .npy QuickDraw en morceaux IDX d'images gzip sous
+Convertit les quinze fichiers .npy QuickDraw en morceaux IDX d'images gzip sous
 public/datasets/quickdraw/.
 
 Options:
@@ -94,6 +119,7 @@ Options:
                   virgules). Classes : ${QUICKDRAW_FILES.map((file) => file.name.replace(/\.npy$/, '')).join(', ')}.
   --dry-run       Affiche les URL sans télécharger ni écrire.
   --force         Retélécharge et réécrit même les fichiers déjà présents.
+  --keep-raw      Conserve les .npy téléchargés dans le cache.
   --help          Affiche cette aide.`;
 
 /** Normalise un identifiant de classe : `book.npy` et `book` donnent `book`. */
@@ -327,6 +353,7 @@ export function gzipSync(bytes) {
  * `classNames`. Chaque morceau est décrit par son fichier, sa classe, son
  * `start` (indice dans le tableau de libellés de la partition, classes
  * séquentielles) et son `count`. Les effectifs totaux sont la somme par classe.
+ * `galleries` décrit la galerie d'apprentissage et celle de test.
  */
 export function buildIndex({
   classNames,
@@ -336,8 +363,10 @@ export function buildIndex({
   galleryPerClass = GALLERY_PER_CLASS,
   trainLabelsFile = 'train-labels-idx1-ubyte.gz',
   testLabelsFile = 'test-labels-idx1-ubyte.gz',
-  galleryImagesFile = 'gallery.idx.gz',
-  galleryLabelsFile = 'gallery-labels-idx1-ubyte.gz',
+  trainGalleryImagesFile = 'train-gallery.idx.gz',
+  trainGalleryLabelsFile = 'train-gallery-labels-idx1-ubyte.gz',
+  testGalleryImagesFile = 'gallery.idx.gz',
+  testGalleryLabelsFile = 'gallery-labels-idx1-ubyte.gz',
 }) {
   const buildShards = (split, counts) => {
     const shards = [];
@@ -359,7 +388,7 @@ export function buildIndex({
   };
   const total = (counts) => counts.reduce((sum, count) => sum + count, 0);
   return {
-    version: 1,
+    version: 2,
     dataset: 'quickdraw',
     classNames: [...classNames],
     shardSize,
@@ -375,17 +404,24 @@ export function buildIndex({
         shards: buildShards('test', testCounts),
       },
     },
-    gallery: {
-      imagesFile: galleryImagesFile,
-      labelsFile: galleryLabelsFile,
-      perClass: galleryPerClass,
+    galleries: {
+      train: {
+        imagesFile: trainGalleryImagesFile,
+        labelsFile: trainGalleryLabelsFile,
+        perClass: galleryPerClass,
+      },
+      test: {
+        imagesFile: testGalleryImagesFile,
+        labelsFile: testGalleryLabelsFile,
+        perClass: galleryPerClass,
+      },
     },
   };
 }
 
 /** Analyse les arguments de la ligne de commande. */
 export function parseArgs(argv, files = QUICKDRAW_FILES) {
-  const options = { only: [], dryRun: false, force: false, help: false };
+  const options = { only: [], dryRun: false, force: false, keepRaw: false, help: false };
   const names = new Set();
 
   for (let index = 0; index < argv.length; index += 1) {
@@ -400,6 +436,9 @@ export function parseArgs(argv, files = QUICKDRAW_FILES) {
         break;
       case '--force':
         options.force = true;
+        break;
+      case '--keep-raw':
+        options.keepRaw = true;
         break;
       case '--only': {
         const value = argv[index + 1];
@@ -487,6 +526,47 @@ async function fetchRawFile(file, targetPath, { fetchImpl, force }) {
     await unlink(tempPath).catch(() => {});
     throw new Error(`could not fetch ${url}: ${error.message}`);
   }
+}
+
+/**
+ * Vérifie que `index.json` décrit la version 2 et que chaque fichier qu'il
+ * référence existe sous `outputDir`. Si `classIndex` est fourni, exige aussi un
+ * morceau d'apprentissage et un morceau de test pour cette classe.
+ */
+async function outputsAreComplete(indexPath, outputDir, classIndex) {
+  let index;
+  try {
+    index = JSON.parse(await readFile(indexPath, 'utf8'));
+  } catch {
+    return false;
+  }
+  if (index?.version !== 2) return false;
+  const referenced = [];
+  for (const split of ['train', 'test']) {
+    const part = index.splits?.[split];
+    if (!part || typeof part.labelsFile !== 'string' || !Array.isArray(part.shards)) return false;
+    referenced.push(part.labelsFile);
+    for (const shard of part.shards) {
+      if (typeof shard?.file !== 'string') return false;
+      referenced.push(shard.file);
+    }
+    const gallery = index.galleries?.[split];
+    if (
+      !gallery ||
+      typeof gallery.imagesFile !== 'string' ||
+      typeof gallery.labelsFile !== 'string'
+    ) {
+      return false;
+    }
+    referenced.push(gallery.imagesFile, gallery.labelsFile);
+  }
+  if (classIndex !== undefined) {
+    for (const split of ['train', 'test']) {
+      const hasClass = index.splits[split].shards.some((shard) => shard.classIndex === classIndex);
+      if (!hasClass) return false;
+    }
+  }
+  return referenced.every((name) => existsSync(join(outputDir, name)));
 }
 
 /** Copie les `count` images `indices[start … start + count)` hors de la classe. */
@@ -604,20 +684,55 @@ export async function main(argv = process.argv.slice(2), options = {}) {
     console.error('convert-quickdraw: QUICKDRAW_CLASS_NAMES does not match QUICKDRAW_FILES');
     return 1;
   }
+
+  const classIndexes = new Map(files.map((file, index) => [file, index]));
+  const indexPath = join(outputDir, 'index.json');
+  const skipAll =
+    !parsed.force &&
+    selected.length > 0 &&
+    (
+      await Promise.all(
+        selected.map(async (file) => {
+          const classIndex = classIndexes.get(file);
+          if (existsSync(join(cacheDir, file.name))) return false;
+          return outputsAreComplete(indexPath, outputDir, classIndex);
+        }),
+      )
+    ).every(Boolean);
+  if (skipAll) {
+    for (const file of selected) {
+      console.log(`  ${file.name}: raw absent, outputs complete (skipped)`);
+    }
+    console.log('quickdraw: nothing to do');
+    return 0;
+  }
+
   const trainCounts = files.map(() => 0);
   const testCounts = files.map(() => 0);
+  const trainGalleryParts = [];
+  const trainGalleryLabelParts = [];
   const galleryParts = [];
   const galleryLabelParts = [];
   let totalBytes = 0;
 
   try {
     for (const file of selected) {
-      const classIndex = files.indexOf(file);
+      const classIndex = classIndexes.get(file);
       const rawPath = join(cacheDir, file.name);
       const bytes = await fetchRawFile(file, rawPath, { fetchImpl, force: parsed.force });
       const header = parseNpyHeader(bytes);
       const images = readNpyImages(bytes);
       const { train, test } = splitIndices(header.shape[0], SPLIT_SEED);
+      if (train.length < GALLERY_PER_CLASS) {
+        throw new RangeError(
+          `class ${classIndex} has ${train.length} train images, below the ${GALLERY_PER_CLASS} needed for the train gallery`,
+        );
+      }
+      if (test.length < GALLERY_PER_CLASS) {
+        throw new RangeError(
+          `class ${classIndex} has ${test.length} test images, below the ${GALLERY_PER_CLASS} needed for the test gallery`,
+        );
+      }
       trainCounts[classIndex] = train.length;
       testCounts[classIndex] = test.length;
       console.log(
@@ -644,11 +759,19 @@ export async function main(argv = process.argv.slice(2), options = {}) {
       });
       totalBytes += trainResult.totalBytes + testResult.totalBytes;
 
+      const trainGallery = new Uint8Array(GALLERY_PER_CLASS * IMAGE_SIZE);
       const gallery = new Uint8Array(GALLERY_PER_CLASS * IMAGE_SIZE);
       for (let index = 0; index < GALLERY_PER_CLASS; index += 1) {
-        const source = test[index] * IMAGE_SIZE;
-        gallery.set(images.subarray(source, source + IMAGE_SIZE), index * IMAGE_SIZE);
+        const trainSource = train[index] * IMAGE_SIZE;
+        trainGallery.set(
+          images.subarray(trainSource, trainSource + IMAGE_SIZE),
+          index * IMAGE_SIZE,
+        );
+        const testSource = test[index] * IMAGE_SIZE;
+        gallery.set(images.subarray(testSource, testSource + IMAGE_SIZE), index * IMAGE_SIZE);
       }
+      trainGalleryParts.push(trainGallery);
+      trainGalleryLabelParts.push(new Uint8Array(GALLERY_PER_CLASS).fill(classIndex));
       galleryParts.push(gallery);
       galleryLabelParts.push(new Uint8Array(GALLERY_PER_CLASS).fill(classIndex));
     }
@@ -657,6 +780,8 @@ export async function main(argv = process.argv.slice(2), options = {}) {
     return 1;
   }
 
+  const trainGalleryImages = concatBytes(trainGalleryParts);
+  const trainGalleryLabels = concatBytes(trainGalleryLabelParts);
   const galleryImages = concatBytes(galleryParts);
   const galleryLabels = concatBytes(galleryLabelParts);
 
@@ -669,6 +794,16 @@ export async function main(argv = process.argv.slice(2), options = {}) {
     outputDir,
     'test-labels-idx1-ubyte.gz',
     writeIdxLabelsBytes(buildLabels(testCounts)),
+  );
+  totalBytes += await writeGzipIdx(
+    outputDir,
+    'train-gallery.idx.gz',
+    writeIdxImagesBytes(trainGalleryImages),
+  );
+  totalBytes += await writeGzipIdx(
+    outputDir,
+    'train-gallery-labels-idx1-ubyte.gz',
+    writeIdxLabelsBytes(trainGalleryLabels),
   );
   totalBytes += await writeGzipIdx(outputDir, 'gallery.idx.gz', writeIdxImagesBytes(galleryImages));
   totalBytes += await writeGzipIdx(
@@ -684,11 +819,21 @@ export async function main(argv = process.argv.slice(2), options = {}) {
     shardSize: SHARD_SIZE,
     galleryPerClass: GALLERY_PER_CLASS,
   });
-  const indexPath = join(outputDir, 'index.json');
   const indexText = `${JSON.stringify(index, null, 2)}\n`;
   await writeFile(`${indexPath}.tmp`, indexText);
   await rename(`${indexPath}.tmp`, indexPath);
   totalBytes += Buffer.byteLength(indexText, 'utf8');
+
+  for (const file of selected) {
+    const rawPath = join(cacheDir, file.name);
+    if (parsed.keepRaw) {
+      console.log(`  ${file.name}: kept in cache (--keep-raw)`);
+      continue;
+    }
+    const size = (await stat(rawPath)).size;
+    await unlink(rawPath);
+    console.log(`  ${file.name}: deleted from cache (${size} bytes)`);
+  }
 
   console.log('quickdraw: conversion complete');
   console.log(`  classes: ${selected.length} of ${files.length}`);
@@ -699,7 +844,7 @@ export async function main(argv = process.argv.slice(2), options = {}) {
     `  test: ${index.splits.test.count} images in ${index.splits.test.shards.length} shards`,
   );
   console.log(
-    `  gallery: ${galleryImages.length / IMAGE_SIZE} images (${GALLERY_PER_CLASS} per class)`,
+    `  galleries: ${trainGalleryImages.length / IMAGE_SIZE} train and ${galleryImages.length / IMAGE_SIZE} test images (${GALLERY_PER_CLASS} per class)`,
   );
   console.log(`  total output: ${totalBytes} bytes`);
   return 0;
