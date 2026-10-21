@@ -20,11 +20,23 @@
  * nouvelle tentative après un échec. Les téléchargements sont limités à quatre
  * simultanément. Les erreurs nomment le fichier concerné.
  *
+ * `SegmentStore` sert un entraînement ou une validation segmentés : il
+ * matérialise un round de la fraction choisie, remappe les classes sélectionnées
+ * vers `0..N-1`, garde les fragments décompressés dans une fenêtre bornée et
+ * s'appuie sur le cache Cache API pour éviter de retélécharger un fragment déjà
+ * vu.
+ *
  * Ce module est réservé au navigateur : il utilise `fetch` et `Response`. Le
  * core ne l'importe jamais.
  */
 
 import type { ShardedDatasetDefinition } from '../../core/dataset-registry.js';
+import type {
+  RoundEntry,
+  RoundRef,
+  SegmentLoader,
+  SegmentRound,
+} from '../../core/mnist-cnn-segmented.js';
 import {
   loadIdxDataset,
   type MnistIdxDataset,
@@ -34,6 +46,7 @@ import {
 import { type GallerySplit, galleryCacheKey } from './gallery.js';
 import {
   assetBaseUrl,
+  decodeIdxPayload,
   fetchGzip,
   type MnistSplits,
   mnistFetchErrorMessage,
@@ -662,6 +675,771 @@ export async function loadShardedGallery(
   });
   galleryCache.set(key, pending);
   return pending;
+}
+
+/** Nombre maximal de fragments décompressés gardés en mémoire par défaut. */
+const DEFAULT_MAX_SHARDS = 60;
+
+/** Options de `SegmentStore`. */
+export interface SegmentStoreOptions {
+  readonly dataset: ShardedDatasetDefinition;
+  readonly index: ShardedIndex;
+  /** Indices de classes d'origine, dans l'ordre de sortie. */
+  readonly classIndices: readonly number[];
+  /** Nom du cache Cache API, par exemple `drl-datasets-v2-quickdraw`. */
+  readonly cacheName: string;
+  /** Fraction servie par le magasin (`train` par défaut). */
+  readonly split?: 'train' | 'test';
+  /** Nombre maximal de fragments décompressés résidents (défaut 60). */
+  readonly maxShards?: number;
+  /** Implémentation de `fetch`, remplaçable pour les tests. */
+  readonly fetchImpl?: typeof fetch;
+}
+
+/** Corps téléchargé (compressé ou déjà décodé) et encodage annoncé. */
+interface DownloadedBytes {
+  readonly bytes: Uint8Array;
+  readonly contentEncoding: string | null;
+}
+
+/** Fragment décodé résident : payload d'images sans en-tête IDX. */
+interface ResidentShard {
+  readonly file: string;
+  readonly classIndex: number;
+  readonly payload: Uint8Array;
+  lastUsed: number;
+}
+
+/** Libellés décodés d'une fraction, sans en-tête IDX. */
+interface ResidentLabels {
+  readonly file: string;
+  readonly payload: Uint8Array;
+}
+
+/** Clé d'un round : ses fragments suffisent à identifier ses données. */
+function roundKey(ref: RoundRef): string {
+  return ref.entries.map((entry) => `${entry.file}:${entry.start}:${entry.count}`).join('|');
+}
+
+/** Fichiers distincts référencés par un round. */
+function roundFiles(ref: RoundRef): ReadonlySet<string> {
+  return new Set(ref.entries.map((entry) => entry.file));
+}
+
+/** Limiteur de téléchargements partagé par tous les appels du magasin. */
+class FetchLimiter {
+  private active = 0;
+
+  private readonly waiting: (() => void)[] = [];
+
+  constructor(private readonly limit: number) {}
+
+  async run<T>(task: () => Promise<T>): Promise<T> {
+    await this.acquire();
+    try {
+      return await task();
+    } finally {
+      this.release();
+    }
+  }
+
+  private acquire(): Promise<void> {
+    if (this.active < this.limit) {
+      this.active += 1;
+      return Promise.resolve();
+    }
+    return new Promise<void>((resolve) => {
+      this.waiting.push(resolve);
+    });
+  }
+
+  private release(): void {
+    const next = this.waiting.shift();
+    if (next !== undefined) {
+      // Le créneau passe directement au premier appelant en attente.
+      next();
+      return;
+    }
+    this.active -= 1;
+  }
+}
+
+/** Lit la tranche `[start, end)` d'un round en copiant images et libellés. */
+function readRoundBatch(
+  images: Float32Array,
+  labels: Uint8Array,
+  count: number,
+  start: number,
+  end: number,
+): MnistSample {
+  if (
+    !Number.isInteger(start) ||
+    !Number.isInteger(end) ||
+    start < 0 ||
+    end < start ||
+    end > count
+  ) {
+    throw new RangeError(
+      `sharded-assets: invalid batch range [${String(start)}, ${String(end)}) for ${count} images.`,
+    );
+  }
+  return {
+    count: end - start,
+    images: images.slice(start * PIXELS_PER_IMAGE, end * PIXELS_PER_IMAGE),
+    labels: labels.slice(start, end),
+  };
+}
+
+/**
+ * Magasin navigateur des rounds segmentés d'un jeu.
+ *
+ * Le magasin sert une fraction (`train` par défaut, ou `test`) et un
+ * sous-ensemble de classes : `classIndices` liste les indices d'origine dans
+ * l'ordre de sortie, et les libellés sont remappés vers `0..N-1`. Un round est
+ * matérialisé en `Float32Array` normalisé et `Uint8Array` de libellés, puis
+ * gardé jusqu'à `releaseRound`.
+ *
+ * Les fragments compressés passent par trois niveaux : la mémoire du magasin,
+ * le cache Cache API (`cacheName`, clé = URL du fragment), puis le réseau avec
+ * au plus quatre téléchargements simultanés. Une panne du cache (absence de
+ * `caches`, quota dépassé) ne fait jamais échouer un chargement.
+ *
+ * Les fragments décompressés résidents sont bornés par `maxShards` (60 par
+ * défaut). L'éviction choisit le fragment le moins récemment utilisé qui n'est
+ * ni chargé, ni référencé par le round courant, un round préchargé ou un round
+ * résident, et elle garde un fragment par classe quand la borne le permet.
+ */
+export class SegmentStore implements SegmentLoader {
+  readonly totalCount: number;
+
+  private readonly dataset: ShardedDatasetDefinition;
+
+  private readonly cacheName: string;
+
+  private readonly split: 'train' | 'test';
+
+  private readonly maxShards: number;
+
+  private readonly fetchImpl: typeof fetch;
+
+  private readonly classPositions: ReadonlyMap<number, number>;
+
+  private readonly splitByShard: ReadonlyMap<string, ShardedSplitIndex>;
+
+  private readonly limiter = new FetchLimiter(FETCH_CONCURRENCY);
+
+  private readonly shards = new Map<string, ResidentShard>();
+
+  private readonly labels = new Map<string, ResidentLabels>();
+
+  private readonly roundShards = new Map<string, ReadonlySet<string>>();
+
+  private readonly rounds = new Map<string, SegmentRound>();
+
+  private readonly prefetchedRounds = new Map<string, Promise<SegmentRound>>();
+
+  private readonly prefetchedShards = new Map<string, ReadonlySet<string>>();
+
+  private readonly shardLoads = new Map<string, Promise<ResidentShard>>();
+
+  private readonly labelLoads = new Map<string, Promise<ResidentLabels>>();
+
+  private readonly roundLoads = new Map<string, Promise<SegmentRound>>();
+
+  private readonly downloads = new Map<string, Promise<DownloadedBytes>>();
+
+  private readonly memoryBytes = new Map<string, DownloadedBytes>();
+
+  private readonly loadingShards = new Map<string, number>();
+
+  private readonly discardedRounds = new Set<string>();
+
+  private cachePromise: Promise<Cache | null> | undefined;
+
+  private useCounter = 0;
+
+  constructor(options: SegmentStoreOptions) {
+    if (options === null || typeof options !== 'object') {
+      throw new TypeError('sharded-assets: SegmentStore options are required.');
+    }
+    const { dataset, index, classIndices } = options;
+    if (dataset === null || typeof dataset !== 'object') {
+      throw new TypeError('sharded-assets: SegmentStore dataset is required.');
+    }
+    if (index === null || typeof index !== 'object') {
+      throw new TypeError('sharded-assets: SegmentStore index is required.');
+    }
+    if (typeof options.cacheName !== 'string' || options.cacheName.length === 0) {
+      throw new TypeError('sharded-assets: SegmentStore cacheName must be a non-empty string.');
+    }
+    if (!Array.isArray(classIndices) || classIndices.length === 0) {
+      throw new RangeError('sharded-assets: SegmentStore needs at least one class index.');
+    }
+
+    const maxShards = options.maxShards ?? DEFAULT_MAX_SHARDS;
+    if (!Number.isInteger(maxShards) || maxShards < 1) {
+      throw new RangeError(
+        `sharded-assets: maxShards must be a positive integer, received ${String(maxShards)}.`,
+      );
+    }
+
+    const split = options.split ?? 'train';
+    if (split !== 'train' && split !== 'test') {
+      throw new RangeError(
+        `sharded-assets: split must be "train" or "test", received ${String(split)}.`,
+      );
+    }
+    const splitIndex = index.splits[split];
+
+    const positions = new Map<number, number>();
+    for (let position = 0; position < classIndices.length; position += 1) {
+      const classIndex = classIndices[position];
+      if (
+        !Number.isInteger(classIndex) ||
+        classIndex < 0 ||
+        classIndex >= index.classNames.length
+      ) {
+        throw new RangeError(
+          `sharded-assets: classIndices[${position}] must be an integer from 0 to ${index.classNames.length - 1}, received ${String(classIndex)}.`,
+        );
+      }
+      if (positions.has(classIndex)) {
+        throw new RangeError(
+          `sharded-assets: classIndices contains class ${classIndex} more than once.`,
+        );
+      }
+      positions.set(classIndex, position);
+    }
+
+    const splitByShard = new Map<string, ShardedSplitIndex>();
+    for (const shard of splitIndex.shards) {
+      splitByShard.set(shard.file, splitIndex);
+    }
+    for (const classIndex of classIndices) {
+      if (!splitIndex.shards.some((shard) => shard.classIndex === classIndex)) {
+        throw new RangeError(
+          `sharded-assets: selected class ${classIndex} has no shard in the ${split} split.`,
+        );
+      }
+    }
+
+    let totalCount = 0;
+    for (const shard of splitIndex.shards) {
+      if (positions.has(shard.classIndex)) {
+        totalCount += shard.count;
+      }
+    }
+    if (totalCount < 1) {
+      throw new RangeError('sharded-assets: SegmentStore selected no images.');
+    }
+
+    this.dataset = dataset;
+    this.cacheName = options.cacheName;
+    this.split = split;
+    this.maxShards = maxShards;
+    this.fetchImpl = options.fetchImpl ?? fetch;
+    this.classPositions = positions;
+    this.splitByShard = splitByShard;
+    this.totalCount = totalCount;
+  }
+
+  /** Nombre de fragments décompressés actuellement résidents. */
+  get residentShards(): number {
+    return this.shards.size;
+  }
+
+  /**
+   * Retourne le round demandé, en réutilisant un round résident ou préchargé.
+   * Les appels concurrents pour le même round partagent la même promesse.
+   */
+  async loadRound(ref: RoundRef): Promise<SegmentRound> {
+    const key = roundKey(ref);
+    const resident = this.rounds.get(key);
+    if (resident !== undefined) {
+      return resident;
+    }
+    const prefetched = this.prefetchedRounds.get(key);
+    if (prefetched !== undefined) {
+      this.prefetchedRounds.delete(key);
+      this.prefetchedShards.delete(key);
+      return prefetched;
+    }
+    return this.startRound(ref);
+  }
+
+  /**
+   * Lance le chargement d'un round sans l'attendre. Le résultat reste disponible
+   * pour le prochain `loadRound`, et une erreur est ignorée jusqu'à cet appel.
+   */
+  prefetchRound(ref: RoundRef): void {
+    const key = roundKey(ref);
+    if (this.rounds.has(key) || this.prefetchedRounds.has(key) || this.roundLoads.has(key)) {
+      return;
+    }
+    this.prefetchedShards.set(key, roundFiles(ref));
+    const promise = this.startRound(ref).catch((error: unknown) => {
+      this.prefetchedRounds.delete(key);
+      this.prefetchedShards.delete(key);
+      throw error;
+    });
+    this.prefetchedRounds.set(key, promise);
+    // Sans consommateur, l'échec ne doit pas produire de rejet non géré.
+    promise.catch(() => undefined);
+  }
+
+  /**
+   * Libère les images et libellés d'un round, puis évince les fragments que
+   * plus aucun round résident, préchargé ou en cours de chargement n'utilise.
+   */
+  releaseRound(ref: RoundRef): void {
+    const key = roundKey(ref);
+    const files = this.roundShards.get(key);
+    this.rounds.delete(key);
+    this.roundShards.delete(key);
+    this.prefetchedRounds.delete(key);
+    this.prefetchedShards.delete(key);
+    if (this.roundLoads.has(key)) {
+      this.discardedRounds.add(key);
+    }
+    if (files === undefined) {
+      return;
+    }
+    for (const file of files) {
+      if (!this.isNeeded(file)) {
+        this.evictShard(file);
+      }
+    }
+  }
+
+  /** Enregistre un round en cours de chargement et le rend résident. */
+  private startRound(ref: RoundRef): Promise<SegmentRound> {
+    const key = roundKey(ref);
+    this.discardedRounds.delete(key);
+    const pending = this.roundLoads.get(key);
+    if (pending !== undefined) {
+      return pending;
+    }
+    const files = roundFiles(ref);
+    this.retainLoading(files);
+    let retained = false;
+    const promise = this.buildRound(ref)
+      .then((round) => {
+        if (this.discardedRounds.delete(key)) {
+          return round;
+        }
+        retained = true;
+        this.rounds.set(key, round);
+        this.roundShards.set(key, files);
+        return round;
+      })
+      .finally(() => {
+        this.releaseLoading(files);
+        if (!retained) {
+          for (const file of files) {
+            if (!this.isNeeded(file)) {
+              this.evictShard(file);
+            }
+          }
+        }
+        if (this.roundLoads.get(key) === promise) {
+          this.roundLoads.delete(key);
+        }
+      });
+    this.roundLoads.set(key, promise);
+    return promise;
+  }
+
+  /** Charge les fragments et les libellés, puis concatène le round. */
+  private async buildRound(ref: RoundRef): Promise<SegmentRound> {
+    if (ref.entries.length === 0) {
+      throw new RangeError('sharded-assets: a round must contain at least one shard entry.');
+    }
+
+    const splits = new Map<string, ShardedSplitIndex>();
+    const parts = await Promise.all(
+      ref.entries.map(async (entry) => {
+        const split = this.splitByShard.get(entry.file);
+        if (split === undefined) {
+          throw new Error(
+            `sharded-assets: shard "${entry.file}" is not in the ${this.split} split of the dataset index.`,
+          );
+        }
+        if (!this.classPositions.has(entry.classIndex)) {
+          throw new RangeError(
+            `sharded-assets: shard "${entry.file}" has classIndex ${entry.classIndex}, which is not selected.`,
+          );
+        }
+        splits.set(split.labelsFile, split);
+        const shard = await this.loadShard(entry);
+        return { entry, split, payload: shard.payload };
+      }),
+    );
+
+    const labels = new Map<string, Uint8Array>();
+    await Promise.all(
+      [...splits.values()].map(async (split) => {
+        const resident = await this.loadLabels(split);
+        labels.set(split.labelsFile, resident.payload);
+      }),
+    );
+
+    let count = 0;
+    for (const entry of ref.entries) {
+      count += entry.count;
+    }
+    const images = new Float32Array(count * PIXELS_PER_IMAGE);
+    const roundLabels = new Uint8Array(count);
+    let imageOffset = 0;
+    let labelOffset = 0;
+
+    for (const part of parts) {
+      const source = labels.get(part.split.labelsFile);
+      if (source === undefined) {
+        throw new Error(
+          `sharded-assets: labels file "${part.split.labelsFile}" was not downloaded.`,
+        );
+      }
+      const entry = part.entry;
+      const position = this.classPositions.get(entry.classIndex);
+      if (position === undefined) {
+        throw new RangeError(
+          `sharded-assets: shard "${entry.file}" has classIndex ${entry.classIndex}, which is not selected.`,
+        );
+      }
+      if (entry.start + entry.count > source.length) {
+        throw new RangeError(
+          `sharded-assets: shard "${entry.file}" needs labels ${entry.start} to ${entry.start + entry.count}, but "${part.split.labelsFile}" has ${source.length}.`,
+        );
+      }
+      for (let index = 0; index < part.payload.length; index += 1) {
+        images[imageOffset + index] = part.payload[index] / 255;
+      }
+      imageOffset += part.payload.length;
+      for (let index = 0; index < entry.count; index += 1) {
+        const original = source[entry.start + index];
+        // Le fichier global porte les index d'origine. Un fichier déjà remappé
+        // (libellé égal à la position de sortie) est aussi accepté.
+        const mapped =
+          this.classPositions.get(original) ?? (original === position ? position : undefined);
+        if (mapped === undefined) {
+          throw new RangeError(
+            `sharded-assets: "${part.split.labelsFile}" has label ${original} at index ${entry.start + index}, which is not one of the selected classes.`,
+          );
+        }
+        roundLabels[labelOffset + index] = mapped;
+      }
+      labelOffset += entry.count;
+    }
+
+    return {
+      count,
+      images,
+      labels: roundLabels,
+      readBatch: (start: number, end: number): MnistSample =>
+        readRoundBatch(images, roundLabels, count, start, end),
+    };
+  }
+
+  /** Charge et décode un fragment, en partageant les chargements en vol. */
+  private loadShard(entry: RoundEntry): Promise<ResidentShard> {
+    const resident = this.shards.get(entry.file);
+    if (resident !== undefined) {
+      this.useCounter += 1;
+      resident.lastUsed = this.useCounter;
+      return Promise.resolve(resident);
+    }
+    const pending = this.shardLoads.get(entry.file);
+    if (pending !== undefined) {
+      return pending;
+    }
+    const promise = this.decodeShardSource(entry)
+      .then((shard) => {
+        this.shards.set(entry.file, shard);
+        this.enforceWindow();
+        return shard;
+      })
+      .finally(() => {
+        if (this.shardLoads.get(entry.file) === promise) {
+          this.shardLoads.delete(entry.file);
+        }
+      });
+    this.shardLoads.set(entry.file, promise);
+    return promise;
+  }
+
+  /** Décompresse un fragment, retire son en-tête et valide sa longueur. */
+  private async decodeShardSource(entry: RoundEntry): Promise<ResidentShard> {
+    const url = datasetAssetUrl(this.dataset, entry.file);
+    const downloaded = await this.readBytes(url);
+    let decoded: Uint8Array;
+    try {
+      decoded = await decodeIdxPayload(downloaded.bytes, downloaded.contentEncoding);
+    } catch (error) {
+      throw new Error(
+        `sharded-assets: could not decode shard "${entry.file}". (${(error as Error).message})`,
+      );
+    }
+    const payload = imagePayload(decoded, entry.file, entry.count);
+    const expectedBytes = entry.count * PIXELS_PER_IMAGE;
+    if (payload.length !== expectedBytes) {
+      throw new RangeError(
+        `sharded-assets: shard "${entry.file}" has ${payload.length} image bytes, expected ${expectedBytes}.`,
+      );
+    }
+    this.useCounter += 1;
+    return {
+      file: entry.file,
+      classIndex: entry.classIndex,
+      payload,
+      lastUsed: this.useCounter,
+    };
+  }
+
+  /** Charge et décode les libellés globaux d'une fraction, une seule fois. */
+  private loadLabels(split: ShardedSplitIndex): Promise<ResidentLabels> {
+    const resident = this.labels.get(split.labelsFile);
+    if (resident !== undefined) {
+      return Promise.resolve(resident);
+    }
+    const pending = this.labelLoads.get(split.labelsFile);
+    if (pending !== undefined) {
+      return pending;
+    }
+    const promise = this.decodeLabels(split).finally(() => {
+      if (this.labelLoads.get(split.labelsFile) === promise) {
+        this.labelLoads.delete(split.labelsFile);
+      }
+    });
+    this.labelLoads.set(split.labelsFile, promise);
+    return promise;
+  }
+
+  private async decodeLabels(split: ShardedSplitIndex): Promise<ResidentLabels> {
+    const url = datasetAssetUrl(this.dataset, split.labelsFile);
+    const downloaded = await this.readBytes(url);
+    let decoded: Uint8Array;
+    try {
+      decoded = await decodeIdxPayload(downloaded.bytes, downloaded.contentEncoding);
+    } catch (error) {
+      throw new Error(
+        `sharded-assets: could not decode labels "${split.labelsFile}". (${(error as Error).message})`,
+      );
+    }
+    const resident = {
+      file: split.labelsFile,
+      payload: labelPayload(decoded, split.labelsFile, split.count),
+    };
+    this.labels.set(split.labelsFile, resident);
+    return resident;
+  }
+
+  /**
+   * Lit un fichier depuis la mémoire, puis le cache Cache API, puis le réseau.
+   * Un échec de cache est ignoré ; un échec réseau rejette la promesse et sera
+   * retenté au prochain appel.
+   */
+  private readBytes(url: string): Promise<DownloadedBytes> {
+    const cached = this.memoryBytes.get(url);
+    if (cached !== undefined) {
+      return Promise.resolve(cached);
+    }
+    const pending = this.downloads.get(url);
+    if (pending !== undefined) {
+      return pending;
+    }
+    const promise = this.download(url).finally(() => {
+      if (this.downloads.get(url) === promise) {
+        this.downloads.delete(url);
+      }
+    });
+    this.downloads.set(url, promise);
+    return promise;
+  }
+
+  private async download(url: string): Promise<DownloadedBytes> {
+    const cache = await this.openCache();
+    if (cache !== null) {
+      try {
+        const hit = await cache.match(url);
+        if (hit !== undefined) {
+          const payload: DownloadedBytes = {
+            bytes: new Uint8Array(await hit.arrayBuffer()),
+            contentEncoding: hit.headers.get('content-encoding'),
+          };
+          this.memoryBytes.set(url, payload);
+          return payload;
+        }
+      } catch {
+        // Une lecture de cache en échec ne doit pas empêcher le téléchargement.
+      }
+    }
+    return this.limiter.run(() => this.fetchBytes(url, cache));
+  }
+
+  private async fetchBytes(url: string, cache: Cache | null): Promise<DownloadedBytes> {
+    let response: Response;
+    try {
+      response = await this.fetchImpl(url);
+    } catch (error) {
+      throw new Error(
+        mnistFetchErrorMessage(
+          url,
+          `network error: ${(error as Error).message}`,
+          this.dataset.downloadCommand,
+        ),
+      );
+    }
+    if (!response.ok) {
+      throw new Error(
+        mnistFetchErrorMessage(
+          url,
+          `HTTP ${response.status} ${response.statusText}`,
+          this.dataset.downloadCommand,
+        ),
+      );
+    }
+
+    let copy: Response | undefined;
+    if (cache !== null) {
+      try {
+        copy = response.clone();
+      } catch {
+        copy = undefined;
+      }
+    }
+    let bytes: Uint8Array;
+    try {
+      bytes = new Uint8Array(await response.arrayBuffer());
+    } catch (error) {
+      throw new Error(
+        mnistFetchErrorMessage(
+          url,
+          `could not read the body: ${(error as Error).message}`,
+          this.dataset.downloadCommand,
+        ),
+      );
+    }
+    const payload: DownloadedBytes = {
+      bytes,
+      contentEncoding: response.headers.get('content-encoding'),
+    };
+    if (cache !== null && copy !== undefined) {
+      try {
+        await cache.put(url, copy);
+      } catch {
+        // Quota dépassé ou cache indisponible : la mémoire reste la seule copie.
+      }
+    }
+    this.memoryBytes.set(url, payload);
+    return payload;
+  }
+
+  /** Ouvre le cache nommé, ou retourne `null` si Cache API est indisponible. */
+  private openCache(): Promise<Cache | null> {
+    if (this.cachePromise === undefined) {
+      if (typeof caches === 'undefined') {
+        this.cachePromise = Promise.resolve(null);
+      } else {
+        try {
+          this.cachePromise = caches.open(this.cacheName).then(
+            (cache) => cache,
+            () => null,
+          );
+        } catch {
+          this.cachePromise = Promise.resolve(null);
+        }
+      }
+    }
+    return this.cachePromise;
+  }
+
+  /**
+   * Évince les fragments les moins récemment utilisés jusqu'à respecter
+   * `maxShards`. Les fragments protégés passent en dernier, et une classe qui a
+   * plusieurs fragments résidents perd le sien en premier.
+   */
+  private enforceWindow(): void {
+    while (this.shards.size > this.maxShards) {
+      const protectedFiles = new Set<string>();
+      for (const files of this.roundShards.values()) {
+        for (const file of files) {
+          protectedFiles.add(file);
+        }
+      }
+      for (const files of this.prefetchedShards.values()) {
+        for (const file of files) {
+          protectedFiles.add(file);
+        }
+      }
+      for (const file of this.loadingShards.keys()) {
+        protectedFiles.add(file);
+      }
+
+      const classCounts = new Map<number, number>();
+      for (const shard of this.shards.values()) {
+        classCounts.set(shard.classIndex, (classCounts.get(shard.classIndex) ?? 0) + 1);
+      }
+      const ordered = [...this.shards.values()].sort((a, b) => a.lastUsed - b.lastUsed);
+      const victim =
+        ordered.find(
+          (shard) =>
+            !protectedFiles.has(shard.file) && (classCounts.get(shard.classIndex) ?? 0) > 1,
+        ) ??
+        ordered.find(
+          (shard) => protectedFiles.has(shard.file) && (classCounts.get(shard.classIndex) ?? 0) > 1,
+        ) ??
+        ordered.find((shard) => !protectedFiles.has(shard.file)) ??
+        ordered[0];
+      if (victim === undefined) {
+        return;
+      }
+      this.evictShard(victim.file);
+    }
+  }
+
+  /** Retire un fragment résident et sa copie compressée en mémoire. */
+  private evictShard(file: string): void {
+    this.shards.delete(file);
+    this.memoryBytes.delete(datasetAssetUrl(this.dataset, file));
+  }
+
+  /** Vrai si un round résident, préchargé ou en cours utilise ce fragment. */
+  private isNeeded(file: string): boolean {
+    if (this.loadingShards.has(file)) {
+      return true;
+    }
+    for (const files of this.roundShards.values()) {
+      if (files.has(file)) {
+        return true;
+      }
+    }
+    for (const files of this.prefetchedShards.values()) {
+      if (files.has(file)) {
+        return true;
+      }
+    }
+    return false;
+  }
+
+  private retainLoading(files: ReadonlySet<string>): void {
+    for (const file of files) {
+      this.loadingShards.set(file, (this.loadingShards.get(file) ?? 0) + 1);
+    }
+  }
+
+  private releaseLoading(files: ReadonlySet<string>): void {
+    for (const file of files) {
+      const count = this.loadingShards.get(file);
+      if (count === undefined) {
+        continue;
+      }
+      if (count <= 1) {
+        this.loadingShards.delete(file);
+      } else {
+        this.loadingShards.set(file, count - 1);
+      }
+    }
+  }
 }
 
 /** Télécharge, décode et valide la galerie d'une fraction. */
