@@ -220,6 +220,16 @@ for (const file of htmlFiles) {
     `${label}: missing the dark theme block.`,
   );
 
+  const newTabNoteCount = (html.match(/\(nouvel onglet\)/g) ?? []).length;
+  check(
+    html.includes('https://pierre-couy.dev') &&
+      html.includes('https://github.com/pcouy/interactive-ai-examples') &&
+      (html.match(/\btarget=["']_blank["']/gi) ?? []).length >= 2 &&
+      (html.match(/\brel=["']noopener noreferrer["']/gi) ?? []).length >= 2 &&
+      newTabNoteCount >= 2,
+    `${label}: external links are missing or lose their new-tab attributes`,
+  );
+
   const baseName = path.basename(file);
   const demoTag = DEMO_PAGES[baseName];
   if (demoTag) {
