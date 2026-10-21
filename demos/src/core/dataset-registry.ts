@@ -24,8 +24,15 @@ interface DatasetBase {
   /**
    * Pourcentage maximal de fragments chargé dans le navigateur, pour limiter
    * la mémoire utilisée. `undefined` vaut 100 : aucun plafond supplémentaire.
+   * Aucun jeu actuel ne fixe ce plafond : ils autorisent tous 100 %.
    */
   readonly maxPercent?: number;
+  /** Vrai si l'utilisateur peut choisir un sous-ensemble de classes. */
+  readonly selectable?: boolean;
+  /** Indices des classes cochées au départ (sélectionnables seulement). */
+  readonly defaultSelectedClasses?: readonly number[];
+  /** Version du cache navigateur des shards. */
+  readonly cacheVersion?: number;
   readonly license: string;
   readonly attribution: string;
   readonly kind: DatasetKind;
@@ -121,13 +128,31 @@ const QUICKDRAW: ShardedDatasetDefinition = {
   id: 'quickdraw',
   name: 'QuickDraw',
   description:
-    'Croquis dessinés à la main en niveaux de gris, 28 × 28 pixels : 490 571 dessins d’apprentissage et 122 645 dessins de test, répartis en cinq catégories.',
-  classNames: ['livre', 'lune', 'chat', 'parapluie', 'gâteau'],
-  trainCount: 490571,
-  testCount: 122645,
+    'Croquis dessinés à la main en niveaux de gris, 28 × 28 pixels : 1 597 997 dessins d’apprentissage et 399 507 dessins de test, répartis en quinze catégories.',
+  classNames: [
+    'livre',
+    'lune',
+    'chat',
+    'parapluie',
+    'gâteau',
+    'chien',
+    'poisson',
+    'fleur',
+    'étoile',
+    'maison',
+    'arbre',
+    'soleil',
+    'vélo',
+    'pizza',
+    'pomme',
+  ],
+  trainCount: 1597997,
+  testCount: 399507,
   indexFile: 'index.json',
   shardSize: 1000,
-  maxPercent: 10,
+  selectable: true,
+  defaultSelectedClasses: [0, 1, 2, 3, 4],
+  cacheVersion: 2,
   defaultTrainPercent: 2,
   defaultValidationPercent: 2,
   license: 'CC BY 4.0',
@@ -149,7 +174,6 @@ const OCTMNIST: ShardedDatasetDefinition = {
   testCount: 1000,
   indexFile: 'index.json',
   shardSize: 1000,
-  maxPercent: 10,
   defaultTrainPercent: 10,
   defaultValidationPercent: 10,
   license: 'CC BY 4.0',
@@ -171,7 +195,6 @@ const PNEUMONIAMNIST: ShardedDatasetDefinition = {
   testCount: 624,
   indexFile: 'index.json',
   shardSize: 1000,
-  maxPercent: 10,
   defaultTrainPercent: 10,
   defaultValidationPercent: 10,
   license: 'CC BY 4.0',
@@ -193,7 +216,6 @@ const BREASTMNIST: ShardedDatasetDefinition = {
   testCount: 156,
   indexFile: 'index.json',
   shardSize: 1000,
-  maxPercent: 10,
   defaultTrainPercent: 10,
   defaultValidationPercent: 10,
   license: 'CC BY 4.0',
@@ -224,7 +246,6 @@ const TISSUEMNIST: ShardedDatasetDefinition = {
   testCount: 47280,
   indexFile: 'index.json',
   shardSize: 1000,
-  maxPercent: 10,
   defaultTrainPercent: 10,
   defaultValidationPercent: 10,
   license: 'CC BY 4.0',
@@ -259,7 +280,6 @@ const ORGANAMNIST: ShardedDatasetDefinition = {
   testCount: 17778,
   indexFile: 'index.json',
   shardSize: 1000,
-  maxPercent: 10,
   defaultTrainPercent: 10,
   defaultValidationPercent: 10,
   license: 'CC BY 4.0',
@@ -279,7 +299,6 @@ const ORGANCMNIST: ShardedDatasetDefinition = {
   testCount: 8216,
   indexFile: 'index.json',
   shardSize: 1000,
-  maxPercent: 10,
   defaultTrainPercent: 10,
   defaultValidationPercent: 10,
   license: 'CC BY 4.0',
@@ -299,7 +318,6 @@ const ORGANSMNIST: ShardedDatasetDefinition = {
   testCount: 8827,
   indexFile: 'index.json',
   shardSize: 1000,
-  maxPercent: 10,
   defaultTrainPercent: 10,
   defaultValidationPercent: 10,
   license: 'CC BY 4.0',

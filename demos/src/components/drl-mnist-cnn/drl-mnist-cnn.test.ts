@@ -445,7 +445,7 @@ describe('stratifiedExampleCountEstimate', () => {
 describe('datasetMaxPercent', () => {
   it('caps a memory-heavy dataset and leaves the others at 100', () => {
     expect(datasetMaxPercent(getDataset('mnist'))).toBe(100);
-    expect(datasetMaxPercent(getDataset('quickdraw'))).toBe(10);
+    expect(datasetMaxPercent(getDataset('quickdraw'))).toBe(100);
   });
 });
 
@@ -1083,7 +1083,7 @@ describe('trainingRunRequest', () => {
   it('forwards the output class count from the input', () => {
     expect(trainingRunRequest(input()).outputClasses).toBe(10);
     expect(trainingRunRequest(input({ outputClasses: 20 })).outputClasses).toBe(20);
-    // QuickDraw : cinq classes de sortie.
+    // QuickDraw : quinze classes de sortie.
     expect(trainingRunRequest(input({ outputClasses: 5 })).outputClasses).toBe(5);
   });
 
