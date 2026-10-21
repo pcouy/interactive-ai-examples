@@ -56,6 +56,7 @@ import {
   parseWeightInput,
   pointerToCell,
   pointerToGrid,
+  segmentRunNeeded,
   segmentSelectionCount,
   selectedWeightValue,
   stepGalleryIndex,
@@ -585,6 +586,22 @@ describe('segmentSelectionCount', () => {
     expect(full).toBe(15 * 107 * 1000);
     expect(shouldUseSegments(tenPercent)).toBe(true);
     expect(shouldUseSegments(full)).toBe(true);
+  });
+});
+
+describe('segmentRunNeeded', () => {
+  it('segments when the validation split alone exceeds the threshold', () => {
+    expect(segmentRunNeeded(30_000, 100_000)).toBe(true);
+  });
+
+  it('keeps the whole path when both splits stay under the threshold', () => {
+    expect(segmentRunNeeded(30_000, 15_000)).toBe(false);
+    expect(segmentRunNeeded(60_000, 60_000)).toBe(false);
+  });
+
+  it('segments as soon as either split passes the threshold', () => {
+    expect(segmentRunNeeded(60_000, 60_001)).toBe(true);
+    expect(segmentRunNeeded(60_001, 60_000)).toBe(true);
   });
 });
 

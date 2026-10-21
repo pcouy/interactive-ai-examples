@@ -768,6 +768,11 @@ export function groupEntriesByNetworkClass(
   return groups;
 }
 
+/** Vrai si l'une des deux fractions dépasse le seuil segmenté. */
+export function segmentRunNeeded(trainCount: number, validationCount: number): boolean {
+  return shouldUseSegments(Math.max(trainCount, validationCount));
+}
+
 /** Vrai si deux tuples de filtres décrivent la même architecture. */
 function sameFilters(a: MnistCnnFilters, b: MnistCnnFilters): boolean {
   return a[0] === b[0] && a[1] === b[1] && a[2] === b[2] && a[3] === b[3];
@@ -1776,10 +1781,6 @@ export class MnistCnn extends LitElement {
   @state()
   private roundsPerEpoch: number | null = null;
 
-  /** Nombre cumulé de rounds achevés depuis le début de la run. */
-  @state()
-  private completedRounds: number | null = null;
-
   /** Nombre de fragments couverts par la dernière fenêtre de perte lue. */
   @state()
   private windowShards: number | null = null;
@@ -1985,7 +1986,6 @@ export class MnistCnn extends LitElement {
       completedEpochs: this.completedEpochs,
       roundIndex: this.roundIndex,
       roundsPerEpoch: this.roundsPerEpoch,
-      completedRounds: this.completedRounds,
       windowShards: this.windowShards,
       metricsStarted: this.metricsStarted,
       trainExampleCount: this.trainExampleCount,
@@ -2352,9 +2352,9 @@ export class MnistCnn extends LitElement {
   /**
    * Prépare une run segmentée pour un jeu de fragments : fige les fragments des
    * deux fractions, construit leurs plans et retourne les magasins correspondants.
-   * Retourne null quand la sélection d'entraînement reste dans le seuil : le
-   * chemin qui charge tout le jeu est alors conservé. La validation est toujours
-   * segmentée, ce qui évite de matérialiser la fraction de test.
+   * Retourne null quand la plus grande des deux fractions reste dans le seuil : le
+   * chemin qui charge tout le jeu est alors conservé. La validation est aussi
+   * segmentée, ce qui évite de matérialiser une fraction de test trop grande.
    */
   private buildSegmentRun(
     dataset: ShardedDatasetDefinition,
@@ -2370,7 +2370,7 @@ export class MnistCnn extends LitElement {
       this.validationPercent,
       this.enabledClasses,
     );
-    if (!shouldUseSegments(shardEntryCount(trainEntries))) {
+    if (!segmentRunNeeded(shardEntryCount(trainEntries), shardEntryCount(testEntries))) {
       return null;
     }
     const trainStore = this.segmentStoreFor(dataset, index, 'train');
@@ -2555,7 +2555,6 @@ export class MnistCnn extends LitElement {
     this.completedEpochs = null;
     this.roundIndex = null;
     this.roundsPerEpoch = null;
-    this.completedRounds = null;
     this.windowShards = null;
     this.metricsStarted = false;
     this.history = emptyHistory();
@@ -2570,7 +2569,6 @@ export class MnistCnn extends LitElement {
     this.completedEpochs = progress.completedEpochs;
     this.roundIndex = progress.roundIndex ?? null;
     this.roundsPerEpoch = progress.roundsPerEpoch ?? null;
-    this.completedRounds = progress.completedRounds ?? null;
     this.windowShards = progress.windowShards ?? null;
     this.metricsStarted = true;
     if (progress.completedEpochs > this.lastEmittedEpoch) {
@@ -2934,7 +2932,6 @@ export class MnistCnn extends LitElement {
     this.filterTab = tab;
     this.canvasesDirty = true;
     void this.updateComplete.then(() => {
-      this.renderRoot.querySelector<HTMLButtonElement>(`#${filterTabId(tab)}`)?.focus();
       if (tab === 'filters') {
         this.positionFilterLinks();
       }
@@ -4021,7 +4018,7 @@ export class MnistCnn extends LitElement {
       </details>
 
       <div class="drl-panels-row">
-        <section class="drl-panel drl-panel--filters" aria-label="Filtres de convolution">
+        <section class="drl-panel drl-panel--filters" aria-label="Filtres et exemples">
           <div class="drl-tabs" role="tablist" aria-label="Filtres de convolution et exemples">
             ${FILTER_TABS.map(
               (tab) => html`

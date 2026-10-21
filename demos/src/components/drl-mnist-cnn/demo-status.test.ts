@@ -197,13 +197,11 @@ describe('statusLine', () => {
         completedEpochs: 2,
         roundIndex: 1,
         roundsPerEpoch: 4,
-        completedRounds: 5,
         windowShards: 8,
       }),
     );
     expect(line).toContain('époque 2');
     expect(line).toContain('round 1/4');
-    expect(line).toContain('rounds 5');
     expect(line).toContain('fenêtre 8 fragments');
     // Les métriques existantes restent affichées.
     expect(line).toContain('perte : 0,457');
@@ -219,26 +217,12 @@ describe('statusLine', () => {
         completedEpochs: null,
         roundIndex: null,
         roundsPerEpoch: null,
-        completedRounds: null,
         windowShards: null,
       }),
     );
     expect(line).not.toContain('époque');
     expect(line).not.toContain('round');
     expect(line).not.toContain('fenêtre');
-  });
-
-  it('shows completed rounds only when the count is present', () => {
-    const withRounds = statusLine(
-      input({ metricsStarted: true, roundIndex: 1, roundsPerEpoch: 4, completedRounds: 7 }),
-    );
-    expect(withRounds).toContain('round 1/4');
-    expect(withRounds).toContain('rounds 7');
-    const withoutRounds = statusLine(
-      input({ metricsStarted: true, roundIndex: 1, roundsPerEpoch: 4, completedRounds: null }),
-    );
-    expect(withoutRounds).toContain('round 1/4');
-    expect(withoutRounds).not.toContain('rounds');
   });
 
   it('appends the hand-edited note after the example counts', () => {
