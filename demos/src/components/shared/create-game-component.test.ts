@@ -85,6 +85,12 @@ function renderTemplateTextFlat(value: unknown): string {
   return renderTemplateText(value).replace(/\s+/g, ' ').trim();
 }
 
+describe('game configs', () => {
+  it('names the Connect 4 players after the blue and red pieces', () => {
+    expect(CONNECT4_GAME_CONFIG.playerNames).toEqual(['Bleus', 'Rouges']);
+  });
+});
+
 describe('tic-tac-toe cell mapping', () => {
   const config = TIC_TAC_TOE_GAME_CONFIG;
 
