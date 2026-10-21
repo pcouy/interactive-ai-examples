@@ -22,6 +22,13 @@ const distDir = path.join(projectRoot, 'dist');
 const PREFIX = '/nested/site/';
 const REDIRECT_PATH = '/nested/site';
 
+const BUNDLE_MARKERS = [
+  '--drl-theme-bg',
+  'Boucle agent-environnement',
+  'Dernière mise à jour',
+  'Rejeu',
+];
+
 const MIME_TYPES = new Map([
   ['.html', 'text/html; charset=utf-8'],
   ['.js', 'text/javascript; charset=utf-8'],
@@ -297,6 +304,18 @@ async function main() {
       );
       if (asset.path.endsWith('.js')) {
         check(result.body.length > 0, `${asset.path} has a non-empty body`);
+      }
+    }
+
+    const servedBundle = await fetchPath(baseUrl, `${PREFIX}demo/drl-demos.js`);
+    for (const marker of BUNDLE_MARKERS) {
+      checks += 1;
+      if (servedBundle.status === 200 && servedBundle.body.includes(marker)) {
+        console.log(`PASS served demo/drl-demos.js contains "${marker}"`);
+      } else {
+        const message = `served demo/drl-demos.js is stale: missing "${marker}"`;
+        failures.push(message);
+        console.log(`FAIL ${message}`);
       }
     }
 
