@@ -257,10 +257,6 @@ export class FrozenLake extends DemoElement {
         font-size: 0.85em;
       }
 
-      .drl-panel-note[hidden] {
-        display: none;
-      }
-
       .drl-loop {
         display: grid;
         gap: var(--drl-space-2);
@@ -799,13 +795,12 @@ export class FrozenLake extends DemoElement {
   }
 
   /**
-   * Fills the agent-environment schematic from the fine-step state. An observe
-   * phase has no selected action, so the last update keeps the schematic
-   * readable during autoplay and is labelled as the last transition.
+   * Fills the agent-environment schematic from the fine-step state. The observe
+   * phase shows the current observation only.
    */
   private drawSchematic(): void {
     const state = this.core.fineStepState;
-    const view = schematicView(state, this.core.lastUpdate);
+    const view = schematicView(state);
     const actionText =
       view.action === null ? EMPTY_VALUE : `${ACTION_GLYPHS[view.action]} ${view.action}`;
 
@@ -819,12 +814,6 @@ export class FrozenLake extends DemoElement {
       view.nextObservation === null ? EMPTY_VALUE : String(view.nextObservation),
     );
     this.setField('schematic-reward', view.reward === null ? EMPTY_VALUE : view.reward.toFixed(3));
-
-    const source = this.renderRoot.querySelector<HTMLElement>('[data-field="schematic-source"]');
-    if (source) {
-      source.textContent = view.fallback ? 'Dernière transition' : '';
-      source.hidden = !view.fallback;
-    }
 
     for (const phase of FINE_STEP_PHASES) {
       const node = this.renderRoot.querySelector<HTMLElement>(`[data-phase="${phase}"]`);
@@ -989,6 +978,7 @@ export class FrozenLake extends DemoElement {
           >
             <path class="drl-curve" visibility="hidden"></path>
           </svg>
+          <slot></slot>
         </div>
         <aside class="drl-side">
           <section class="drl-panel" aria-labelledby="drl-schematic-title">
@@ -999,7 +989,6 @@ export class FrozenLake extends DemoElement {
               L'environnement émet une observation. L'agent choisit une action.
               L'environnement renvoie une observation et une récompense.
             </p>
-            <p class="drl-panel-note" data-field="schematic-source" hidden></p>
             <div class="drl-loop">
               <div class="drl-loop-boxes">
                 <div class="drl-loop-box">

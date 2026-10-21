@@ -247,6 +247,14 @@ function checkFrozenLakePage(html) {
   check(html.includes('demo/drl-demos.js'), `${label}: loads demo/drl-demos.js`);
   check(html.includes('class="katex"'), `${label}: contains rendered KaTeX markup`);
 
+  const demoOpen = html.indexOf('<drl-frozen-lake');
+  const demoClose = html.indexOf('</drl-frozen-lake>');
+  const controls = html.indexOf('class="demo-controls"');
+  check(
+    demoOpen !== -1 && demoClose > demoOpen && controls > demoOpen && controls < demoClose,
+    `${label}: controls sit inside the demo element`,
+  );
+
   const sliderCount = countMatches(html, /\bdata-param=/g);
   check(sliderCount === 7, `${label}: has seven data-param sliders (found ${sliderCount})`);
 }

@@ -102,35 +102,19 @@ export interface SchematicView {
   readonly action: FrozenLakeAction | null;
   readonly nextObservation: number | null;
   readonly reward: number | null;
-  readonly fallback: boolean;
 }
 
 /**
- * Builds the schematic of the current fine step. The observe phase has no
- * action yet, so it falls back to the last update. Every field then comes from
- * that one transition, never from a mix of the state and the transition.
+ * Builds the schematic of the current fine step. The observe phase shows the
+ * current observation only. Every other field stays empty until the act phase.
  */
-export function schematicView(
-  state: FineStepState,
-  lastUpdate: QUpdateResult<number, FrozenLakeAction> | null,
-): SchematicView {
+export function schematicView(state: FineStepState): SchematicView {
   if (state.action !== null) {
     return {
       observation: state.observation,
       action: state.action,
       nextObservation: state.nextObservation,
       reward: state.reward,
-      fallback: false,
-    };
-  }
-  if (lastUpdate !== null) {
-    const transition = lastUpdate.transition;
-    return {
-      observation: transition.observation,
-      action: transition.action,
-      nextObservation: transition.nextObservation,
-      reward: transition.reward,
-      fallback: true,
     };
   }
   return {
@@ -138,6 +122,5 @@ export function schematicView(
     action: null,
     nextObservation: null,
     reward: null,
-    fallback: false,
   };
 }
