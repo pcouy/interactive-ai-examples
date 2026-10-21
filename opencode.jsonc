@@ -17,6 +17,7 @@
       "models": {
         "weak": {
           "modelID": "longcat-2.5-preview-free",
+          // "modelID": "deepseek-4.1-flash-free",
           "name": "Weak",
           "capabilities": {
             "tools": true,
