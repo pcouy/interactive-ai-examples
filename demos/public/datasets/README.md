@@ -105,17 +105,19 @@ sont gardés par classe, plafonnés au nombre disponible.
 
 ### Mode segmenté
 
-Au-delà de 60 000 images dans une fraction, l'entraînement et la validation passent en
-mode segmenté. Un round contient un fragment par classe sélectionnée. Le navigateur garde
-au plus 60 fragments décodés en mémoire (environ 47 Mo), précharge le round suivant et
-libère les fragments consommés. Chaque fragment est aussi mis en cache compressé dans la
-Cache API (`drl-datasets-v<version>-<jeu>`), avec un repli en mémoire si le quota ou
+Au-delà de 60 000 images dans la plus grande des deux fractions — apprentissage ou
+validation —, l'entraînement et la validation passent en mode segmenté. Un round contient
+un fragment par classe sélectionnée. Le navigateur garde au plus 60 fragments décodés en
+mémoire (environ 47 Mo), précharge le round suivant et libère les fragments consommés.
+Chaque fragment est aussi mis en cache compressé dans la Cache API
+(`drl-datasets-v<version>-<jeu>`), avec un repli en mémoire si le quota ou
 l'API n'est pas disponible.
 
 À 2 % sur les quinze classes QuickDraw, le navigateur demande 30 fragments
-d'apprentissage (30 000 images) et 15 fragments de validation : la fraction reste sous le
-seuil et le jeu complet est matérialisé. À 10 % et au-delà, les rounds segmentés prennent
-le relais.
+d'apprentissage (30 000 images) et 15 fragments de validation : la plus grande fraction
+reste sous le seuil et le jeu complet est matérialisé. À 10 %, quinze classes demandent
+environ 150 000 images d'apprentissage : les rounds segmentés prennent le relais. Cinq
+classes à 10 % n'en demandent qu'environ 50 000 : le jeu complet reste matérialisé.
 
 ## Sélection des classes
 

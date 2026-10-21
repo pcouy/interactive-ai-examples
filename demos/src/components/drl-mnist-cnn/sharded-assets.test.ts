@@ -977,6 +977,45 @@ describe('SegmentStore', () => {
     expect(Array.from(round.labels)).toEqual([0, 0, 1, 1]);
   });
 
+  it('calls the global fetch without binding the store as its receiver', async () => {
+    const fixture = segmentFixture(2, 1);
+    stubCaches();
+    const seen: string[] = [];
+    const receivers: unknown[] = [];
+    // Un navigateur rejette `window.fetch` quand `this` n'est pas `window`.
+    function strictFetch(this: unknown, input: RequestInfo | URL): Promise<Response> {
+      if (this !== undefined && this !== globalThis) {
+        throw new TypeError(
+          "'fetch' called on an object that does not implement interface Window.",
+        );
+      }
+      receivers.push(this);
+      const name = String(input).split('/').pop() ?? '';
+      seen.push(name);
+      const body = fixture.assets.get(name);
+      if (body === undefined) {
+        return Promise.resolve(new Response('missing', { status: 404, statusText: 'Not Found' }));
+      }
+      return Promise.resolve(new Response(body, { status: 200 }));
+    }
+    vi.stubGlobal('fetch', strictFetch);
+    const { index, store } = await createSegmentStore(fixture, [0, 1]);
+    const ref = segmentRound(index, [0, 1], 0);
+
+    const round = await store.loadRound(ref);
+
+    expect(round.count).toBe(4);
+    expect(Array.from(round.labels)).toEqual([0, 0, 1, 1]);
+    expect(seen).toContain('train-labels.idx.gz');
+    for (const entry of ref.entries) {
+      expect(seen).toContain(entry.file);
+    }
+    expect(receivers.length).toBeGreaterThan(0);
+    for (const receiver of receivers) {
+      expect(receiver).toBeUndefined();
+    }
+  });
+
   it('fetches once, fills the cache, and a new store reads the cache', async () => {
     const fixture = segmentFixture(15, 4);
     const storage = stubCaches();

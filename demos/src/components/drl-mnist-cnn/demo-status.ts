@@ -39,8 +39,6 @@ export interface DemoStatusInput {
   readonly roundIndex?: number | null;
   /** Nombre de rounds par époque du plan segmenté, ou null hors run segmentée. */
   readonly roundsPerEpoch?: number | null;
-  /** Nombre cumulé de rounds achevés depuis le début de la run. */
-  readonly completedRounds?: number | null;
   /** Nombre de fragments couverts par la dernière fenêtre de perte lue. */
   readonly windowShards?: number | null;
   /** Vrai dès le premier évènement de progression : les métriques sont affichées. */
@@ -141,9 +139,6 @@ export function statusLine(input: DemoStatusInput): string {
     input.roundsPerEpoch !== undefined
   ) {
     parts.push(`round ${input.roundIndex}/${input.roundsPerEpoch}`);
-  }
-  if (input.completedRounds !== null && input.completedRounds !== undefined) {
-    parts.push(`rounds ${input.completedRounds}`);
   }
   if (input.windowShards !== null && input.windowShards !== undefined) {
     parts.push(`fenêtre ${input.windowShards} fragments`);
