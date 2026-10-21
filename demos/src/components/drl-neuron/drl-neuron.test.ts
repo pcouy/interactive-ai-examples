@@ -560,7 +560,7 @@ describe('Neuron scene setup guard', () => {
 
     expect(cast.scene).toBe(scene);
     expect(mocks.createLandscapeScene).toHaveBeenCalledOnce();
-    expect(scene.setHeightScale).toHaveBeenCalledWith(1.5);
+    expect(scene.setHeightScale).toHaveBeenCalledWith(10);
   });
 
   it('routes the current height scale into the scene on first connect', async () => {

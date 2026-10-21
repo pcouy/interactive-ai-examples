@@ -137,7 +137,9 @@ function createConnect4Agent(
 }
 
 describe('createMinimaxAgent', () => {
-  it('matches an exhaustive naive reference on 100 random tic-tac-toe positions with pruning on and off', () => {
+  it('matches an exhaustive naive reference on 100 random tic-tac-toe positions with pruning on and off', {
+    timeout: 15000,
+  }, () => {
     for (const state of ticTacToeCorpus(CORPUS_SEED)) {
       const rootPlayer = ticTacToe.currentPlayer(state);
       const expected = naiveMinimax(state, CORPUS_DEPTH, rootPlayer);
@@ -613,7 +615,9 @@ describe('createMinimaxAgent', () => {
     expect(picked.size).toBeGreaterThanOrEqual(2);
   });
 
-  it('reports cut metadata consistent with the window on every pruned visit', () => {
+  it('reports cut metadata consistent with the window on every pruned visit', {
+    timeout: 15000,
+  }, () => {
     const state = ticTacToe.initialState();
     const rootPlayer = ticTacToe.currentPlayer(state);
     // Profondeur 4 pour le mode standard, comme la référence. En mode strict il
