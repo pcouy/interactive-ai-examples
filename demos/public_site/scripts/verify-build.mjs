@@ -220,6 +220,20 @@ for (const file of htmlFiles) {
     `${label}: missing the dark theme block.`,
   );
 
+  check(
+    /<link\b[^>]*rel=["']icon["'][^>]*href=["']\.\/favicon\.svg["']/i.test(html),
+    `${label}: missing the favicon link ./favicon.svg.`,
+  );
+
+  const blogLink =
+    /href="https:\/\/pierre-couy\.dev"[^>]*target="_blank"[^>]*rel="noopener noreferrer"[^>]*>Mon site/;
+  const githubLink =
+    /href="https:\/\/github\.com\/pcouy\/interactive-ai-examples"[^>]*target="_blank"[^>]*rel="noopener noreferrer"[^>]*>Dépôt GitHub/;
+  check(
+    blogLink.test(html) && githubLink.test(html),
+    `${label}: external links are missing or lose their new-tab attributes`,
+  );
+
   const baseName = path.basename(file);
   const demoTag = DEMO_PAGES[baseName];
   if (demoTag) {

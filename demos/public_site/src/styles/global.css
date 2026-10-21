@@ -895,15 +895,7 @@ textarea {
   }
 }
 
-@media (max-width: 640px) {
-  .site-header__inner {
-    gap: var(--space-2);
-  }
-
-  .site-brand {
-    font-size: var(--step-0);
-  }
-
+@media (max-width: 1080px) {
   .site-nav {
     flex-wrap: wrap;
     order: 3;
@@ -913,6 +905,16 @@ textarea {
 
   .theme-toggle {
     margin-left: auto;
+  }
+}
+
+@media (max-width: 640px) {
+  .site-header__inner {
+    gap: var(--space-2);
+  }
+
+  .site-brand {
+    font-size: var(--step-0);
   }
 
   .site-footer__links {

@@ -257,10 +257,27 @@ Si le dépôt est privé, GitHub Pages exige une offre payante (Pro, Team ou Ent
 2. Il installe `demos/public_site/` avec `npm ci --no-audit --no-fund`.
 3. Il lance `npm run build` dans `demos/public_site/`. Ce contrôle rapide construit les
    démos, synchronise les assets, lance le build Astro et le finaliseur, puis exécute
-   `verify-build.mjs` (109 contrôles). Il saute `astro check`, les tests unitaires d'URL
+   `verify-build.mjs` (119 contrôles). Il saute `astro check`, les tests unitaires d'URL
    et le contrôle HTTP `smoke`.
 4. Il envoie `demos/public_site/dist` avec `actions/upload-pages-artifact`.
 5. Il publie le site avec `actions/deploy-pages@v5`.
+
+**URL canonique.** Par défaut, l'URL canonique et `og:url` valent
+`https://pierre-couy.dev/interactive-ai-examples/`. Le workflow lit la variable de dépôt
+`PUBLIC_SITE_URL` :
+
+1. Dans GitHub, ouvrez **Settings → Secrets and variables → Actions → Variables**.
+2. Créez la variable `PUBLIC_SITE_URL`.
+
+Si la variable est absente ou vide, le build garde l'URL par défaut. Pour un domaine
+personnalisé, lancez aussi le build en local avec :
+
+```bash
+PUBLIC_SITE_URL=https://example.com npm run build
+```
+
+La valeur peut contenir un sous-chemin. `Base.astro` ajoute le chemin de la page à cette
+base.
 
 **URL publiée.** L'URL a la forme `https://<owner>.github.io/<repo>/`. L'URL d'entrée doit
 finir par `/` ou par `index.html` :

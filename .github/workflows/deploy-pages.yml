@@ -38,6 +38,8 @@ jobs:
         run: npm ci --no-audit --no-fund
       - name: Build the site
         working-directory: demos/public_site
+        env:
+          PUBLIC_SITE_URL: ${{ vars.PUBLIC_SITE_URL }}
         run: npm run build
       - name: Upload pages artifact
         uses: actions/upload-pages-artifact@v5
