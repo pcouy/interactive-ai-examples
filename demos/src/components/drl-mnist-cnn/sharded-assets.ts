@@ -22,10 +22,11 @@
  * simultanément. Les erreurs nomment le fichier concerné.
  *
  * `SegmentStore` sert un entraînement ou une validation segmentés : il
- * matérialise un round de la fraction choisie, remappe les classes sélectionnées
- * vers `0..N-1`, garde les fragments décompressés dans une fenêtre bornée et
- * s'appuie sur le cache Cache API pour éviter de retélécharger un fragment déjà
- * vu.
+ * matérialise un round de la fraction choisie en entrelaçant les exemples des
+ * classes, remappe les classes sélectionnées vers `0..N-1`, garde les fragments
+ * décompressés dans une fenêtre bornée et s'appuie sur le cache Cache API pour
+ * éviter de retélécharger un fragment déjà vu. Les lots consécutifs mélangent
+ * donc les classes au lieu de les regrouper.
  *
  * Ce module est réservé au navigateur : il utilise `fetch` et `Response`. Le
  * core ne l'importe jamais.
@@ -835,6 +836,48 @@ function roundFiles(ref: RoundRef): ReadonlySet<string> {
   return new Set(ref.entries.map((entry) => entry.file));
 }
 
+/** Générateur pseudo-aléatoire déterministe, même implantation que les autres modules. */
+function mulberry32(seed: number): () => number {
+  let a = seed >>> 0;
+  return (): number => {
+    a = (a + 0x6d2b79f5) | 0;
+    let t = Math.imul(a ^ (a >>> 15), 1 | a);
+    t = (t + Math.imul(t ^ (t >>> 7), 61 | t)) ^ t;
+    return ((t ^ (t >>> 14)) >>> 0) / 4294967296;
+  };
+}
+
+/** Mélange de Fisher-Yates, même convention que `mnist-data.ts`. */
+function shuffledIndices(length: number, rng: () => number): number[] {
+  const indices: number[] = new Array<number>(length);
+  for (let index = 0; index < length; index += 1) {
+    indices[index] = index;
+  }
+  for (let index = length - 1; index > 0; index -= 1) {
+    const swap = Math.floor(rng() * (index + 1));
+    const temporary = indices[index];
+    indices[index] = indices[swap];
+    indices[swap] = temporary;
+  }
+  return indices;
+}
+
+/** Hash FNV-1a 32 bits d'une chaîne, stable entre exécutions. */
+function hashString(value: string): number {
+  let hash = 0x811c9dc5;
+  for (let index = 0; index < value.length; index += 1) {
+    hash ^= value.charCodeAt(index);
+    hash = Math.imul(hash, 0x01000193);
+  }
+  return hash >>> 0;
+}
+
+/** Graine du mélange équilibré d'un round, dérivée de son indice et de ses fichiers. */
+function roundShuffleSeed(ref: RoundRef): number {
+  const key = ref.entries.map((entry) => entry.file).join('|');
+  return (Math.imul(ref.index + 1, 0x9e3779b1) ^ hashString(key)) >>> 0;
+}
+
 /** Limiteur de téléchargements partagé par tous les appels du magasin. */
 class FetchLimiter {
   private active = 0;
@@ -873,14 +916,8 @@ class FetchLimiter {
   }
 }
 
-/** Lit la tranche `[start, end)` d'un round en copiant images et libellés. */
-function readRoundBatch(
-  images: Float32Array,
-  labels: Uint8Array,
-  count: number,
-  start: number,
-  end: number,
-): MnistSample {
+/** Rejette une plage `[start, end)` hors de `[0, count)`. */
+function assertBatchRange(count: number, start: number, end: number): void {
   if (
     !Number.isInteger(start) ||
     !Number.isInteger(end) ||
@@ -892,11 +929,37 @@ function readRoundBatch(
       `sharded-assets: invalid batch range [${String(start)}, ${String(end)}) for ${count} images.`,
     );
   }
+}
+
+/** Lit la tranche `[start, end)` d'un round en copiant images et libellés. */
+function readRoundBatch(
+  images: Float32Array,
+  labels: Uint8Array,
+  count: number,
+  start: number,
+  end: number,
+): MnistSample {
+  assertBatchRange(count, start, end);
   return {
     count: end - start,
     images: images.slice(start * PIXELS_PER_IMAGE, end * PIXELS_PER_IMAGE),
     labels: labels.slice(start, end),
   };
+}
+
+/** Nombre de fichiers distincts dans la tranche `[start, end)` d'un round. */
+function countDistinctShards(
+  fileByPosition: readonly string[],
+  count: number,
+  start: number,
+  end: number,
+): number {
+  assertBatchRange(count, start, end);
+  const files = new Set<string>();
+  for (let position = start; position < end; position += 1) {
+    files.add(fileByPosition[position]);
+  }
+  return files.size;
 }
 
 /**
@@ -905,8 +968,8 @@ function readRoundBatch(
  * Le magasin sert une fraction (`train` par défaut, ou `test`) et un
  * sous-ensemble de classes : `classIndices` liste les indices d'origine dans
  * l'ordre de sortie, et les libellés sont remappés vers `0..N-1`. Un round est
- * matérialisé en `Float32Array` normalisé et `Uint8Array` de libellés, puis
- * gardé jusqu'à `releaseRound`.
+ * matérialisé en `Float32Array` normalisé et `Uint8Array` de libellés, avec les
+ * classes entrelacées, puis gardé jusqu'à `releaseRound`.
  *
  * Les fragments compressés passent par trois niveaux : la mémoire du magasin,
  * le cache Cache API (`cacheName`, clé = URL du fragment), puis le réseau avec
@@ -1206,7 +1269,7 @@ export class SegmentStore implements SegmentLoader {
     return promise;
   }
 
-  /** Charge les fragments et les libellés, puis concatène le round. */
+  /** Charge les fragments et les libellés, puis assemble le round en ordre équilibré. */
   private async buildRound(ref: RoundRef): Promise<SegmentRound> {
     if (ref.entries.length === 0) {
       throw new RangeError('sharded-assets: a round must contain at least one shard entry.');
@@ -1256,8 +1319,8 @@ export class SegmentStore implements SegmentLoader {
     }
     const images = new Float32Array(count * PIXELS_PER_IMAGE);
     const roundLabels = new Uint8Array(count);
-    let imageOffset = 0;
-    let labelOffset = 0;
+    const fileByPosition = new Array<string>(count);
+    const mappedLabels: Uint8Array[] = [];
 
     for (const part of parts) {
       const source = labels.get(part.split.labelsFile);
@@ -1278,10 +1341,7 @@ export class SegmentStore implements SegmentLoader {
           `sharded-assets: shard "${entry.file}" needs labels ${entry.start} to ${entry.start + entry.count}, but "${part.split.labelsFile}" has ${source.length}.`,
         );
       }
-      for (let index = 0; index < part.payload.length; index += 1) {
-        images[imageOffset + index] = part.payload[index] / 255;
-      }
-      imageOffset += part.payload.length;
+      const entryLabels = new Uint8Array(entry.count);
       for (let index = 0; index < entry.count; index += 1) {
         const original = source[entry.start + index];
         // Le fichier global porte les index d'origine. Un fichier déjà remappé
@@ -1293,9 +1353,37 @@ export class SegmentStore implements SegmentLoader {
             `sharded-assets: "${part.split.labelsFile}" has label ${original} at index ${entry.start + index}, which is not one of the selected classes.`,
           );
         }
-        roundLabels[labelOffset + index] = mapped;
+        entryLabels[index] = mapped;
       }
-      labelOffset += entry.count;
+      mappedLabels.push(entryLabels);
+    }
+
+    // Ordre équilibré : chaque cycle prend un exemple de plus par entrée, dans
+    // un ordre de classes mélangé, jusqu'à épuisement. Les lots consécutifs
+    // alternent donc les classes au lieu de les regrouper.
+    const rng = mulberry32(roundShuffleSeed(ref));
+    const entryOrder = shuffledIndices(parts.length, rng);
+    const localOrders = parts.map((part) => shuffledIndices(part.entry.count, rng));
+    const cursors = new Array<number>(parts.length).fill(0);
+    let position = 0;
+    while (position < count) {
+      for (const partIndex of entryOrder) {
+        const part = parts[partIndex];
+        const cursor = cursors[partIndex];
+        if (cursor >= part.entry.count) {
+          continue;
+        }
+        cursors[partIndex] = cursor + 1;
+        const local = localOrders[partIndex][cursor];
+        const imageStart = local * PIXELS_PER_IMAGE;
+        const imageOffset = position * PIXELS_PER_IMAGE;
+        for (let pixel = 0; pixel < PIXELS_PER_IMAGE; pixel += 1) {
+          images[imageOffset + pixel] = part.payload[imageStart + pixel] / 255;
+        }
+        roundLabels[position] = mappedLabels[partIndex][local];
+        fileByPosition[position] = part.entry.file;
+        position += 1;
+      }
     }
 
     return {
@@ -1304,6 +1392,8 @@ export class SegmentStore implements SegmentLoader {
       labels: roundLabels,
       readBatch: (start: number, end: number): MnistSample =>
         readRoundBatch(images, roundLabels, count, start, end),
+      shardsInRange: (start: number, end: number): number =>
+        countDistinctShards(fileByPosition, count, start, end),
     };
   }
 

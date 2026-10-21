@@ -974,7 +974,7 @@ describe('SegmentStore', () => {
 
     expect(mock).not.toHaveBeenCalled();
     expect(round.count).toBe(4);
-    expect(Array.from(round.labels)).toEqual([0, 0, 1, 1]);
+    expect(Array.from(round.labels)).toEqual([0, 1, 0, 1]);
   });
 
   it('calls the global fetch without binding the store as its receiver', async () => {
@@ -1005,7 +1005,7 @@ describe('SegmentStore', () => {
     const round = await store.loadRound(ref);
 
     expect(round.count).toBe(4);
-    expect(Array.from(round.labels)).toEqual([0, 0, 1, 1]);
+    expect(Array.from(round.labels)).toEqual([0, 1, 0, 1]);
     expect(seen).toContain('train-labels.idx.gz');
     for (const entry of ref.entries) {
       expect(seen).toContain(entry.file);
@@ -1133,7 +1133,7 @@ describe('SegmentStore', () => {
     const round = await store.loadRound(segmentRound(index, [0, 1], 0));
 
     expect(round.count).toBe(4);
-    expect(Array.from(round.labels)).toEqual([0, 0, 1, 1]);
+    expect(Array.from(round.labels)).toEqual([0, 1, 0, 1]);
   });
 
   it('loads when the Cache API is unavailable', async () => {
@@ -1206,10 +1206,10 @@ describe('SegmentStore', () => {
     const round = await store.loadRound(ref);
 
     expect(store.totalCount).toBe(16);
-    expect(Array.from(round.labels)).toEqual([0, 0, 1, 1]);
+    expect(Array.from(round.labels)).toEqual([0, 1, 0, 1]);
     const batch = round.readBatch(1, 3);
     expect(batch.count).toBe(2);
-    expect(Array.from(batch.labels)).toEqual([0, 1]);
+    expect(Array.from(batch.labels)).toEqual([1, 0]);
     expect(batch.images).toBeInstanceOf(Float32Array);
     expect(batch.images).toHaveLength(2 * 28 * 28);
     for (const value of batch.images) {
@@ -1218,6 +1218,54 @@ describe('SegmentStore', () => {
     }
     expect(round.readBatch(0, 4).count).toBe(4);
     expect(() => round.readBatch(3, 5)).toThrow(RangeError);
+  });
+
+  it('interleaves the classes so each batch is balanced', async () => {
+    const fixture = segmentFixture(3, 1, 4);
+    stubCaches();
+    stubFetch(fixture.assets);
+    const { index, store } = await createSegmentStore(fixture, [0, 1, 2]);
+    const ref = segmentRound(index, [0, 1, 2], 0);
+
+    const round = await store.loadRound(ref);
+
+    expect(round.count).toBe(12);
+    const labels = Array.from(round.labels);
+    for (const label of [0, 1, 2]) {
+      expect(labels.filter((value) => value === label)).toHaveLength(4);
+    }
+    // Chaque exemple garde un contenu distinct : trois classes de quatre images.
+    const signatures = new Set<string>();
+    for (let position = 0; position < round.count; position += 1) {
+      signatures.add(round.images.slice(position * 28 * 28, (position + 1) * 28 * 28).join(','));
+    }
+    expect(signatures.size).toBe(12);
+
+    const first = round.readBatch(0, 3);
+    expect(new Set(first.labels)).toEqual(new Set([0, 1, 2]));
+    const second = round.readBatch(3, 6);
+    expect(new Set(second.labels)).toEqual(new Set([0, 1, 2]));
+    expect(round.shardsInRange?.(0, 3)).toBe(3);
+    expect(round.shardsInRange?.(3, 6)).toBe(3);
+    expect(round.shardsInRange?.(0, 12)).toBe(3);
+  });
+
+  it('shuffles deterministically for a round ref and differs across refs', async () => {
+    const fixture = segmentFixture(3, 2, 4);
+    stubCaches();
+    stubFetch(fixture.assets);
+    const first = await createSegmentStore(fixture, [0, 1, 2]);
+    const second = await createSegmentStore(fixture, [0, 1, 2]);
+    const ref = segmentRound(first.index, [0, 1, 2], 0, 0);
+
+    const roundA = await first.store.loadRound(ref);
+    const roundB = await second.store.loadRound(ref);
+    expect(Array.from(roundB.labels)).toEqual(Array.from(roundA.labels));
+    expect(Array.from(roundB.images)).toEqual(Array.from(roundA.images));
+
+    const otherRef = segmentRound(first.index, [0, 1, 2], 1, 1);
+    const other = await first.store.loadRound(otherRef);
+    expect(Array.from(other.images)).not.toEqual(Array.from(roundA.images));
   });
 
   it('fetches no shard outside the selected classes', async () => {
@@ -1264,7 +1312,7 @@ describe('SegmentStore', () => {
     };
     const round = await store.loadRound(ref);
     expect(round.count).toBe(4);
-    expect(Array.from(round.labels)).toEqual([0, 0, 1, 1]);
+    expect(Array.from(round.labels)).toEqual([0, 1, 0, 1]);
 
     const outside = candidates.find((shard) => shard.file.endsWith('-s01.idx.gz'));
     if (outside === undefined) {
@@ -1319,7 +1367,7 @@ describe('SegmentStore', () => {
 
     const round = await store.loadRound(ref);
 
-    expect(Array.from(round.labels)).toEqual([0, 0, 1, 1]);
+    expect(Array.from(round.labels)).toEqual([0, 1, 0, 1]);
   });
 
   it('rejects a shard whose payload is not count * 784 bytes', async () => {
@@ -1454,7 +1502,7 @@ describe('SegmentStore', () => {
     expect(trainStore.totalCount).toBe(16);
     const trainRef = segmentRound(index, [2, 5], 0);
     const trainRound = await trainStore.loadRound(trainRef);
-    expect(Array.from(trainRound.labels)).toEqual([0, 0, 1, 1]);
+    expect(Array.from(trainRound.labels)).toEqual([0, 1, 0, 1]);
     const trainNames = mock.mock.calls.map((call) => String(call[0]).split('/').pop() ?? '');
     expect(trainNames.length).toBeGreaterThan(0);
     expect(trainNames.every((name) => name.startsWith('train-'))).toBe(true);
@@ -1464,7 +1512,7 @@ describe('SegmentStore', () => {
     expect(testStore.totalCount).toBe(8);
     const testRef = segmentRound(index, [2, 5], 0, 0, 'test');
     const testRound = await testStore.loadRound(testRef);
-    expect(Array.from(testRound.labels)).toEqual([0, 0, 1, 1]);
+    expect(Array.from(testRound.labels)).toEqual([1, 0, 1, 0]);
 
     const testNames = mock.mock.calls.slice(before).map((call) => String(call[0]).split('/').pop());
     expect(testNames).toContain(testRef.entries[0].file);

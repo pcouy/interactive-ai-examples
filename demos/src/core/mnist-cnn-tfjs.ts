@@ -442,7 +442,8 @@ function readSourceBatch(
 
 /**
  * Fragments couverts par la plage `[start, end)` d'un round : le chargeur
- * concatène les fragments dans l'ordre de `entries`.
+ * concatène les fragments dans l'ordre de `entries`. Repli quand le round ne
+ * fournit pas `shardsInRange`, par exemple un round contigu en mémoire.
  */
 function shardsForRange(entries: readonly RoundEntry[], start: number, end: number): string[] {
   const files: string[] = [];
@@ -458,6 +459,19 @@ function shardsForRange(entries: readonly RoundEntry[], start: number, end: numb
     }
   }
   return files;
+}
+
+/**
+ * Nombre de fragments distincts couverts par `[start, end)`. Un round équilibré
+ * répond lui-même ; un round contigu passe par `shardsForRange`.
+ */
+function shardsInRoundRange(
+  round: SegmentRound,
+  entries: readonly RoundEntry[],
+  start: number,
+  end: number,
+): number {
+  return round.shardsInRange?.(start, end) ?? shardsForRange(entries, start, end).length;
 }
 
 /** Adapte un round segmenté en source lue par lots. */
@@ -1138,8 +1152,8 @@ export class MnistCnnTfjsTrainer {
     let lastRoundRef: RoundRef | null = null;
     let prefetchedRef: RoundRef | null = null;
     let stopped = false;
-    /** Fragments couverts par les lots de la fenêtre de perte en cours. */
-    const pendingShards = new Set<string>();
+    /** Premier exemple de la fenêtre de perte en cours. */
+    let pendingWindowStart = 0;
 
     const emitRunning = (now: number): void => {
       this.emit(options.onProgress, {
@@ -1196,7 +1210,7 @@ export class MnistCnnTfjsTrainer {
                 break;
               }
               const end = Math.min(start + batchSize, round.count);
-              const shardFiles = shardsForRange(ref.entries, start, end);
+              const windowWasEmpty = this.pendingCosts.length === 0;
               const batch = this.materializeBatch(source, start, end);
               let cost: Tensor | null = null;
               try {
@@ -1206,17 +1220,22 @@ export class MnistCnnTfjsTrainer {
               }
               if (cost !== null) {
                 this.pendingCosts.push(cost);
-                for (const file of shardFiles) {
-                  pendingShards.add(file);
+                if (windowWasEmpty) {
+                  pendingWindowStart = start;
                 }
               }
               batchesProcessed += 1;
               // La fenêtre de perte n'est lue qu'à intervalle, jamais par lot.
               if (this.pendingCosts.length >= lossSampleEvery) {
                 const windowBatchCount = this.pendingCosts.length;
-                const windowShardCount = pendingShards.size;
+                const windowShardCount = shardsInRoundRange(
+                  round,
+                  ref.entries,
+                  pendingWindowStart,
+                  end,
+                );
                 const windowLoss = await this.readPendingLoss();
-                pendingShards.clear();
+                pendingWindowStart = end;
                 if (windowLoss !== null) {
                   loss = windowLoss;
                   roundLossSum += windowLoss * windowBatchCount;
@@ -1237,9 +1256,14 @@ export class MnistCnnTfjsTrainer {
             // Fin du round : on vide la fenêtre partielle avant de passer au
             // round suivant, pour que sa perte reste dans ce round.
             const finalWindowBatches = this.pendingCosts.length;
-            const finalWindowShards = pendingShards.size;
+            const finalWindowShards = shardsInRoundRange(
+              round,
+              ref.entries,
+              pendingWindowStart,
+              round.count,
+            );
             const roundEndLoss = await this.readPendingLoss();
-            pendingShards.clear();
+            pendingWindowStart = round.count;
             if (roundEndLoss !== null) {
               loss = roundEndLoss;
               roundLossSum += roundEndLoss * finalWindowBatches;
