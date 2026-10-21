@@ -211,7 +211,7 @@ export class FrozenLake extends DemoElement {
 
       .drl-layout {
         display: grid;
-        grid-template-columns: minmax(0, 1fr) minmax(0, 22rem);
+        grid-template-columns: minmax(50%, 1fr) minmax(50%, 22rem);
         gap: var(--drl-space-3);
         align-items: start;
       }
