@@ -47,6 +47,11 @@ describe('defaultEnabledClasses', () => {
     const dataset = { ...QUICKDRAW, selectable: true, defaultSelectedClasses: [20, -1] };
     expect(defaultEnabledClasses(dataset)).toEqual(Array.from({ length: 15 }, (_v, i) => i));
   });
+
+  it('enables every class when the default selection has only one class', () => {
+    const dataset = { ...QUICKDRAW, selectable: true, defaultSelectedClasses: [4] };
+    expect(defaultEnabledClasses(dataset)).toEqual(Array.from({ length: 15 }, (_v, i) => i));
+  });
 });
 
 describe('normalizedEnabledClasses', () => {
@@ -57,6 +62,15 @@ describe('normalizedEnabledClasses', () => {
 
   it('sorts, deduplicates and drops out-of-range indices', () => {
     expect(normalizedEnabledClasses(5, [4, 1, 1, 9, -1, 1.5])).toEqual([1, 4]);
+  });
+
+  it('returns every class when only one class remains', () => {
+    expect(normalizedEnabledClasses(5, [0])).toEqual([0, 1, 2, 3, 4]);
+    expect(normalizedEnabledClasses(5, [0, 0, 9])).toEqual([0, 1, 2, 3, 4]);
+  });
+
+  it('keeps a selection of at least two classes', () => {
+    expect(normalizedEnabledClasses(5, [0, 1])).toEqual([0, 1]);
   });
 
   it('returns every class when no index is valid', () => {

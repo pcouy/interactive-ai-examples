@@ -47,9 +47,9 @@ export function defaultEnabledClasses(dataset: DatasetDefinition): readonly numb
 
 /**
  * Normalise une sélection de classes : entiers de `[0, classCount)`, sans
- * doublon, triés par ordre croissant. `null` ou une liste vide active toutes les
- * classes. Une liste qui ne contient aucun indice valide active aussi toutes les
- * classes, pour ne jamais produire une sélection vide.
+ * doublon, triés par ordre croissant. `null`, une liste vide ou une liste qui
+ * donne moins de `MIN_ENABLED_CLASSES` classes valides active toutes les
+ * classes, pour ne jamais produire un modèle à une seule sortie.
  */
 export function normalizedEnabledClasses(
   classCount: number,
@@ -65,7 +65,7 @@ export function normalizedEnabledClasses(
       selected.add(value);
     }
   }
-  if (selected.size === 0) {
+  if (selected.size < MIN_ENABLED_CLASSES) {
     return allClasses(classCount);
   }
   return Array.from(selected).sort((left, right) => left - right);
