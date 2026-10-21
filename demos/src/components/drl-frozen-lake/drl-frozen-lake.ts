@@ -11,6 +11,7 @@ import {
   ACTION_GLYPHS,
   FROZEN_LAKE_REPLAY_EVENT,
   type FrozenLakeReplayState,
+  schematicView,
   updateView,
 } from './frozen-lake-ui.js';
 
@@ -526,6 +527,9 @@ export class FrozenLake extends DemoElement {
     this.core.epsilon = this.epsilon;
     this.core.discountFactor = this.discountFactor;
     this.core.initialValue = this.initialValue;
+    if (changed.has('initialValue')) {
+      this.draw();
+    }
     this.core.candyReward = this.candyReward;
     this.core.replayEnabled = this.replayEnabled;
     this.core.replayBatchSize = this.replayBatchSize;
@@ -797,26 +801,25 @@ export class FrozenLake extends DemoElement {
    */
   private drawSchematic(): void {
     const state = this.core.fineStepState;
-    const lastUpdate = this.core.lastUpdate;
-    const fallback = state.action === null && lastUpdate !== null;
-    const action = state.action ?? (fallback ? lastUpdate.transition.action : null);
-    const nextObservation =
-      state.nextObservation ?? (fallback ? lastUpdate.transition.nextObservation : null);
-    const reward = state.reward ?? (fallback ? lastUpdate.transition.reward : null);
-    const actionText = action === null ? EMPTY_VALUE : `${ACTION_GLYPHS[action]} ${action}`;
+    const view = schematicView(state, this.core.lastUpdate);
+    const actionText =
+      view.action === null ? EMPTY_VALUE : `${ACTION_GLYPHS[view.action]} ${view.action}`;
 
-    this.setField('schematic-observation', String(state.observation));
+    this.setField(
+      'schematic-observation',
+      view.observation === null ? EMPTY_VALUE : String(view.observation),
+    );
     this.setField('schematic-action', actionText);
     this.setField(
       'schematic-next',
-      nextObservation === null ? EMPTY_VALUE : String(nextObservation),
+      view.nextObservation === null ? EMPTY_VALUE : String(view.nextObservation),
     );
-    this.setField('schematic-reward', reward === null ? EMPTY_VALUE : reward.toFixed(3));
+    this.setField('schematic-reward', view.reward === null ? EMPTY_VALUE : view.reward.toFixed(3));
 
     const source = this.renderRoot.querySelector<HTMLElement>('[data-field="schematic-source"]');
     if (source) {
-      source.textContent = fallback ? 'Dernière transition' : '';
-      source.hidden = !fallback;
+      source.textContent = view.fallback ? 'Dernière transition' : '';
+      source.hidden = !view.fallback;
     }
 
     for (const phase of FINE_STEP_PHASES) {
