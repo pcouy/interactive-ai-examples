@@ -2,7 +2,7 @@ import { createHash } from 'node:crypto';
 import { mkdtemp, readdir, readFile, rm, stat } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
-import { deflateRawSync } from 'node:zlib';
+import { deflateRawSync, gunzipSync } from 'node:zlib';
 import { afterEach, describe, expect, it } from 'vitest';
 import {
   buildShardedIndex,
@@ -302,7 +302,7 @@ describe('buildShardedIndex', () => {
       testCounts: [500, 500],
       shardSize: 1000,
     });
-    expect(index.version).toBe(1);
+    expect(index.version).toBe(2);
     expect(index.dataset).toBe('pneumoniamnist');
     expect(index.classNames).toEqual(['normal', 'pneumonia']);
     expect(index.splits.train.count).toBe(3500);
@@ -317,10 +317,17 @@ describe('buildShardedIndex', () => {
       { file: 'test-c0-s00.idx.gz', classIndex: 0, start: 0, count: 500 },
       { file: 'test-c1-s00.idx.gz', classIndex: 1, start: 500, count: 500 },
     ]);
-    expect(index.gallery).toEqual({
-      imagesFile: 'gallery.idx.gz',
-      labelsFile: 'gallery-labels-idx1-ubyte.gz',
-      perClass: 10,
+    expect(index.galleries).toEqual({
+      train: {
+        imagesFile: 'train-gallery.idx.gz',
+        labelsFile: 'train-gallery-labels-idx1-ubyte.gz',
+        perClass: 10,
+      },
+      test: {
+        imagesFile: 'gallery.idx.gz',
+        labelsFile: 'gallery-labels-idx1-ubyte.gz',
+        perClass: 10,
+      },
     });
   });
 });
@@ -350,8 +357,8 @@ async function snapshot(dir) {
 }
 
 describe('main', () => {
-  it('writes the index and the shards, then rewrites nothing on a second run', async () => {
-    const archive = buildArchive();
+  it('writes index v2 and both galleries, deletes the raw archive and skips on a second run', async () => {
+    const archive = buildArchive({ trainCounts: [10, 8], valCounts: [3, 3] });
     const cacheDir = await makeTempDir('mm-cache-');
     const outputDir = await makeTempDir('mm-out-');
     const md5 = createHash('md5').update(archive).digest('hex');
@@ -369,25 +376,60 @@ describe('main', () => {
     expect(names).toContain('index.json');
     expect(names).toContain('train-labels-idx1-ubyte.gz');
     expect(names).toContain('test-labels-idx1-ubyte.gz');
+    expect(names).toContain('train-gallery.idx.gz');
+    expect(names).toContain('train-gallery-labels-idx1-ubyte.gz');
     expect(names).toContain('gallery.idx.gz');
     expect(names).toContain('gallery-labels-idx1-ubyte.gz');
     expect(names).toContain('train-c0-s00.idx.gz');
     expect(names).toContain('train-c1-s00.idx.gz');
 
     const index = JSON.parse(await readFile(join(datasetDir, 'index.json'), 'utf8'));
+    expect(index.version).toBe(2);
     expect(index.dataset).toBe('pneumoniamnist');
     expect(index.classNames).toEqual(MEDMNIST_CLASS_NAMES.pneumoniamnist);
-    expect(index.splits.train.count).toBe(18);
+    expect(index.splits.train.count).toBe(24);
     expect(index.splits.test.count).toBe(20);
-    expect(index.splits.train.shards.map((shard) => shard.count)).toEqual([11, 7]);
+    expect(index.splits.train.shards.map((shard) => shard.count)).toEqual([13, 11]);
     expect(index.splits.test.shards.map((shard) => shard.count)).toEqual([10, 10]);
+    expect(index.galleries).toEqual({
+      train: {
+        imagesFile: 'train-gallery.idx.gz',
+        labelsFile: 'train-gallery-labels-idx1-ubyte.gz',
+        perClass: 10,
+      },
+      test: {
+        imagesFile: 'gallery.idx.gz',
+        labelsFile: 'gallery-labels-idx1-ubyte.gz',
+        perClass: 10,
+      },
+    });
+
+    const trainGallery = gunzipSync(await readFile(join(datasetDir, 'train-gallery.idx.gz')));
+    const testGallery = gunzipSync(await readFile(join(datasetDir, 'gallery.idx.gz')));
+    expect(trainGallery.length).toBe(16 + 20 * IMAGE_SIZE);
+    expect(testGallery.length).toBe(16 + 20 * IMAGE_SIZE);
+    const trainGalleryLabels = gunzipSync(
+      await readFile(join(datasetDir, 'train-gallery-labels-idx1-ubyte.gz')),
+    );
+    expect([...trainGalleryLabels.subarray(8)].filter((label) => label === 0)).toHaveLength(10);
+    expect([...trainGalleryLabels.subarray(8)].filter((label) => label === 1)).toHaveLength(10);
+
+    expect((await readdir(cacheDir)).filter((name) => name.endsWith('.npz'))).toEqual([]);
 
     const first = await snapshot(datasetDir);
     const shardBefore = first['train-c0-s00.idx.gz'].mtimeMs;
 
-    expect(await main([], { sources, targetRoot: outputDir, cacheRoot: cacheDir, fetchImpl })).toBe(
-      0,
-    );
+    const offlineFetch = async () => {
+      throw new Error('no network in tests');
+    };
+    expect(
+      await main([], {
+        sources,
+        targetRoot: outputDir,
+        cacheRoot: cacheDir,
+        fetchImpl: offlineFetch,
+      }),
+    ).toBe(0);
 
     const second = await snapshot(datasetDir);
     expect(Object.keys(second).sort()).toEqual(Object.keys(first).sort());

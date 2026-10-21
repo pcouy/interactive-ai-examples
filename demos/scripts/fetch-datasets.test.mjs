@@ -74,11 +74,27 @@ describe('describePlan', () => {
 });
 
 describe('QUICKDRAW_FILES', () => {
-  it('lists the five QuickDraw files with unique names, positive sizes and 32-hex MD5s', () => {
-    expect(QUICKDRAW_FILES).toHaveLength(5);
+  it('lists the fifteen QuickDraw files with unique names, positive sizes and 32-hex MD5s', () => {
+    expect(QUICKDRAW_FILES).toHaveLength(15);
     const names = QUICKDRAW_FILES.map((file) => file.name);
     expect(new Set(names).size).toBe(names.length);
-    expect(names).toEqual(['book.npy', 'moon.npy', 'cat.npy', 'umbrella.npy', 'cake.npy']);
+    expect(names).toEqual([
+      'book.npy',
+      'moon.npy',
+      'cat.npy',
+      'umbrella.npy',
+      'cake.npy',
+      'dog.npy',
+      'fish.npy',
+      'flower.npy',
+      'star.npy',
+      'house.npy',
+      'tree.npy',
+      'sun.npy',
+      'bicycle.npy',
+      'pizza.npy',
+      'apple.npy',
+    ]);
     for (const file of QUICKDRAW_FILES) {
       expect(file.size).toBeGreaterThan(0);
       expect(file.md5).toMatch(MD5_PATTERN);

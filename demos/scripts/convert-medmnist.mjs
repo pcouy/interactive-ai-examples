@@ -12,9 +12,15 @@
  *   complets de chaque fraction, classes dans l'ordre ;
  * - `train-c<C>-s<NN>.idx.gz` et `test-c<C>-s<NN>.idx.gz` : les images par
  *   classe et par tranche de 1 000, pour ne télécharger que la fraction choisie ;
+ * - `train-gallery.idx.gz` et `train-gallery-labels-idx1-ubyte.gz` : dix images
+ *   d'apprentissage par classe, prises au début de chaque classe ;
  * - `gallery.idx.gz` et `gallery-labels-idx1-ubyte.gz` : dix images de test par
  *   classe, prises au début de chaque classe de test ;
  * - `index.json` : le descripteur lu par le navigateur (écrit en dernier).
+ *
+ * Le script supprime ensuite chaque `.npz` traité de `demos/.cache/medmnist/`,
+ * sauf avec `--keep-raw`. Si un `.npz` manque mais que `index.json` et toutes
+ * les sorties qu'il décrit existent, le jeu est ignoré sans téléchargement.
  *
  * La division d'apprentissage fusionne `train` et `val` ; la division de test
  * est `test`. Chaque fraction est triée par classe (stable) : les morceaux sont
@@ -25,6 +31,7 @@
  *   virgules. La sortie ne décrit alors que les jeux sélectionnés.
  * - `--dry-run` : affiche le plan sans télécharger ni rien écrire.
  * - `--force` : retélécharge les `.npz` et réécrit les morceaux existants.
+ * - `--keep-raw` : conserve les `.npz` téléchargés dans le cache.
  * - `--help` : affiche cette aide.
  *
  * Chaque écriture passe par un temporaire `<nom>.tmp` puis un `rename` : un
@@ -151,6 +158,7 @@ Options:
                 Jeux connus : ${MEDMNIST_FILES.map((file) => file.dataset).join(', ')}.
   --dry-run     Affiche le plan sans télécharger ni écrire.
   --force       Retélécharge et réécrit même les fichiers déjà présents.
+  --keep-raw    Conserve les .npz téléchargés dans le cache.
   --help        Affiche cette aide.`;
 
 /** Convertit une entrée `ArrayBuffer` ou vue en `Uint8Array`. */
@@ -534,6 +542,7 @@ export function gzipBytes(bytes) {
  * `trainCounts` et `testCounts` donnent l'effectif par classe, dans l'ordre de
  * `classNames`. Chaque morceau est décrit par son fichier, sa classe, son
  * `start` (décalage de la classe dans le fichier de libellés) et son `count`.
+ * `galleries` décrit la galerie d'apprentissage et celle de test.
  */
 export function buildShardedIndex({
   dataset,
@@ -544,8 +553,10 @@ export function buildShardedIndex({
   galleryPerClass = GALLERY_PER_CLASS,
   trainLabelsFile = 'train-labels-idx1-ubyte.gz',
   testLabelsFile = 'test-labels-idx1-ubyte.gz',
-  galleryImagesFile = 'gallery.idx.gz',
-  galleryLabelsFile = 'gallery-labels-idx1-ubyte.gz',
+  trainGalleryImagesFile = 'train-gallery.idx.gz',
+  trainGalleryLabelsFile = 'train-gallery-labels-idx1-ubyte.gz',
+  testGalleryImagesFile = 'gallery.idx.gz',
+  testGalleryLabelsFile = 'gallery-labels-idx1-ubyte.gz',
 }) {
   const buildShards = (split, counts) => {
     const shards = [];
@@ -567,7 +578,7 @@ export function buildShardedIndex({
   };
   const total = (counts) => counts.reduce((sum, count) => sum + count, 0);
   return {
-    version: 1,
+    version: 2,
     dataset,
     classNames: [...classNames],
     shardSize,
@@ -583,17 +594,24 @@ export function buildShardedIndex({
         shards: buildShards('test', testCounts),
       },
     },
-    gallery: {
-      imagesFile: galleryImagesFile,
-      labelsFile: galleryLabelsFile,
-      perClass: galleryPerClass,
+    galleries: {
+      train: {
+        imagesFile: trainGalleryImagesFile,
+        labelsFile: trainGalleryLabelsFile,
+        perClass: galleryPerClass,
+      },
+      test: {
+        imagesFile: testGalleryImagesFile,
+        labelsFile: testGalleryLabelsFile,
+        perClass: galleryPerClass,
+      },
     },
   };
 }
 
 /** Analyse les arguments de la ligne de commande. */
 export function parseArgs(argv, files = MEDMNIST_FILES) {
-  const options = { only: [], dryRun: false, force: false, help: false };
+  const options = { only: [], dryRun: false, force: false, keepRaw: false, help: false };
   const ids = new Set();
 
   for (let index = 0; index < argv.length; index += 1) {
@@ -608,6 +626,9 @@ export function parseArgs(argv, files = MEDMNIST_FILES) {
         break;
       case '--force':
         options.force = true;
+        break;
+      case '--keep-raw':
+        options.keepRaw = true;
         break;
       case '--only': {
         const value = argv[index + 1];
@@ -710,6 +731,40 @@ async function fetchRawFile(file, targetPath, { fetchImpl, force }) {
     await unlink(tempPath).catch(() => {});
     throw new Error(`could not fetch ${url}: ${error.message}`);
   }
+}
+
+/**
+ * Vérifie que `index.json` décrit la version 2 et que chaque fichier qu'il
+ * référence existe sous `outputDir`.
+ */
+async function outputsAreComplete(indexPath, outputDir) {
+  let index;
+  try {
+    index = JSON.parse(await readFile(indexPath, 'utf8'));
+  } catch {
+    return false;
+  }
+  if (index?.version !== 2) return false;
+  const referenced = [];
+  for (const split of ['train', 'test']) {
+    const part = index.splits?.[split];
+    if (!part || typeof part.labelsFile !== 'string' || !Array.isArray(part.shards)) return false;
+    referenced.push(part.labelsFile);
+    for (const shard of part.shards) {
+      if (typeof shard?.file !== 'string') return false;
+      referenced.push(shard.file);
+    }
+    const gallery = index.galleries?.[split];
+    if (
+      !gallery ||
+      typeof gallery.imagesFile !== 'string' ||
+      typeof gallery.labelsFile !== 'string'
+    ) {
+      return false;
+    }
+    referenced.push(gallery.imagesFile, gallery.labelsFile);
+  }
+  return referenced.every((name) => existsSync(join(outputDir, name)));
 }
 
 /** Lit les six membres d'une archive `.npz` et renvoie images et libellés. */
@@ -868,15 +923,31 @@ export async function main(argv = process.argv.slice(2), options = {}) {
   try {
     for (const file of selected) {
       const outputDir = join(targetRoot, file.dataset);
-      await mkdir(outputDir, { recursive: true });
       const rawPath = join(cacheRoot, file.name);
+      const indexPath = join(outputDir, 'index.json');
+      if (
+        !parsed.force &&
+        !existsSync(rawPath) &&
+        (await outputsAreComplete(indexPath, outputDir))
+      ) {
+        console.log(`  ${file.dataset}: raw absent, outputs complete (skipped)`);
+        continue;
+      }
+      await mkdir(outputDir, { recursive: true });
       const bytes = await fetchRawFile(file, rawPath, { fetchImpl, force: parsed.force });
       const archive = readArchive(bytes, file);
       const classNames = MEDMNIST_CLASS_NAMES[file.dataset];
+      for (const [classIndex, count] of archive.train.counts.entries()) {
+        if (count < GALLERY_PER_CLASS) {
+          throw new RangeError(
+            `convert-medmnist: ${file.name}: class ${classIndex} has ${count} train images, below the ${GALLERY_PER_CLASS} needed for the train gallery`,
+          );
+        }
+      }
       for (const [classIndex, count] of archive.test.counts.entries()) {
         if (count < GALLERY_PER_CLASS) {
           throw new RangeError(
-            `convert-medmnist: ${file.name}: class ${classIndex} has ${count} test images, below the ${GALLERY_PER_CLASS} needed for the gallery`,
+            `convert-medmnist: ${file.name}: class ${classIndex} has ${count} test images, below the ${GALLERY_PER_CLASS} needed for the test gallery`,
           );
         }
       }
@@ -896,11 +967,22 @@ export async function main(argv = process.argv.slice(2), options = {}) {
       });
       totalBytes += trainResult.totalBytes + testResult.totalBytes;
 
+      const trainGalleryImages = new Uint8Array(GALLERY_PER_CLASS * classNames.length * IMAGE_SIZE);
+      const trainGalleryLabels = new Uint8Array(GALLERY_PER_CLASS * classNames.length);
       const galleryImages = new Uint8Array(GALLERY_PER_CLASS * classNames.length * IMAGE_SIZE);
       const galleryLabels = new Uint8Array(GALLERY_PER_CLASS * classNames.length);
       let galleryOffset = 0;
+      let trainGalleryLabelOffset = 0;
       let galleryLabelOffset = 0;
       archive.test.counts.forEach((count, classIndex) => {
+        trainGalleryImages.set(
+          archive.train.images.subarray(
+            trainGalleryLabelOffset * IMAGE_SIZE,
+            (trainGalleryLabelOffset + GALLERY_PER_CLASS) * IMAGE_SIZE,
+          ),
+          galleryOffset * IMAGE_SIZE,
+        );
+        trainGalleryLabels.fill(classIndex, galleryOffset, galleryOffset + GALLERY_PER_CLASS);
         galleryImages.set(
           archive.test.images.subarray(
             galleryLabelOffset * IMAGE_SIZE,
@@ -910,6 +992,7 @@ export async function main(argv = process.argv.slice(2), options = {}) {
         );
         galleryLabels.fill(classIndex, galleryOffset, galleryOffset + GALLERY_PER_CLASS);
         galleryOffset += GALLERY_PER_CLASS;
+        trainGalleryLabelOffset += archive.train.counts[classIndex];
         galleryLabelOffset += count;
       });
 
@@ -922,6 +1005,16 @@ export async function main(argv = process.argv.slice(2), options = {}) {
         outputDir,
         'test-labels-idx1-ubyte.gz',
         writeIdxLabelsBytes(archive.test.labels),
+      );
+      totalBytes += await writeGzipIdx(
+        outputDir,
+        'train-gallery.idx.gz',
+        writeIdxImagesBytes(trainGalleryImages),
+      );
+      totalBytes += await writeGzipIdx(
+        outputDir,
+        'train-gallery-labels-idx1-ubyte.gz',
+        writeIdxLabelsBytes(trainGalleryLabels),
       );
       totalBytes += await writeGzipIdx(
         outputDir,
@@ -942,11 +1035,18 @@ export async function main(argv = process.argv.slice(2), options = {}) {
         shardSize: SHARD_SIZE,
         galleryPerClass: GALLERY_PER_CLASS,
       });
-      const indexPath = join(outputDir, 'index.json');
       const indexText = `${JSON.stringify(index, null, 2)}\n`;
       await writeFile(`${indexPath}.tmp`, indexText);
       await rename(`${indexPath}.tmp`, indexPath);
       totalBytes += Buffer.byteLength(indexText, 'utf8');
+
+      if (parsed.keepRaw) {
+        console.log(`  ${file.name}: kept in cache (--keep-raw)`);
+      } else {
+        const rawBytes = (await stat(rawPath)).size;
+        await unlink(rawPath);
+        console.log(`  ${file.name}: deleted from cache (${rawBytes} bytes)`);
+      }
 
       reports.push({
         dataset: file.dataset,
