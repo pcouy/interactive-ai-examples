@@ -359,6 +359,9 @@ Copiez **tous** les fichiers `.js` de `dist/` côte à côte, par exemple dans `
   `./drl-index.js` à la demande. Copier seulement `drl-demos.js` casse les démos MNIST et
   3D : l'import dynamique renvoie une erreur 404.
 - `drl-three.js` n'est téléchargé que si une démo 3D figure sur la page.
+- Un hôte doit reconstruire les démos quand `demos/src` change. Le script
+  `demos/public_site/scripts/sync-demo-assets.mjs` refuse un `dist/drl-demos.js` plus
+  ancien que les sources et demande `npm --prefix .. run build`.
 
 ## Checklist avant de considérer une démo terminée
 
@@ -378,4 +381,4 @@ npm run dev         # vérifier playground/drl-<nom>.html en vrai rendu
 - Les ancres `// @demos-imports` et `<!-- @demos-cards -->` sont gérées par plop uniquement.
 - SVG en Lit : tag ``svg` `` (et retour `SVGTemplateResult`) dès que la racine d'un
   template est un élément SVG — voir « Templates SVG avec Lit ».
-- Code en anglais ; la logique métier vit dans `src/core/`, testable sans navigateur.
+- Code en anglais ; la logique métier vit dans `src/core/`, testable sans DOM.

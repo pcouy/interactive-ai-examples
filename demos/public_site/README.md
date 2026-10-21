@@ -38,10 +38,16 @@ npm run dev
 
 Ouvrez l'URL affichée par Astro (par défaut `http://localhost:4321/`).
 
-`predev` lance `scripts/sync-demo-assets.mjs`. Le script copie les bundles de `../dist/`
-vers `public/demo/`, copie KaTeX vers `public/katex/` et régénère
-`src/styles/palette.generated.css`. Le bundle de démo doit donc exister : lancez
-`npm --prefix .. run build` une première fois si `../dist/drl-demos.js` est absent.
+`predev` construit d'abord les démos (`npm --prefix .. run build`), puis lance
+`scripts/sync-demo-assets.mjs`. Le script copie les bundles de `../dist/` vers
+`public/demo/`, copie KaTeX vers `public/katex/` et régénère
+`src/styles/palette.generated.css`.
+
+`npm run dev` a besoin de `demos/node_modules`. Lancez `npm install` dans `demos/` avant le
+premier `npm run dev`.
+
+`npm` lit `predev` au démarrage. Un serveur de dev déjà lancé garde l'ancien `predev`.
+Redémarrez `npm run dev` pour prendre en compte un nouveau `predev`.
 
 `file://` ne fonctionne pas : les modules ES et `fetch` exigent un serveur HTTP. Utilisez
 `npm run dev`, `npm run preview` ou un serveur statique local.
@@ -65,6 +71,9 @@ Le build se déroule en trois étapes :
    requis, liens, balises de thème, KaTeX, balises de démo et absence d'URL absolue.
 
 Le build échoue si un contrôle de `verify-build.mjs` échoue.
+
+`precheck` reconstruit aussi les démos. `npm run verify` (`check` + `test` + `build`)
+construit donc les démos deux fois.
 
 ## Dossier déployable
 
@@ -190,10 +199,10 @@ Le script de collage se trouve dans `src/scripts/`. Importez-le avec `?raw`, com
 | Commande | Rôle |
 |---|---|
 | `npm run sync` | Copie `../dist/*.js` vers `public/demo/`, copie KaTeX et régénère `palette.generated.css` |
-| `npm run dev` | Serveur Astro avec HMR (`predev` lance le sync) |
+| `npm run dev` | Construit les démos, puis synchronise, puis sert Astro avec HMR (`predev`) |
 | `npm run build` | `prebuild` + `astro build` + `finalize-build.mjs` + `verify-build.mjs` |
 | `npm run preview` | Sert `dist/` en local |
-| `npm run check` | `astro check` (`precheck` lance le sync) |
+| `npm run check` | Construit les démos, puis synchronise, puis `astro check` (`precheck`) |
 | `npm test` | Tests Node de `scripts/url-rewrite.test.mjs` |
 | `npm run verify` | `check` + `test` + `build` |
 | `npm run smoke` | Contrôle HTTP du build (voir « Vérification ») |
@@ -237,6 +246,20 @@ première feuille de style. `verify-build.mjs` contrôle cet ordre.
 **Couleurs sombres incorrectes.** `palette.generated.css` est périmé. Lancez `npm run sync`
 puis `npm run build`. Si le problème persiste, vérifiez `drlPalette.dark` dans
 `../src/styles/token-values.ts`.
+
+**Panneaux de démo clairs en thème sombre.** Le chrome du site est sombre, mais les
+panneaux de démo restent clairs et le texte sur les zones transparentes reste foncé. Les
+panneaux MDP de Frozen Lake manquent. Cause : un `demos/dist/drl-demos.js` périmé a été
+copié dans `public/demo/`. Corrigez avec :
+
+```bash
+npm --prefix .. run build
+npm run sync
+```
+
+Redémarrez ensuite `npm run dev`. Le script `sync-demo-assets.mjs` refuse maintenant un
+bundle plus ancien que le fichier le plus récent de `demos/src` ou que les fichiers de
+configuration des démos. Le message demande de lancer `npm --prefix .. run build`.
 
 **404 dans un sous-chemin.** Utilisez le dossier `dist/` complet et une URL d'entrée qui
 finit par `/` ou `index.html`. Vérifiez que les fichiers sont copiés avec leur
