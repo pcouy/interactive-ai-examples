@@ -1,9 +1,10 @@
 import { createHash } from 'node:crypto';
+import { existsSync } from 'node:fs';
 import { mkdtemp, readdir, readFile, rm, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { gunzipSync } from 'node:zlib';
-import { afterEach, describe, expect, it } from 'vitest';
+import { afterEach, describe, expect, it, vi } from 'vitest';
 import {
   buildIndex,
   gzipSync,
@@ -352,6 +353,126 @@ describe('main with fifteen classes', () => {
     // télécharge rien et ne change pas l'index.
     expect(await main([], { files, outputDir, cacheDir, fetchImpl })).toBe(0);
     expect(fetchCount).toBe(0);
+  });
+
+  it('re-downloads and rewrites a shard that is missing', async () => {
+    const cacheDir = await makeTempDir('qd-cache-');
+    const outputDir = await makeTempDir('qd-out-');
+    const files = await writeSyntheticQuickdraw(cacheDir);
+    const offlineFetch = async () => {
+      throw new Error('no network in tests');
+    };
+
+    expect(await main([], { files, outputDir, cacheDir, fetchImpl: offlineFetch })).toBe(0);
+
+    const missingShard = 'train-c0-s00.idx.gz';
+    await rm(join(outputDir, missingShard));
+
+    const rawByName = new Map(
+      QUICKDRAW_FILES.map((entry, classIndex) => [entry.name, buildSyntheticNpy(classIndex)]),
+    );
+    let fetchCount = 0;
+    const fetchImpl = async (url) => {
+      fetchCount += 1;
+      const name = url.slice(url.lastIndexOf('/') + 1);
+      return new Response(rawByName.get(name), { status: 200, statusText: 'OK' });
+    };
+
+    expect(await main([], { files, outputDir, cacheDir, fetchImpl })).toBe(0);
+    expect(fetchCount).toBe(QUICKDRAW_FILES.length);
+
+    const names = await readdir(outputDir);
+    expect(names).toContain(missingShard);
+
+    const index = JSON.parse(await readFile(join(outputDir, 'index.json'), 'utf8'));
+    expect(index.version).toBe(2);
+    const referenced = [
+      ...['train', 'test'].flatMap((split) => [
+        index.splits[split].labelsFile,
+        ...index.splits[split].shards.map((shard) => shard.file),
+      ]),
+      index.galleries.train.imagesFile,
+      index.galleries.train.labelsFile,
+      index.galleries.test.imagesFile,
+      index.galleries.test.labelsFile,
+    ];
+    expect(referenced.every((name) => names.includes(name))).toBe(true);
+  });
+
+  it('writes index.json before deleting any raw file', async () => {
+    const cacheDir = await makeTempDir('qd-cache-');
+    const outputDir = await makeTempDir('qd-out-');
+    const files = await writeSyntheticQuickdraw(cacheDir);
+    const indexPath = join(outputDir, 'index.json');
+    const indexExistedAtDeletion = [];
+    const logSpy = vi.spyOn(console, 'log').mockImplementation((...args) => {
+      if (String(args[0]).includes(': deleted from cache')) {
+        indexExistedAtDeletion.push(existsSync(indexPath));
+      }
+    });
+    const fetchImpl = async () => {
+      throw new Error('no network in tests');
+    };
+    let exitCode;
+    try {
+      exitCode = await main([], { files, outputDir, cacheDir, fetchImpl });
+    } finally {
+      logSpy.mockRestore();
+    }
+
+    expect(exitCode).toBe(0);
+    expect(indexExistedAtDeletion).toHaveLength(QUICKDRAW_FILES.length);
+    expect(indexExistedAtDeletion.every(Boolean)).toBe(true);
+    expect((await readdir(cacheDir)).filter((name) => name.endsWith('.npy'))).toEqual([]);
+  });
+
+  it('keeps raw files and writes no index when a later class fails', async () => {
+    const cacheDir = await makeTempDir('qd-cache-');
+    const outputDir = await makeTempDir('qd-out-');
+    const bookRaw = buildSyntheticNpy(0);
+    const moonRaw = new Uint8Array([1, 2, 3, 4, 5, 6]);
+    await writeFile(join(cacheDir, 'book.npy'), bookRaw);
+    await writeFile(join(cacheDir, 'moon.npy'), moonRaw);
+
+    const files = QUICKDRAW_FILES.map((entry) => ({
+      name: entry.name,
+      size: 1,
+      md5: '0'.repeat(32),
+    }));
+    files[0] = {
+      name: 'book.npy',
+      size: bookRaw.length,
+      md5: createHash('md5').update(bookRaw).digest('hex'),
+    };
+    files[1] = {
+      name: 'moon.npy',
+      size: moonRaw.length,
+      md5: createHash('md5').update(moonRaw).digest('hex'),
+    };
+    const fetchImpl = async () => {
+      throw new Error('no network in tests');
+    };
+    const errorSpy = vi.spyOn(console, 'error').mockImplementation(() => {});
+    let exitCode;
+    let errorMessages;
+    try {
+      exitCode = await main([], { files, outputDir, cacheDir, fetchImpl });
+    } finally {
+      errorMessages = errorSpy.mock.calls.map(([message]) => String(message));
+      errorSpy.mockRestore();
+    }
+
+    expect(exitCode).toBe(1);
+    expect(errorMessages.some((message) => message.includes('convert-quickdraw: FAILED'))).toBe(
+      true,
+    );
+    expect((await readdir(cacheDir)).filter((name) => name.endsWith('.npy')).sort()).toEqual([
+      'book.npy',
+      'moon.npy',
+    ]);
+    const outputNames = await readdir(outputDir);
+    expect(outputNames).not.toContain('index.json');
+    expect(outputNames).toContain('train-c0-s00.idx.gz');
   });
 
   it('keeps the raw files with --keep-raw', async () => {
