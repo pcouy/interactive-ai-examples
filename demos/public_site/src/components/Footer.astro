@@ -20,6 +20,25 @@ const links = [
     <nav class="site-footer__nav" aria-label="Navigation de pied de page">
       {links.map((link) => <a href={link.href}>{link.label}</a>)}
     </nav>
+    <nav class="site-footer__links" aria-label="Liens externes">
+      <h2 class="site-footer__heading">Liens</h2>
+      <ul>
+        <li>
+          <a href="https://pierre-couy.dev" target="_blank" rel="noopener noreferrer">
+            Mon site<span class="sr-only"> (nouvel onglet)</span>
+          </a>
+        </li>
+        <li>
+          <a
+            href="https://github.com/pcouy/interactive-ai-examples"
+            target="_blank"
+            rel="noopener noreferrer"
+          >
+            Dépôt GitHub<span class="sr-only"> (nouvel onglet)</span>
+          </a>
+        </li>
+      </ul>
+    </nav>
     <p class="site-footer__meta">© {year} Jouer pour comprendre l'IA</p>
   </div>
 </footer>
