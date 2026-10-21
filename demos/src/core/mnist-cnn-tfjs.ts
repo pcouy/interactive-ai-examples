@@ -40,6 +40,13 @@ import type {
   MnistCnnWeights,
 } from './mnist-cnn.js';
 import * as core from './mnist-cnn.js';
+import type {
+  RoundEntry,
+  RoundRef,
+  SegmentLoader,
+  SegmentPlan,
+  SegmentRound,
+} from './mnist-cnn-segmented.js';
 import type { MnistSample } from './mnist-data.js';
 
 type TfModule = typeof import('@tensorflow/tfjs');
@@ -133,6 +140,14 @@ export interface MnistTrainingProgress {
   readonly validationAccuracy: number | null;
   /** Millisecondes écoulées depuis le début de l'entraînement. */
   readonly elapsedMs: number;
+  /** Indice du round en cours dans l'époque, de 0 à `roundsPerEpoch - 1`. */
+  readonly roundIndex?: number;
+  /** Nombre de rounds par époque du plan segmenté. */
+  readonly roundsPerEpoch?: number;
+  /** Nombre cumulé de rounds achevés depuis le début de l'entraînement. */
+  readonly completedRounds?: number;
+  /** Nombre de fragments couverts par la dernière fenêtre de perte lue. */
+  readonly windowShards?: number;
 }
 
 /**
@@ -188,6 +203,33 @@ export interface MnistTrainOptions {
    * `setTimeout(0)`. Injectable pour rendre les tests déterministes.
    */
   readonly yieldControl?: () => Promise<void>;
+}
+
+/** Options d'un appel à `MnistCnnTfjsTrainer.trainSegmented`. */
+export interface MnistSegmentedTrainOptions {
+  /** Plan des fragments d'entraînement. */
+  readonly trainPlan: SegmentPlan;
+  /** Chargeur des rounds d'entraînement. */
+  readonly trainLoader: SegmentLoader;
+  /** Jeu de validation déjà en mémoire, utilisé sans plan segmenté. */
+  readonly validation?: MnistSample;
+  /** Plan des fragments de validation, à fournir avec `validationLoader`. */
+  readonly validationPlan?: SegmentPlan;
+  /** Chargeur des rounds de validation, à fournir avec `validationPlan`. */
+  readonly validationLoader?: SegmentLoader;
+  /** Nombre d'époques, au moins 1. */
+  readonly epochs: number;
+  /** Rappel de progression, appelé au plus une fois par intervalle et en fin d'époque. */
+  readonly onProgress: (progress: MnistTrainingProgress) => void;
+  /** Nombre de lots dont la perte est moyennée avant chaque lecture. */
+  readonly lossSampleEvery?: number;
+  /** Intervalle minimal entre deux évènements `running`, en millisecondes. */
+  readonly progressIntervalMs?: number;
+  /**
+   * Nombre maximal d'exemples du dernier round lus pour mesurer l'exactitude
+   * d'entraînement. Défaut : `MNIST_TRAIN_ACCURACY_SAMPLE_SIZE` (1024).
+   */
+  readonly trainAccuracySampleSize?: number;
 }
 
 /** Un lot matérialisé : ses propres tenseurs, possédés par le tampon de préchargement. */
@@ -396,6 +438,123 @@ function readSourceBatch(
     );
   }
   return batch;
+}
+
+/**
+ * Fragments couverts par la plage `[start, end)` d'un round : le chargeur
+ * concatène les fragments dans l'ordre de `entries`.
+ */
+function shardsForRange(entries: readonly RoundEntry[], start: number, end: number): string[] {
+  const files: string[] = [];
+  let offset = 0;
+  for (const entry of entries) {
+    const next = offset + entry.count;
+    if (start < next && end > offset) {
+      files.push(entry.file);
+    }
+    offset = next;
+    if (offset >= end) {
+      break;
+    }
+  }
+  return files;
+}
+
+/** Adapte un round segmenté en source lue par lots. */
+function roundToTrainSource(round: SegmentRound): MnistTrainSource {
+  return {
+    count: round.count,
+    readBatch(start: number, end: number): MnistSample {
+      return round.readBatch(start, end);
+    },
+  };
+}
+
+function assertSegmentPlan(plan: SegmentPlan, label: string): void {
+  if (plan === null || typeof plan !== 'object') {
+    throw new TypeError(`MNIST TFJS ${label} segment plan is required.`);
+  }
+  if (typeof plan.roundsForEpoch !== 'function') {
+    throw new TypeError(`MNIST TFJS ${label} segment plan must expose roundsForEpoch.`);
+  }
+  if (!Number.isInteger(plan.classes) || plan.classes < 2 || plan.classes > 20) {
+    throw new RangeError(
+      `MNIST TFJS ${label} segment plan classes must be an integer from 2 to 20, received ${String(plan.classes)}.`,
+    );
+  }
+  if (!Number.isInteger(plan.shardSize) || plan.shardSize < 1) {
+    throw new RangeError(
+      `MNIST TFJS ${label} segment plan shardSize must be a positive integer, received ${String(plan.shardSize)}.`,
+    );
+  }
+  if (!Number.isInteger(plan.totalCount) || plan.totalCount < 1) {
+    throw new RangeError(
+      `MNIST TFJS ${label} segment plan totalCount must be a positive integer, received ${String(plan.totalCount)}.`,
+    );
+  }
+  if (!Number.isInteger(plan.roundsPerEpoch) || plan.roundsPerEpoch < 1) {
+    throw new RangeError(
+      `MNIST TFJS ${label} segment plan roundsPerEpoch must be a positive integer, received ${String(plan.roundsPerEpoch)}.`,
+    );
+  }
+}
+
+function assertSegmentLoader(loader: SegmentLoader, label: string): void {
+  if (loader === null || typeof loader !== 'object') {
+    throw new TypeError(`MNIST TFJS ${label} segment loader is required.`);
+  }
+  if (!Number.isInteger(loader.totalCount) || loader.totalCount < 1) {
+    throw new RangeError(
+      `MNIST TFJS ${label} segment loader totalCount must be a positive integer, received ${String(loader.totalCount)}.`,
+    );
+  }
+  for (const method of ['loadRound', 'prefetchRound', 'releaseRound'] as const) {
+    if (typeof loader[method] !== 'function') {
+      throw new TypeError(`MNIST TFJS ${label} segment loader must expose ${method}.`);
+    }
+  }
+}
+
+/**
+ * Vérifie les champs d'un round segmenté sans parcourir ses pixels : chaque lot
+ * est validé plus tard par `readSourceBatch`, comme pour l'entraînement borné.
+ */
+function assertSegmentRound(
+  round: SegmentRound,
+  label: string,
+  core: CoreModule,
+  classCount: number,
+): void {
+  if (round === null || typeof round !== 'object') {
+    throw new TypeError(`MNIST TFJS ${label} round is required.`);
+  }
+  if (!Number.isInteger(round.count) || round.count < 1) {
+    throw new RangeError(
+      `MNIST TFJS ${label} round count must be a positive integer, received ${String(round.count)}.`,
+    );
+  }
+  const expectedImages = round.count * core.MNIST_INPUT_LENGTH;
+  if (!(round.images instanceof Float32Array) || round.images.length !== expectedImages) {
+    throw new RangeError(
+      `MNIST TFJS ${label} round images must be a Float32Array of ${expectedImages} values.`,
+    );
+  }
+  if (!(round.labels instanceof Uint8Array) || round.labels.length !== round.count) {
+    throw new RangeError(
+      `MNIST TFJS ${label} round labels must be a Uint8Array of ${round.count} values.`,
+    );
+  }
+  for (let index = 0; index < round.labels.length; index += 1) {
+    const value = round.labels[index];
+    if (!Number.isInteger(value) || value < 0 || value >= classCount) {
+      throw new RangeError(
+        `MNIST TFJS ${label} round labels must be integers from 0 to ${classCount - 1}, received ${value} at index ${index}.`,
+      );
+    }
+  }
+  if (typeof round.readBatch !== 'function') {
+    throw new TypeError(`MNIST TFJS ${label} round must expose a readBatch function.`);
+  }
 }
 
 /**
@@ -875,6 +1034,330 @@ export class MnistCnnTfjsTrainer {
     return progress;
   }
 
+  /**
+   * Entraîne le modèle par rounds segmentés. Un round contient un fragment par
+   * classe ; la boucle le charge, précharge le suivant, traite ses lots bornés,
+   * puis le libère. La perte d'époque est la moyenne pondérée par le nombre de
+   * lots de chaque round, et l'exactitude d'entraînement porte sur le dernier
+   * round de l'époque, plafonnée à `trainAccuracySampleSize` exemples.
+   *
+   * Une annulation est vérifiée avant chaque round et chaque lot : le round en
+   * cours et le round préchargé sont libérés, l'époque n'est pas comptée et le
+   * résultat porte `cancelled`. Un seul optimiseur sert à toute la course.
+   */
+  async trainSegmented(options: MnistSegmentedTrainOptions): Promise<MnistTrainingProgress> {
+    this.assertUsable();
+    if (this.running) {
+      throw new Error('MNIST TFJS trainer is already training.');
+    }
+    if (options === null || typeof options !== 'object') {
+      throw new TypeError('MNIST TFJS segmented train options are required.');
+    }
+    const epochs = options.epochs;
+    if (!Number.isInteger(epochs) || epochs < 1) {
+      throw new RangeError(`MNIST TFJS epochs must be a positive integer, received ${epochs}.`);
+    }
+    const lossSampleEvery = options.lossSampleEvery ?? DEFAULT_LOSS_SAMPLE_EVERY;
+    if (
+      !Number.isInteger(lossSampleEvery) ||
+      lossSampleEvery < MIN_LOSS_SAMPLE_EVERY ||
+      lossSampleEvery > MAX_LOSS_SAMPLE_EVERY
+    ) {
+      throw new RangeError(
+        `MNIST TFJS lossSampleEvery must be an integer from ${MIN_LOSS_SAMPLE_EVERY} to ${MAX_LOSS_SAMPLE_EVERY}, received ${String(options.lossSampleEvery)}.`,
+      );
+    }
+    const progressIntervalMs = options.progressIntervalMs ?? DEFAULT_PROGRESS_INTERVAL_MS;
+    if (!Number.isFinite(progressIntervalMs) || progressIntervalMs < 0) {
+      throw new RangeError(
+        `MNIST TFJS progressIntervalMs must be a non-negative finite number, received ${String(options.progressIntervalMs)}.`,
+      );
+    }
+    const trainAccuracySampleSize =
+      options.trainAccuracySampleSize ?? MNIST_TRAIN_ACCURACY_SAMPLE_SIZE;
+    if (!Number.isInteger(trainAccuracySampleSize) || trainAccuracySampleSize < 1) {
+      throw new RangeError(
+        `MNIST TFJS trainAccuracySampleSize must be a positive integer, received ${String(options.trainAccuracySampleSize)}.`,
+      );
+    }
+    assertSegmentPlan(options.trainPlan, 'train');
+    assertSegmentLoader(options.trainLoader, 'train');
+    if (options.trainPlan.totalCount !== options.trainLoader.totalCount) {
+      throw new RangeError(
+        `MNIST TFJS train segment plan totalCount ${options.trainPlan.totalCount} does not match loader totalCount ${options.trainLoader.totalCount}.`,
+      );
+    }
+
+    const validationPlan = options.validationPlan;
+    const validationLoader = options.validationLoader;
+    const segmentedValidation = validationPlan !== undefined || validationLoader !== undefined;
+    if (segmentedValidation && (validationPlan === undefined || validationLoader === undefined)) {
+      throw new TypeError(
+        'MNIST TFJS validationPlan and validationLoader must be provided together.',
+      );
+    }
+    if (validationPlan !== undefined && validationLoader !== undefined) {
+      assertSegmentPlan(validationPlan, 'validation');
+      assertSegmentLoader(validationLoader, 'validation');
+      if (validationPlan.totalCount !== validationLoader.totalCount) {
+        throw new RangeError(
+          `MNIST TFJS validation segment plan totalCount ${validationPlan.totalCount} does not match loader totalCount ${validationLoader.totalCount}.`,
+        );
+      }
+    } else if (options.validation !== undefined) {
+      assertSample(options.validation, 'validation', this.core, this.outputClasses);
+    }
+
+    const trainPlan = options.trainPlan;
+    const trainLoader = options.trainLoader;
+    const model = this.ensureModel();
+    const optimizer = this.optimizer;
+    if (optimizer === null) {
+      throw new Error('MNIST TFJS optimizer was not initialised.');
+    }
+    const trainable = model.getWeights(true) as unknown as Variable[];
+    const { batchSize } = this.config;
+    const startedAt = Date.now();
+
+    this.running = true;
+    this.cancelled = false;
+
+    let batchesProcessed = 0;
+    let loss = Number.NaN;
+    let epochLoss: number | null = null;
+    let epochTrainAccuracy: number | null = null;
+    let completedEpochs = 0;
+    let validationLoss: number | null = null;
+    let validationAccuracy: number | null = null;
+    let status: MnistTrainingStatus = 'completed';
+    let lastProgressAt = startedAt;
+    let roundIndex = 0;
+    let completedRounds = 0;
+    let windowShards = 0;
+    let lastRound: SegmentRound | null = null;
+    let lastRoundRef: RoundRef | null = null;
+    let prefetchedRef: RoundRef | null = null;
+    let stopped = false;
+    /** Fragments couverts par les lots de la fenêtre de perte en cours. */
+    const pendingShards = new Set<string>();
+
+    const emitRunning = (now: number): void => {
+      this.emit(options.onProgress, {
+        status: 'running',
+        batchesProcessed,
+        loss,
+        epochLoss,
+        epochTrainAccuracy,
+        completedEpochs,
+        validationLoss,
+        validationAccuracy,
+        elapsedMs: now - startedAt,
+        roundIndex,
+        roundsPerEpoch: trainPlan.roundsPerEpoch,
+        completedRounds,
+        windowShards,
+      });
+    };
+
+    try {
+      for (let epoch = 0; epoch < epochs; epoch += 1) {
+        const rounds = trainPlan.roundsForEpoch(epoch);
+        // Accumulateurs de l'époque : chaque round apporte sa perte moyenne
+        // pondérée par son nombre de lots, y compris une fenêtre finale partielle.
+        let epochLossSum = 0;
+        let epochBatches = 0;
+        for (let position = 0; position < rounds.length; position += 1) {
+          if (this.cancelled) {
+            status = 'cancelled';
+            stopped = true;
+            break;
+          }
+          const ref = rounds[position];
+          const round = await trainLoader.loadRound(ref);
+          if (prefetchedRef === ref) {
+            prefetchedRef = null;
+          }
+          let keepRound = false;
+          let roundLossSum = 0;
+          let roundBatches = 0;
+          try {
+            assertSegmentRound(round, 'train', this.core, this.outputClasses);
+            roundIndex = ref.index;
+            if (position + 1 < rounds.length) {
+              const nextRef = rounds[position + 1];
+              trainLoader.prefetchRound(nextRef);
+              prefetchedRef = nextRef;
+            }
+            const source = roundToTrainSource(round);
+            for (let start = 0; start < round.count; start += batchSize) {
+              if (this.cancelled) {
+                status = 'cancelled';
+                stopped = true;
+                break;
+              }
+              const end = Math.min(start + batchSize, round.count);
+              const shardFiles = shardsForRange(ref.entries, start, end);
+              const batch = this.materializeBatch(source, start, end);
+              let cost: Tensor | null = null;
+              try {
+                cost = this.runBatch(model, optimizer, trainable, batch);
+              } finally {
+                disposeBatch(batch);
+              }
+              if (cost !== null) {
+                this.pendingCosts.push(cost);
+                for (const file of shardFiles) {
+                  pendingShards.add(file);
+                }
+              }
+              batchesProcessed += 1;
+              // La fenêtre de perte n'est lue qu'à intervalle, jamais par lot.
+              if (this.pendingCosts.length >= lossSampleEvery) {
+                const windowBatchCount = this.pendingCosts.length;
+                const windowShardCount = pendingShards.size;
+                const windowLoss = await this.readPendingLoss();
+                pendingShards.clear();
+                if (windowLoss !== null) {
+                  loss = windowLoss;
+                  roundLossSum += windowLoss * windowBatchCount;
+                  roundBatches += windowBatchCount;
+                  windowShards = windowShardCount;
+                }
+              }
+              const now = Date.now();
+              if (now - lastProgressAt >= progressIntervalMs) {
+                emitRunning(now);
+                lastProgressAt = now;
+              }
+              await defaultYieldControl();
+            }
+            if (stopped) {
+              break;
+            }
+            // Fin du round : on vide la fenêtre partielle avant de passer au
+            // round suivant, pour que sa perte reste dans ce round.
+            const finalWindowBatches = this.pendingCosts.length;
+            const finalWindowShards = pendingShards.size;
+            const roundEndLoss = await this.readPendingLoss();
+            pendingShards.clear();
+            if (roundEndLoss !== null) {
+              loss = roundEndLoss;
+              roundLossSum += roundEndLoss * finalWindowBatches;
+              roundBatches += finalWindowBatches;
+              windowShards = finalWindowShards;
+            }
+            if (this.cancelled) {
+              status = 'cancelled';
+              stopped = true;
+              break;
+            }
+            if (roundBatches > 0) {
+              const roundLoss = roundLossSum / roundBatches;
+              epochLossSum += roundLoss * roundBatches;
+              epochBatches += roundBatches;
+            }
+            completedRounds += 1;
+            // Le dernier round porte la mesure d'exactitude de l'époque : il
+            // reste chargé jusqu'après la validation.
+            if (position === rounds.length - 1) {
+              keepRound = true;
+              lastRound = round;
+              lastRoundRef = ref;
+            }
+          } finally {
+            if (!keepRound) {
+              trainLoader.releaseRound(ref);
+              if (lastRound === round) {
+                lastRound = null;
+                lastRoundRef = null;
+              }
+            }
+          }
+        }
+        if (stopped) {
+          break;
+        }
+
+        if (segmentedValidation && validationPlan !== undefined && validationLoader !== undefined) {
+          const metrics = await this.evaluateSegmentedRounds(
+            model,
+            validationPlan,
+            validationLoader,
+            epoch,
+          );
+          if (this.cancelled) {
+            status = 'cancelled';
+            stopped = true;
+            break;
+          }
+          validationLoss = metrics.loss;
+          validationAccuracy = metrics.accuracy;
+        } else if (options.validation !== undefined) {
+          const metrics = this.evaluate(model, sampleToTrainSource(options.validation));
+          if (this.cancelled) {
+            status = 'cancelled';
+            stopped = true;
+            break;
+          }
+          validationLoss = metrics.loss;
+          validationAccuracy = metrics.accuracy;
+        }
+
+        let measuredAccuracy: number | null = null;
+        if (lastRound !== null) {
+          measuredAccuracy = await this.measureAccuracy(
+            model,
+            roundToTrainSource(lastRound),
+            trainAccuracySampleSize,
+          );
+        }
+        if (this.cancelled) {
+          status = 'cancelled';
+          stopped = true;
+          break;
+        }
+        epochTrainAccuracy = measuredAccuracy;
+        epochLoss = epochBatches > 0 ? epochLossSum / epochBatches : null;
+        completedEpochs += 1;
+        if (lastRoundRef !== null) {
+          trainLoader.releaseRound(lastRoundRef);
+          lastRound = null;
+          lastRoundRef = null;
+        }
+        const epochEndedAt = Date.now();
+        emitRunning(epochEndedAt);
+        lastProgressAt = epochEndedAt;
+      }
+    } finally {
+      if (prefetchedRef !== null) {
+        trainLoader.releaseRound(prefetchedRef);
+      }
+      if (lastRoundRef !== null) {
+        trainLoader.releaseRound(lastRoundRef);
+      }
+      this.disposePendingCosts();
+      this.running = false;
+    }
+
+    const progress: MnistTrainingProgress = {
+      status,
+      batchesProcessed,
+      loss,
+      epochLoss,
+      epochTrainAccuracy,
+      completedEpochs,
+      validationLoss,
+      validationAccuracy,
+      elapsedMs: Date.now() - startedAt,
+      roundIndex,
+      roundsPerEpoch: trainPlan.roundsPerEpoch,
+      completedRounds,
+      windowShards,
+    };
+    this.emit(options.onProgress, progress);
+    return progress;
+  }
+
   /** Demande l'arrêt : effectif avant le lot suivant. */
   async cancel(): Promise<void> {
     this.cancelled = true;
@@ -1196,6 +1679,59 @@ export class MnistCnnTfjsTrainer {
       }
     }
     return { loss: lossSum / source.count, accuracy: correct / source.count };
+  }
+
+  /**
+   * Évalue la validation round par round : chaque round est lu comme une source
+   * bornée, puis sa perte et son exactitude sont pondérées par son effectif.
+   * Les rounds préchargés sont libérés, y compris quand une annulation ou une
+   * erreur interrompt la lecture.
+   */
+  private async evaluateSegmentedRounds(
+    model: Sequential,
+    plan: SegmentPlan,
+    loader: SegmentLoader,
+    epoch: number,
+  ): Promise<{ loss: number; accuracy: number }> {
+    const rounds = plan.roundsForEpoch(epoch);
+    let lossSum = 0;
+    let correct = 0;
+    let total = 0;
+    let prefetchedRef: RoundRef | null = null;
+    try {
+      for (let position = 0; position < rounds.length; position += 1) {
+        if (this.cancelled) {
+          break;
+        }
+        const ref = rounds[position];
+        const round = await loader.loadRound(ref);
+        if (prefetchedRef === ref) {
+          prefetchedRef = null;
+        }
+        try {
+          assertSegmentRound(round, 'validation', this.core, this.outputClasses);
+          if (position + 1 < rounds.length) {
+            const nextRef = rounds[position + 1];
+            loader.prefetchRound(nextRef);
+            prefetchedRef = nextRef;
+          }
+          const metrics = this.evaluate(model, roundToTrainSource(round));
+          lossSum += metrics.loss * round.count;
+          correct += metrics.accuracy * round.count;
+          total += round.count;
+        } finally {
+          loader.releaseRound(ref);
+        }
+      }
+    } finally {
+      if (prefetchedRef !== null) {
+        loader.releaseRound(prefetchedRef);
+      }
+    }
+    if (total === 0) {
+      return { loss: Number.NaN, accuracy: Number.NaN };
+    }
+    return { loss: lossSum / total, accuracy: correct / total };
   }
 
   private emit(

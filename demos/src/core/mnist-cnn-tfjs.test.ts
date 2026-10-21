@@ -13,6 +13,14 @@ import {
   type MnistCnnWeights,
 } from './mnist-cnn.js';
 import {
+  buildSegmentPlan,
+  type RoundEntry,
+  type RoundRef,
+  type SegmentLoader,
+  type SegmentPlan,
+  type SegmentRound,
+} from './mnist-cnn-segmented.js';
+import {
   createMnistCnnTfjsTrainer,
   DEFAULT_PREFETCH_DEPTH,
   DEFAULT_TRAINING_SEED,
@@ -138,6 +146,141 @@ async function makeTrainer(
   });
   disposables.push(trainer);
   return trainer;
+}
+
+/** Échantillon d'une classe unique : libellés tous égaux à `classIndex`. */
+function makeClassSample(count: number, classIndex: number, seed: number): MnistSample {
+  const sample = makeSample(count, seed);
+  sample.labels.fill(classIndex);
+  return sample;
+}
+
+function concatSamples(samples: readonly MnistSample[]): MnistSample {
+  let count = 0;
+  for (const sample of samples) {
+    count += sample.count;
+  }
+  const images = new Float32Array(count * MNIST_INPUT_LENGTH);
+  const labels = new Uint8Array(count);
+  let offset = 0;
+  for (const sample of samples) {
+    images.set(sample.images, offset * MNIST_INPUT_LENGTH);
+    labels.set(sample.labels, offset);
+    offset += sample.count;
+  }
+  return { count, images, labels };
+}
+
+function roundFromSample(sample: MnistSample): SegmentRound {
+  const images = Float32Array.from(sample.images);
+  const labels = Uint8Array.from(sample.labels);
+  return {
+    count: sample.count,
+    images,
+    labels,
+    readBatch(start, end) {
+      return {
+        count: end - start,
+        images: images.subarray(start * MNIST_INPUT_LENGTH, end * MNIST_INPUT_LENGTH),
+        labels: labels.subarray(start, end),
+      };
+    },
+  };
+}
+
+/** Chargeur en mémoire : concatène les fragments d'un round à la demande. */
+class MemorySegmentLoader implements SegmentLoader {
+  readonly totalCount: number;
+
+  readonly loadCalls: RoundRef[] = [];
+
+  readonly prefetchCalls: RoundRef[] = [];
+
+  readonly releaseCalls: RoundRef[] = [];
+
+  private readonly samples: ReadonlyMap<string, MnistSample>;
+
+  private readonly rounds = new Map<string, SegmentRound>();
+
+  constructor(samples: ReadonlyMap<string, MnistSample>, totalCount: number) {
+    this.samples = samples;
+    this.totalCount = totalCount;
+  }
+
+  sampleFor(ref: RoundRef): MnistSample {
+    return concatSamples(
+      ref.entries.map((entry) => {
+        const sample = this.samples.get(entry.file);
+        if (sample === undefined) {
+          throw new Error(`missing fixture shard ${entry.file}`);
+        }
+        return sample;
+      }),
+    );
+  }
+
+  async loadRound(ref: RoundRef): Promise<SegmentRound> {
+    this.loadCalls.push(ref);
+    const key = ref.entries.map((entry) => entry.file).join('|');
+    const cached = this.rounds.get(key);
+    if (cached !== undefined) {
+      return cached;
+    }
+    const round = roundFromSample(this.sampleFor(ref));
+    this.rounds.set(key, round);
+    return round;
+  }
+
+  prefetchRound(ref: RoundRef): void {
+    this.prefetchCalls.push(ref);
+  }
+
+  releaseRound(ref: RoundRef): void {
+    this.releaseCalls.push(ref);
+  }
+}
+
+interface SegmentFixture {
+  readonly plan: SegmentPlan;
+  readonly loader: MemorySegmentLoader;
+  readonly flat: MnistSample;
+}
+
+/**
+ * Construit un plan et son chargeur en mémoire. `countsByClass[classIndex]`
+ * liste les effectifs de chaque fragment de la classe ; chaque fragment porte
+ * des libellés égaux à l'indice de sa classe.
+ */
+function makeSegmentFixture(
+  countsByClass: readonly (readonly number[])[],
+  seed = 3,
+): SegmentFixture {
+  const shardsByClass: RoundEntry[][] = [];
+  const samples = new Map<string, MnistSample>();
+  const flatParts: MnistSample[] = [];
+  let shardSize = 1;
+  let totalCount = 0;
+  let cursor = 0;
+  for (let classIndex = 0; classIndex < countsByClass.length; classIndex += 1) {
+    const shards: RoundEntry[] = [];
+    for (let shardIndex = 0; shardIndex < countsByClass[classIndex].length; shardIndex += 1) {
+      const count = countsByClass[classIndex][shardIndex];
+      shardSize = Math.max(shardSize, count);
+      const file = `c${classIndex}-s${shardIndex}.idx.gz`;
+      const sample = makeClassSample(count, classIndex, seed + classIndex * 97 + shardIndex * 13);
+      shards.push({ file, classIndex, start: cursor, count });
+      samples.set(file, sample);
+      flatParts.push(sample);
+      cursor += count;
+      totalCount += count;
+    }
+    shardsByClass.push(shards);
+  }
+  return {
+    plan: buildSegmentPlan({ shardsByClass, shardSize, seed }),
+    loader: new MemorySegmentLoader(samples, totalCount),
+    flat: concatSamples(flatParts),
+  };
 }
 
 describe('static import graph', () => {
@@ -1459,5 +1602,340 @@ describe('configuration validation', () => {
     await expect(
       trainer.predict({ count: 2, images: infinite, labels: new Uint8Array([1, 2]) }),
     ).rejects.toThrow(/images/i);
+  });
+});
+
+describe('segmented training', () => {
+  it('trains rounds across epochs and reports round progress', async () => {
+    const trainer = await makeTrainer(SMALL_FILTERS, {
+      batchSize: 4,
+      seed: 11,
+      outputClasses: 2,
+    });
+    const fixture = makeSegmentFixture(
+      [
+        [8, 8],
+        [8, 8],
+      ],
+      5,
+    );
+    const events: MnistTrainingProgress[] = [];
+    const result = await trainer.trainSegmented({
+      trainPlan: fixture.plan,
+      trainLoader: fixture.loader,
+      epochs: 2,
+      lossSampleEvery: 2,
+      progressIntervalMs: 0,
+      trainAccuracySampleSize: 4,
+      onProgress: (progress) => events.push(progress),
+    });
+    expect(result.status).toBe('completed');
+    expect(result.completedEpochs).toBe(2);
+    expect(result.completedRounds).toBe(4);
+    expect(result.roundsPerEpoch).toBe(2);
+    expect(result.batchesProcessed).toBe(16);
+    expect(result.epochLoss).not.toBeNull();
+    expect(result.epochTrainAccuracy).not.toBeNull();
+    expect(events.at(-1)?.status).toBe('completed');
+    for (const event of events.filter((candidate) => candidate.status === 'running')) {
+      expect(event.roundsPerEpoch).toBe(2);
+      expect(event.roundIndex).toBeGreaterThanOrEqual(0);
+      expect(event.roundIndex).toBeLessThan(2);
+      expect(event.completedRounds).toBeGreaterThanOrEqual(0);
+      expect(event.completedRounds).toBeLessThanOrEqual(4);
+    }
+    // Deux rounds par époque, deux époques : chaque round est chargé une fois.
+    expect(fixture.loader.loadCalls).toHaveLength(4);
+    expect(fixture.loader.releaseCalls.length).toBeGreaterThanOrEqual(4);
+
+    // L'exactitude porte sur le début du dernier round, plafonné à 4 exemples.
+    const lastRef = fixture.loader.loadCalls.at(-1);
+    if (lastRef === undefined) {
+      throw new Error('expected the fixture loader to load a round');
+    }
+    const lastSample = fixture.loader.sampleFor(lastRef);
+    const prefix: MnistSample = {
+      count: 4,
+      images: lastSample.images.subarray(0, 4 * MNIST_INPUT_LENGTH),
+      labels: lastSample.labels.subarray(0, 4),
+    };
+    const probabilities = await trainer.predict(prefix);
+    let correct = 0;
+    for (let index = 0; index < prefix.count; index += 1) {
+      let best = 0;
+      for (let column = 1; column < 2; column += 1) {
+        if (probabilities[index * 2 + column] > probabilities[index * 2 + best]) {
+          best = column;
+        }
+      }
+      if (best === prefix.labels[index]) {
+        correct += 1;
+      }
+    }
+    expect(result.epochTrainAccuracy).toBeCloseTo(correct / prefix.count, 6);
+  });
+
+  it('weights the epoch loss by the batch count of each round', async () => {
+    const core = await import('./mnist-cnn.js');
+    const batchLosses: number[] = [];
+    const realAdam = tf.train.adam.bind(tf.train);
+    const fakeTf = {
+      ...tf,
+      train: {
+        ...tf.train,
+        adam: (learningRate: number) => {
+          const optimizer = realAdam(learningRate);
+          return new Proxy(optimizer, {
+            get(target, property, receiver) {
+              if (property !== 'minimize') {
+                return Reflect.get(target, property, receiver);
+              }
+              return (...args: unknown[]) => {
+                const cost = (target.minimize as (...inner: unknown[]) => tf.Tensor | null)(
+                  ...args,
+                );
+                if (cost !== null) {
+                  batchLosses.push(Number(cost.dataSync()[0]));
+                }
+                return cost;
+              };
+            },
+          });
+        },
+      },
+    } as unknown as typeof tf;
+    const trainer = new MnistCnnTfjsTrainer(fakeTf, core, {
+      filters: SMALL_FILTERS,
+      learningRate: 3e-3,
+      batchSize: 2,
+      activation: 'sigmoid',
+      convLayers: 4,
+      denseLayers: 2,
+      outputClasses: 2,
+      seed: DEFAULT_TRAINING_SEED,
+    });
+    disposables.push(trainer);
+    const fixture = makeSegmentFixture(
+      [
+        [4, 4],
+        [4, 8],
+      ],
+      9,
+    );
+    const result = await trainer.trainSegmented({
+      trainPlan: fixture.plan,
+      trainLoader: fixture.loader,
+      epochs: 1,
+      lossSampleEvery: 16,
+      progressIntervalMs: 0,
+      onProgress: () => undefined,
+    });
+    expect(result.status).toBe('completed');
+    expect(result.batchesProcessed).toBe(10);
+    expect(batchLosses).toHaveLength(10);
+
+    // Les rounds sont mélangés : l'ordre des lots suit `loadCalls`.
+    let cursor = 0;
+    let weightedLoss = 0;
+    let totalBatches = 0;
+    let lastRoundMean = Number.NaN;
+    for (const ref of fixture.loader.loadCalls) {
+      const roundCount = ref.entries.reduce((sum, entry) => sum + entry.count, 0);
+      const roundBatches = Math.ceil(roundCount / 2);
+      const slice = batchLosses.slice(cursor, cursor + roundBatches);
+      const mean = slice.reduce((sum, value) => sum + value, 0) / slice.length;
+      weightedLoss += mean * roundBatches;
+      totalBatches += roundBatches;
+      cursor += roundBatches;
+      lastRoundMean = mean;
+    }
+    expect(cursor).toBe(batchLosses.length);
+    expect(result.epochLoss).toBeCloseTo(weightedLoss / totalBatches, 4);
+    // `loss` reste la dernière fenêtre lue, donc la moyenne du dernier round.
+    expect(result.loss).toBeCloseTo(lastRoundMean, 4);
+  });
+
+  it('aggregates segmented validation with weighted loss and accuracy', async () => {
+    const config = { batchSize: 4, seed: 21, outputClasses: 2 } as const;
+    const trainFixture = makeSegmentFixture([[8], [8]], 4);
+    const validationFixture = makeSegmentFixture(
+      [
+        [4, 4],
+        [4, 4],
+      ],
+      6,
+    );
+    const flatTrainer = await makeTrainer(SMALL_FILTERS, config);
+    const segmentedTrainer = await makeTrainer(SMALL_FILTERS, config);
+
+    const flatResult = await flatTrainer.trainSegmented({
+      trainPlan: trainFixture.plan,
+      trainLoader: trainFixture.loader,
+      validation: validationFixture.flat,
+      epochs: 1,
+      progressIntervalMs: 0,
+      onProgress: () => undefined,
+    });
+    const segmentedResult = await segmentedTrainer.trainSegmented({
+      trainPlan: trainFixture.plan,
+      trainLoader: trainFixture.loader,
+      validationPlan: validationFixture.plan,
+      validationLoader: validationFixture.loader,
+      epochs: 1,
+      progressIntervalMs: 0,
+      onProgress: () => undefined,
+    });
+
+    expect(flatResult.status).toBe('completed');
+    expect(segmentedResult.status).toBe('completed');
+    expect(flatResult.validationLoss).not.toBeNull();
+    expect(flatResult.validationAccuracy).not.toBeNull();
+    // Les deux entraîneurs partent de la même graine et voient les mêmes lots :
+    // seule l'agrégation de validation diffère.
+    expect(segmentedResult.validationLoss).toBeCloseTo(flatResult.validationLoss ?? 0, 5);
+    expect(segmentedResult.validationAccuracy).toBeCloseTo(flatResult.validationAccuracy ?? 0, 5);
+    expect(validationFixture.loader.loadCalls).toHaveLength(2);
+    expect(validationFixture.loader.releaseCalls.length).toBeGreaterThanOrEqual(2);
+  });
+
+  it('stops between rounds and releases the current and prefetched rounds', async () => {
+    const trainer = await makeTrainer(SMALL_FILTERS, {
+      batchSize: 4,
+      seed: 7,
+      outputClasses: 2,
+    });
+    const fixture = makeSegmentFixture(
+      [
+        [4, 4],
+        [4, 4],
+      ],
+      2,
+    );
+    const batchesPerRound = 2;
+    const result = await trainer.trainSegmented({
+      trainPlan: fixture.plan,
+      trainLoader: fixture.loader,
+      epochs: 2,
+      lossSampleEvery: 1,
+      progressIntervalMs: 0,
+      onProgress: (progress) => {
+        if (progress.status === 'running' && progress.batchesProcessed === batchesPerRound) {
+          void trainer.cancel();
+        }
+      },
+    });
+    expect(result.status).toBe('cancelled');
+    expect(result.completedEpochs).toBe(0);
+    expect(result.completedRounds).toBe(0);
+    expect(result.batchesProcessed).toBe(batchesPerRound);
+    expect(result.epochLoss).toBeNull();
+    expect(result.epochTrainAccuracy).toBeNull();
+    // Le round suivant est préchargé mais jamais formé.
+    expect(fixture.loader.loadCalls).toHaveLength(1);
+    expect(fixture.loader.prefetchCalls).toHaveLength(1);
+    expect(fixture.loader.releaseCalls).toHaveLength(2);
+  });
+
+  it('keeps one optimizer for the whole run', async () => {
+    const core = await import('./mnist-cnn.js');
+    const realAdam = tf.train.adam.bind(tf.train);
+    let adamCalls = 0;
+    const countingTf = {
+      ...tf,
+      train: {
+        ...tf.train,
+        adam: (learningRate: number) => {
+          adamCalls += 1;
+          return realAdam(learningRate);
+        },
+      },
+    } as unknown as typeof tf;
+    const trainer = new MnistCnnTfjsTrainer(countingTf, core, {
+      filters: SMALL_FILTERS,
+      learningRate: 3e-3,
+      batchSize: 4,
+      activation: 'sigmoid',
+      convLayers: 4,
+      denseLayers: 2,
+      outputClasses: 2,
+      seed: DEFAULT_TRAINING_SEED,
+    });
+    disposables.push(trainer);
+    const fixture = makeSegmentFixture(
+      [
+        [4, 4],
+        [4, 4],
+      ],
+      2,
+    );
+    const result = await trainer.trainSegmented({
+      trainPlan: fixture.plan,
+      trainLoader: fixture.loader,
+      epochs: 3,
+      progressIntervalMs: 0,
+      onProgress: () => undefined,
+    });
+    expect(result.status).toBe('completed');
+    expect(result.completedEpochs).toBe(3);
+    expect(adamCalls).toBe(1);
+  });
+
+  it('releases rounds and cost tensors after completion and cancellation', async () => {
+    const trainer = await makeTrainer(SMALL_FILTERS, {
+      batchSize: 4,
+      seed: 3,
+      outputClasses: 2,
+    });
+    const firstFixture = makeSegmentFixture(
+      [
+        [4, 4],
+        [4, 4],
+      ],
+      4,
+    );
+    await trainer.trainSegmented({
+      trainPlan: firstFixture.plan,
+      trainLoader: firstFixture.loader,
+      epochs: 1,
+      onProgress: () => undefined,
+    });
+    const baseline = tf.memory().numTensors;
+
+    const completedFixture = makeSegmentFixture(
+      [
+        [4, 4],
+        [4, 4],
+      ],
+      5,
+    );
+    const completed = await trainer.trainSegmented({
+      trainPlan: completedFixture.plan,
+      trainLoader: completedFixture.loader,
+      epochs: 1,
+      onProgress: () => undefined,
+    });
+    expect(completed.status).toBe('completed');
+    expect(tf.memory().numTensors).toBe(baseline);
+
+    const cancelledFixture = makeSegmentFixture(
+      [
+        [4, 4],
+        [4, 4],
+      ],
+      6,
+    );
+    const cancelled = await trainer.trainSegmented({
+      trainPlan: cancelledFixture.plan,
+      trainLoader: cancelledFixture.loader,
+      epochs: 1,
+      progressIntervalMs: 0,
+      onProgress: (progress) => {
+        if (progress.status === 'running' && progress.batchesProcessed === 2) {
+          void trainer.cancel();
+        }
+      },
+    });
+    expect(cancelled.status).toBe('cancelled');
+    expect(tf.memory().numTensors).toBe(baseline);
   });
 });
