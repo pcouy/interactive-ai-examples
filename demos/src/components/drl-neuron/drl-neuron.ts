@@ -12,6 +12,7 @@ import type {
   WeightUpdate,
 } from '../../core/neuron.js';
 import { NeuronCore } from '../../core/neuron.js';
+import type { Locale } from '../../i18n/locale.js';
 import { drlTokenValues } from '../../styles/token-values.js';
 import { drlTokens } from '../../styles/tokens.js';
 import {
@@ -19,6 +20,7 @@ import {
   type LandscapeScene,
   sanitizeHeightScale,
 } from '../shared/landscape-scene.js';
+import { type NeuronMessageKey, neuronMessage } from './messages.js';
 
 /**
  * One 2-input neuron trained by mini-batch gradient descent.
@@ -57,13 +59,13 @@ const FIELD_B_STEP = 0.1;
 const COLOR_LOW_FALLBACK = drlTokenValues.accent;
 const COLOR_HIGH_FALLBACK = drlTokenValues.accent2;
 
-const PHASE_LABELS: Record<NeuronPhase, string> = {
-  idle: 'Prêt',
-  present: 'Exemple',
-  gradient: 'Gradient',
-  fade: 'Archivage',
-  mean: 'Moyenne',
-  move: 'Descente',
+const PHASE_MESSAGE_KEYS: Record<NeuronPhase, NeuronMessageKey> = {
+  idle: 'phaseIdle',
+  present: 'phasePresent',
+  gradient: 'phaseGradient',
+  fade: 'phaseFade',
+  mean: 'phaseMean',
+  move: 'phaseMove',
 };
 
 interface GridCell {
@@ -84,8 +86,9 @@ function clamp(value: number, min: number, max: number): number {
   return Math.min(max, Math.max(min, value));
 }
 
-function formatNumber(value: number): string {
-  return value.toFixed(2).replace('.', ',');
+function formatNumber(value: number, locale: Locale = 'fr'): string {
+  const fixed = value.toFixed(2);
+  return locale === 'fr' ? fixed.replace('.', ',') : fixed;
 }
 
 /**
@@ -747,8 +750,17 @@ export class Neuron extends DemoElement {
     }
   }
 
-  protected override updated(): void {
+  protected override updated(changed: PropertyValues<this>): void {
+    super.updated(changed);
     this.syncWeightInputs();
+  }
+
+  protected override onLocaleChange(): void {
+    this.draw();
+    if (this.core.targetError !== null) {
+      this.dispatchTargetError();
+    }
+    this.requestUpdate();
   }
 
   /**
@@ -1106,7 +1118,7 @@ export class Neuron extends DemoElement {
     const detail =
       error === null
         ? null
-        : `Expression invalide : « ${this.expression} » — « x1 + x2 » utilisée par défaut.`;
+        : neuronMessage(this.locale, 'targetError', { expression: this.expression });
     this.dispatchEvent(
       new CustomEvent<string | null>('drl-target-error', {
         detail,
@@ -1136,68 +1148,78 @@ export class Neuron extends DemoElement {
   };
 
   private statusLine(): string {
+    const locale = this.locale;
     switch (this.phase) {
       case 'idle':
-        return 'Prêt — lancez la descente ou avancez pas à pas';
+        return neuronMessage(locale, 'statusIdle');
       case 'present': {
         const example = this.currentExample;
         if (!example) {
           return '';
         }
-        return (
-          `Exemple ${this.exampleNumber}/${this.core.batchSize} : ` +
-          `(x₁, x₂) = (${formatNumber(example.x1)} ; ${formatNumber(example.x2)}) ` +
-          `→ t = ${formatNumber(example.t)}`
-        );
+        return neuronMessage(locale, 'statusExample', {
+          index: this.exampleNumber,
+          total: this.core.batchSize,
+          x1: formatNumber(example.x1, locale),
+          x2: formatNumber(example.x2, locale),
+          t: formatNumber(example.t, locale),
+        });
       }
       case 'gradient':
-        return 'Calcul du gradient de cet exemple';
+        return neuronMessage(locale, 'statusGradient');
       case 'fade':
-        return 'Exemple archivé : son gradient entre dans la moyenne de la batch';
+        return neuronMessage(locale, 'statusFade');
       case 'mean':
-        return 'Moyenne des gradients de la batch';
+        return neuronMessage(locale, 'statusMean');
       case 'move':
-        return 'Mise à jour des poids : w ← w − learning rate × gradient moyen';
+        return neuronMessage(locale, 'statusMove');
     }
   }
 
   /** Axis caption with the current input range, e.g. `x₁ (−1,00 … 1,00)`. */
   private axisLabel(axis: 'x₁' | 'x₂'): string {
     const d = this.core.inputDomain;
-    return `${axis} (−${formatNumber(d)} … ${formatNumber(d)})`;
+    return neuronMessage(this.locale, 'axisCaption', {
+      axis,
+      min: formatNumber(d, this.locale),
+      max: formatNumber(d, this.locale),
+    });
   }
 
   protected override renderHeader(): TemplateResult {
+    const locale = this.locale;
     return html`
       <div class="drl-status">
-        <span class="drl-badge">${PHASE_LABELS[this.phase]}</span>
+        <span class="drl-badge">
+          ${neuronMessage(locale, PHASE_MESSAGE_KEYS[this.phase])}
+        </span>
         <span class="drl-status-text">${this.statusLine()}</span>
       </div>
       <div class="drl-stats">
         <div class="drl-stat drl-stat-editable">
-          <label class="drl-stat-label" for="drl-w1">w₁</label>
+          <label class="drl-stat-label" for="drl-w1">${neuronMessage(locale, 'labelW1')}</label>
           <input
             id="drl-w1"
             class="drl-stat-input"
             type="number"
             step="0.01"
             @change=${this.handleWeightChange('w1')}
-            title="Poids w₁"
+            title=${neuronMessage(locale, 'titleW1')}
           />
         </div>
         <div class="drl-stat drl-stat-editable">
-          <label class="drl-stat-label" for="drl-w2">w₂</label>
+          <label class="drl-stat-label" for="drl-w2">${neuronMessage(locale, 'labelW2')}</label>
           <input
             id="drl-w2"
             class="drl-stat-input"
             type="number"
             step="0.01"
             @change=${this.handleWeightChange('w2')}
-            title="Poids w₂"
+            title=${neuronMessage(locale, 'titleW2')}
           />
         </div>
         <div class="drl-stat drl-stat-editable">
-          <label class="drl-stat-label" for="drl-b">b</label>
+          <label class="drl-stat-label" for="drl-b">${neuronMessage(locale, 'labelBias')}</label>
           <input
             id="drl-b"
             class="drl-stat-input"
@@ -1205,22 +1227,22 @@ export class Neuron extends DemoElement {
             step="0.01"
             ?disabled=${!this.bias}
             @change=${this.handleWeightChange('b')}
-            title="Biais b — cochez « Biais » pour l'éditer"
+            title=${neuronMessage(locale, 'titleBias')}
           />
           <p class="drl-stat-hint" ?hidden=${this.bias}>
-            Cochez « Biais » pour éditer b.
+            ${neuronMessage(locale, 'hintBias')}
           </p>
         </div>
         <div class="drl-stat">
-          <p class="drl-stat-label">Loss (moyenne)</p>
-          <p class="drl-stat-value">${formatNumber(this.lossValue)}</p>
+          <p class="drl-stat-label">${neuronMessage(locale, 'statLoss')}</p>
+          <p class="drl-stat-value">${formatNumber(this.lossValue, locale)}</p>
         </div>
         <div class="drl-stat">
-          <p class="drl-stat-label">|gradient|</p>
-          <p class="drl-stat-value">${formatNumber(this.gradMag)}</p>
+          <p class="drl-stat-label">${neuronMessage(locale, 'statGradient')}</p>
+          <p class="drl-stat-value">${formatNumber(this.gradMag, locale)}</p>
         </div>
         <div class="drl-stat">
-          <p class="drl-stat-label">Itérations</p>
+          <p class="drl-stat-label">${neuronMessage(locale, 'statIterations')}</p>
           <p class="drl-stat-value">${this.epoch}</p>
         </div>
       </div>
@@ -1228,12 +1250,13 @@ export class Neuron extends DemoElement {
   }
 
   protected override renderContent(): TemplateResult {
+    const locale = this.locale;
     return html`
       <div class="drl-views">
         <svg
           viewBox="0 0 640 360"
           role="img"
-          aria-label="Nuage d'exemples et grille de prédictions du neurone"
+          aria-label=${neuronMessage(locale, 'svgAria')}
           @click=${this.handleMapClick}
         >
           <defs>
@@ -1294,19 +1317,17 @@ export class Neuron extends DemoElement {
             height="200"
             fill="url(#drl-neuron-legend)"
           ></rect>
-          <text class="drl-axis" x="452" y="18">t max</text>
-          <text class="drl-axis" x="452" y="212">t min</text>
+          <text class="drl-axis" x="452" y="18">${neuronMessage(locale, 'legendMax')}</text>
+          <text class="drl-axis" x="452" y="212">${neuronMessage(locale, 'legendMin')}</text>
         </svg>
         ${
           this.webglError
-            ? html`<p class="drl-webgl-error">
-              WebGL n'est pas disponible dans cet environnement.
-            </p>`
+            ? html`<p class="drl-webgl-error">${neuronMessage(locale, 'webglError')}</p>`
             : html`<canvas
               width=${CANVAS_WIDTH}
               height=${CANVAS_HEIGHT}
               role="img"
-              aria-label="Surface de loss 3D et descente de la bille par batch"
+              aria-label=${neuronMessage(locale, 'canvasAria')}
             ></canvas>`
         }
       </div>

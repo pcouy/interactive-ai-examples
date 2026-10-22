@@ -18,6 +18,8 @@ import {
   type MnistCnnConfig,
   type MnistCnnWeights,
 } from '../../core/mnist-cnn.js';
+import type { Locale } from '../../i18n/locale.js';
+import { weightSelectionMessage } from './messages.js';
 
 /** Tailles des cartes après chaque convolution pour un nombre de couches donné. */
 export function featureMapSizes(convLayers: number = DEFAULT_CONV_LAYERS): readonly number[] {
@@ -317,15 +319,24 @@ function selectionIsInArchitecture(
 export function describeWeightSelection(
   selection: WeightSelection,
   config: MnistCnnConfig,
+  locale: Locale = 'fr',
 ): string | null {
   if (!selectionIsInArchitecture(selection, config)) {
     return null;
   }
-  const link = `conv${selection.boundary + 1} — entrée ${selection.inputChannel + 1}, sortie ${selection.outputChannel + 1}`;
+  const link = weightSelectionMessage(locale, 'linkLabel', {
+    layer: selection.boundary + 1,
+    input: selection.inputChannel + 1,
+    output: selection.outputChannel + 1,
+  });
   if (selection.kind === 'link') {
     return link;
   }
-  return `${link}, position (${selection.ky + 1}, ${selection.kx + 1})`;
+  return weightSelectionMessage(locale, 'position', {
+    link,
+    ky: selection.ky + 1,
+    kx: selection.kx + 1,
+  });
 }
 
 /**

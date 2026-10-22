@@ -1,11 +1,13 @@
 import type { TemplateResult } from 'lit';
-import { css, html, LitElement } from 'lit';
+import { css, html } from 'lit';
 import { customElement, property } from 'lit/decorators.js';
+import { LocalizedElement } from '../base/localized-element.js';
 import { drlTokens } from '../styles/tokens.js';
+import { uiMessage } from './messages.js';
 import './drl-slider.js';
 
 @customElement('drl-controls')
-export class DrlControls extends LitElement {
+export class DrlControls extends LocalizedElement {
   static styles = [
     drlTokens,
     css`
@@ -88,27 +90,33 @@ export class DrlControls extends LitElement {
   };
 
   protected override render(): TemplateResult {
+    const toggleLabel = this.running
+      ? uiMessage(this.locale, 'pause')
+      : uiMessage(this.locale, 'play');
+    const stepLabel = uiMessage(this.locale, 'step');
+    const resetLabel = uiMessage(this.locale, 'reset');
     return html`
       <div class="drl-controls" part="controls">
         <button
           type="button"
           class="drl-primary"
-          aria-label=${this.running ? 'Pause' : 'Play'}
+          aria-label=${toggleLabel}
           @click=${this.onToggle}
         >
-          ${this.running ? 'Pause' : 'Play'}
+          ${toggleLabel}
         </button>
         <button
           type="button"
-          aria-label="Step"
+          aria-label=${stepLabel}
           ?disabled=${this.running}
           @click=${this.onStep}
         >
-          Step
+          ${stepLabel}
         </button>
-        <button type="button" aria-label="Reset" @click=${this.onReset}>Reset</button>
+        <button type="button" aria-label=${resetLabel} @click=${this.onReset}>${resetLabel}</button>
         <drl-slider
-          label="Speed"
+          lang=${this.locale}
+          label=${uiMessage(this.locale, 'speed')}
           min="0.01"
           max="4"
           step="0.01"

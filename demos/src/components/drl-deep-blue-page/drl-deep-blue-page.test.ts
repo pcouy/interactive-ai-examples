@@ -663,3 +663,116 @@ describe('DrlDeepBluePage custom evaluator', () => {
     );
   });
 });
+
+describe('DrlDeepBluePage localization', () => {
+  function renderText(page: DrlDeepBluePage): string {
+    const internals = page as unknown as { render(): unknown };
+    return collectStrings(internals.render());
+  }
+
+  it('renders the page in French by default', () => {
+    const page = createPage();
+    const text = renderText(page);
+    expect(text).toContain('Deep Blue · recherche adversariale');
+    expect(text).toContain('Jeu');
+    expect(text).toContain('Choix du jeu');
+    expect(text).toContain('Morpion');
+    expect(text).toContain('Puissance 4');
+    expect(text).toContain("Arbre d'évaluation · la recherche de l'agent se rejoue pas à pas");
+    expect(text).toContain('Humain vs Agent');
+    expect(text).toContain('Profondeur');
+    expect(text).toContain('Évaluateur');
+    expect(text).toContain('Élagage');
+    expect(text).toContain('Transposition');
+    expect(text).toContain('Élagage strict');
+    expect(text).toContain('lang=fr');
+  });
+
+  it('renders the page in English after a locale change', () => {
+    const page = createPage();
+    page.locale = 'en';
+    const text = renderText(page);
+    expect(text).toContain('Deep Blue · adversarial search');
+    expect(text).toContain('Game');
+    expect(text).toContain('Game choice');
+    expect(text).toContain('Tic-tac-toe');
+    expect(text).toContain('Connect Four');
+    expect(text).toContain("Evaluation tree · the agent's search replays step by step");
+    expect(text).toContain('Human vs Agent');
+    expect(text).toContain('Agent vs Human');
+    expect(text).toContain('Agent vs Agent');
+    expect(text).toContain('Depth');
+    expect(text).toContain('Evaluator');
+    expect(text).toContain('Pruning');
+    expect(text).toContain('Transposition');
+    expect(text).toContain('Strict pruning');
+    expect(text).toContain('Cuts only on a strict bound overrun');
+    expect(text).not.toContain('recherche adversariale');
+    expect(text).not.toContain('Profondeur');
+    expect(text).not.toContain('Élagage strict');
+  });
+
+  it('localizes the rollout and discount fields', () => {
+    const page = createPage();
+    page.evaluator = 'rollout';
+    const french = renderText(page);
+    expect(french).toContain('Échantillons de rollout');
+    expect(french).toContain('Actualisation (γ)');
+
+    page.locale = 'en';
+    const english = renderText(page);
+    expect(english).toContain('Rollout samples');
+    expect(english).toContain('Discount (γ)');
+    expect(english).not.toContain('Échantillons de rollout');
+    expect(english).not.toContain('Actualisation');
+  });
+
+  it('localizes the custom evaluator block', () => {
+    const page = createPage();
+    page.evaluator = 'custom';
+    const french = renderText(page);
+    expect(french).toContain('Évaluateur personnalisé (JavaScript)');
+    expect(french).toContain('Le corps reçoit');
+    expect(french).toContain('Appliquer');
+    expect(french).toContain('Réinitialiser');
+
+    page.locale = 'en';
+    const english = renderText(page);
+    expect(english).toContain('Custom evaluator (JavaScript)');
+    expect(english).toContain('The body receives');
+    expect(english).toContain(
+      'Code runs in the page without isolation. Use it only locally with trusted code.',
+    );
+    expect(english).toContain('Apply');
+    expect(english).toContain('Reset');
+    expect(english).not.toContain('Évaluateur personnalisé');
+    expect(english).not.toContain('Réinitialiser');
+  });
+
+  it('localizes the replay button and its move label', () => {
+    const page = createPage();
+    page.replayMove = { index: 4 };
+    expect(renderText(page)).toContain('Rejouer ce coup (case 5)');
+
+    page.locale = 'en';
+    const text = renderText(page);
+    expect(text).toContain('Replay this move (square 5)');
+    expect(text).toContain('Applies to the game the first move of the path');
+    expect(text).not.toContain('Rejouer ce coup');
+  });
+
+  it('propagates the locale to the game and the evaluation tree', () => {
+    const page = createPage();
+    page.locale = 'en';
+    const internals = page as unknown as { render(): unknown; renderGame(): unknown };
+    const gameLang = collectBindings(internals.renderGame()).filter(
+      (binding) => binding.attribute === 'lang',
+    );
+    expect(gameLang.map((binding) => binding.value)).toEqual(['en']);
+
+    const langs = collectBindings(internals.render())
+      .filter((binding) => binding.attribute === 'lang')
+      .map((binding) => binding.value);
+    expect(langs).toEqual(['en', 'en']);
+  });
+});

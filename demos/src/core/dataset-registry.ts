@@ -17,6 +17,8 @@ interface DatasetBase {
   readonly name: string;
   readonly description: string;
   readonly classNames: readonly string[];
+  /** Noms anglais, quand les noms de `classNames` sont dans une autre langue. */
+  readonly classNamesEn?: readonly string[];
   readonly trainCount: number;
   readonly testCount: number;
   readonly defaultTrainPercent: number;
@@ -102,6 +104,18 @@ const FASHION_MNIST: DatasetDefinition = {
     'Sac',
     'Bottine',
   ],
+  classNamesEn: [
+    'T-shirt',
+    'Trouser',
+    'Pullover',
+    'Dress',
+    'Coat',
+    'Sandal',
+    'Shirt',
+    'Sneaker',
+    'Bag',
+    'Ankle boot',
+  ],
   trainCount: 60000,
   testCount: 10000,
   files: {
@@ -139,6 +153,23 @@ const QUICKDRAW: ShardedDatasetDefinition = {
     'vélo',
     'pizza',
     'pomme',
+  ],
+  classNamesEn: [
+    'book',
+    'moon',
+    'cat',
+    'umbrella',
+    'cake',
+    'dog',
+    'fish',
+    'flower',
+    'star',
+    'house',
+    'tree',
+    'sun',
+    'bicycle',
+    'pizza',
+    'apple',
   ],
   trainCount: 1597997,
   testCount: 399507,

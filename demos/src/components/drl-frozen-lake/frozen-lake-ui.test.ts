@@ -1,6 +1,8 @@
 import { describe, expect, it } from 'vitest';
 import type { FineStepState, FrozenLakeAction } from '../../core/frozen-lake.js';
 import type { QUpdateResult, Transition } from '../../core/q-learning.js';
+import { FrozenLake } from './drl-frozen-lake.js';
+import { FrozenLakeReplay } from './drl-frozen-lake-replay.js';
 import {
   ACTION_GLYPHS,
   FROZEN_LAKE_REPLAY_EVENT,
@@ -10,6 +12,13 @@ import {
   schematicView,
   updateView,
 } from './frozen-lake-ui.js';
+import {
+  FROZEN_LAKE_MESSAGES,
+  frozenLakeActionName,
+  frozenLakeMessage,
+  frozenLakePhaseLabel,
+} from './messages.js';
+import { REPLAY_MESSAGES } from './replay-messages.js';
 
 /** Complete transition, with defaults that a test can override. */
 function transition(
@@ -32,6 +41,45 @@ function replayState(
   capacity = 1000,
 ): FrozenLakeReplayState {
   return { enabled: true, batch, bufferSize, capacity };
+}
+
+/** No DOM in the node test environment: neutralise Lit's async render pass. */
+function preventRender<T extends object>(element: T): T {
+  (element as unknown as { performUpdate(): void }).performUpdate = () => {};
+  return element;
+}
+
+/** Flattens a Lit template into text, including nested templates and values. */
+function templateText(value: unknown): string {
+  if (typeof value === 'string') {
+    return value;
+  }
+  if (typeof value === 'number') {
+    return String(value);
+  }
+  if (Array.isArray(value)) {
+    return value.map(templateText).join('');
+  }
+  if (typeof value === 'object' && value !== null && 'strings' in value && 'values' in value) {
+    const { strings, values } = value as {
+      strings: readonly string[];
+      values: readonly unknown[];
+    };
+    let text = '';
+    for (let index = 0; index < strings.length; index += 1) {
+      text += strings[index];
+      if (index < values.length) {
+        text += templateText(values[index]);
+      }
+    }
+    return text;
+  }
+  return '';
+}
+
+/** Renders an element template to flat text without connecting it to a DOM. */
+function renderText(element: object): string {
+  return templateText((element as { render(): unknown }).render());
 }
 
 /** Fine-step state in the observe phase, with no action yet. */
@@ -197,5 +245,153 @@ describe('updateView', () => {
     const view = updateView(update);
     expect(view.targetFormula).toBe("r + γ · max Q(s', a') = 1.000 + 0.900 × 0.500 = 1.450");
     expect(view.updateFormula).toBe('Q(s, a) ← 0.250 + 0.100 × (1.450 − 0.250) = 0.370');
+  });
+
+  it('keeps the same mathematical formulas in English', () => {
+    const french = updateView(update);
+    const english = updateView(update, 'en');
+    expect(english.targetFormula).toBe(french.targetFormula);
+    expect(english.updateFormula).toBe(french.updateFormula);
+  });
+});
+
+describe('Frozen Lake catalog', () => {
+  it('keeps the French strings unchanged', () => {
+    expect(FROZEN_LAKE_MESSAGES.fr.loopTitle).toBe('Boucle agent-environnement');
+    expect(FROZEN_LAKE_MESSAGES.fr.updateTitle).toBe('Dernière mise à jour');
+    expect(FROZEN_LAKE_MESSAGES.fr.replayToggle).toBe('Rejeu');
+    expect(FROZEN_LAKE_MESSAGES.fr.status).toBe(
+      'Épisodes {episodes} · Réussite {success} % · Pas {steps}',
+    );
+    expect(frozenLakeMessage('fr', 'status', { episodes: 3, success: 50, steps: 7 })).toBe(
+      'Épisodes 3 · Réussite 50 % · Pas 7',
+    );
+    expect(frozenLakeMessage('fr', 'caseLabel', { observation: 5, action: '→ droite' })).toBe(
+      'Case 5 · → droite',
+    );
+  });
+
+  it('translates the panel labels and the status to English', () => {
+    expect(frozenLakeMessage('en', 'loopTitle')).toBe('Agent-environment loop');
+    expect(frozenLakeMessage('en', 'updateTitle')).toBe('Latest update');
+    expect(frozenLakeMessage('en', 'replayToggle')).toBe('Replay');
+    expect(frozenLakeMessage('en', 'nextPhase')).toBe('Next phase');
+    expect(frozenLakeMessage('en', 'status', { episodes: 3, success: 50, steps: 7 })).toBe(
+      'Episodes 3 · Success 50 % · Steps 7',
+    );
+  });
+
+  it('translates action names, phase labels and the case label', () => {
+    expect(frozenLakeActionName('fr', 'right')).toBe('droite');
+    expect(frozenLakeActionName('fr', 'left')).toBe('gauche');
+    expect(frozenLakeActionName('fr', 'up')).toBe('haut');
+    expect(frozenLakeActionName('fr', 'down')).toBe('bas');
+    expect(frozenLakeActionName('en', 'right')).toBe('right');
+
+    expect(frozenLakePhaseLabel('fr', 'observe')).toBe('Observation');
+    expect(frozenLakePhaseLabel('en', 'transition')).toBe('Transition');
+    expect(frozenLakeMessage('en', 'caseLabel', { observation: 5, action: '→ right' })).toBe(
+      'Cell 5 · → right',
+    );
+  });
+});
+
+describe('Frozen Lake replay catalog', () => {
+  it('keeps the French aria label and empty message unchanged', () => {
+    expect(REPLAY_MESSAGES.fr.ariaLabel).toBe('Rejeu');
+    expect(REPLAY_MESSAGES.fr.empty).toBe("Aucun échantillon pour l'instant.");
+  });
+});
+
+describe('replay localization', () => {
+  it('renders the English header when the locale is en', () => {
+    const header = replayHeader(
+      replayState([transition(), transition(), transition()], 42, 500),
+      'en',
+    );
+    expect(header).toBe('Replay · sample 3 · memory 42/500');
+  });
+
+  it('renders the English end and last-step markers when the locale is en', () => {
+    const rows = replayRows(
+      replayState([transition({ observation: 14, nextObservation: 15, reward: 1, done: true })]),
+      'en',
+    );
+    expect(rows[0].text).toBe('cell 14 → cell 15 · r 1 · end · last step');
+  });
+});
+
+describe('Frozen Lake element localization', () => {
+  it('renders the French labels by default', () => {
+    const demo = preventRender(new FrozenLake());
+    const text = renderText(demo);
+    expect(text).toContain('Frozen Lake — Q-learning tabulaire');
+    expect(text).toContain('Contrôles de Frozen Lake');
+    expect(text).toContain('Boucle agent-environnement');
+    expect(text).toContain('Dernière mise à jour');
+    expect(text).toContain('Phase suivante');
+  });
+
+  it('renders complete English labels after a locale change', () => {
+    const demo = preventRender(new FrozenLake());
+    demo.locale = 'en';
+    const text = renderText(demo);
+    expect(text).toContain('Frozen Lake — tabular Q-learning');
+    expect(text).toContain('Frozen Lake controls');
+    expect(text).toContain('Frozen Lake grid');
+    expect(text).toContain('Reward curve');
+    expect(text).toContain('Agent-environment loop');
+    expect(text).toContain('Environment');
+    expect(text).toContain('Reward r');
+    expect(text).toContain('Action a');
+    expect(text).toContain('Step phases');
+    expect(text).toContain('Next phase');
+    expect(text).toContain('Latest update');
+    expect(text).toContain('No update yet.');
+    expect(text).toContain('Factor γ');
+    expect(text).toContain("Max next value Q(s', a')");
+    expect(text).toContain('Bootstrapping γ');
+    expect(text).toContain('Target');
+    expect(text).toContain('Previous value Q(s, a)');
+    expect(text).toContain('Rate α');
+    expect(text).toContain('Updated value');
+    expect(text).not.toContain('Boucle agent-environnement');
+    expect(text).not.toContain('Dernière mise à jour');
+    expect(text).not.toContain('Phase suivante');
+    expect(text).not.toContain('Récompense');
+    expect(text).not.toContain('Épisodes');
+    expect(text).not.toContain('Aucune mise à jour');
+  });
+});
+
+describe('Frozen Lake replay element localization', () => {
+  const batch = [transition({ observation: 14, nextObservation: 15, reward: 1, done: true })];
+
+  it('renders its French header, row and aria label by default', () => {
+    const replay = preventRender(new FrozenLakeReplay());
+    replay.replayState = replayState(batch);
+    const text = renderText(replay);
+    expect(text).toContain('aria-label=Rejeu');
+    expect(text).toContain('Rejeu · échantillon 1 · mémoire 120/1000');
+    expect(text).toContain('case 14 → case 15 · r 1 · fin · dernier pas');
+  });
+
+  it('renders its English header, row and aria label after a locale change', () => {
+    const replay = preventRender(new FrozenLakeReplay());
+    replay.replayState = replayState(batch);
+    replay.locale = 'en';
+    const text = renderText(replay);
+    expect(text).toContain('aria-label=Replay');
+    expect(text).toContain('Replay · sample 1 · memory 120/1000');
+    expect(text).toContain('cell 14 → cell 15 · r 1 · end · last step');
+    expect(text).not.toContain('dernier pas');
+  });
+
+  it('localizes the empty message', () => {
+    const replay = preventRender(new FrozenLakeReplay());
+    replay.replayState = replayState([]);
+    expect(renderText(replay)).toContain("Aucun échantillon pour l'instant.");
+    replay.locale = 'en';
+    expect(renderText(replay)).toContain('No sample yet.');
   });
 });

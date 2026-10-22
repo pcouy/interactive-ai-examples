@@ -1,10 +1,12 @@
 import type { TemplateResult } from 'lit';
-import { css, html, LitElement, nothing } from 'lit';
+import { css, html, nothing } from 'lit';
 import { customElement, property } from 'lit/decorators.js';
+import { LocalizedElement } from '../base/localized-element.js';
 import { drlTokens } from '../styles/tokens.js';
+import { uiMessage } from './messages.js';
 
 @customElement('drl-slider')
-export class DrlSlider extends LitElement {
+export class DrlSlider extends LocalizedElement {
   static styles = [
     drlTokens,
     css`
@@ -73,7 +75,7 @@ export class DrlSlider extends LitElement {
           max=${this.max}
           step=${this.step}
           .value=${String(this.value)}
-          aria-label=${this.label || 'value'}
+          aria-label=${this.label || uiMessage(this.locale, 'sliderValueFallback')}
           @input=${this.onInput}
         />
         <span class="drl-slider-value">${this.value}</span>

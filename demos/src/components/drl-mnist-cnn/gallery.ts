@@ -7,6 +7,9 @@
  * les appelants choisissent la fraction à afficher.
  */
 
+import type { Locale } from '../../i18n/locale.js';
+import { galleryMessage } from './messages.js';
+
 /** Fractions pour lesquelles un jeu peut proposer une galerie. */
 export type GallerySplit = 'train' | 'test';
 
@@ -14,13 +17,13 @@ export type GallerySplit = 'train' | 'test';
 export const GALLERY_SPLITS: readonly GallerySplit[] = ['train', 'test'];
 
 /** Libellé court d'une fraction de galerie. */
-export function gallerySplitLabel(split: GallerySplit): string {
-  return split === 'train' ? 'Entraînement' : 'Validation';
+export function gallerySplitLabel(split: GallerySplit, locale: Locale = 'fr'): string {
+  return galleryMessage(locale, split);
 }
 
 /** Complément de nom utilisé dans les phrases (« exemple d'entraînement »). */
-export function gallerySourceLabel(split: GallerySplit): string {
-  return split === 'train' ? "d'entraînement" : 'de validation';
+export function gallerySourceLabel(split: GallerySplit, locale: Locale = 'fr'): string {
+  return galleryMessage(locale, split === 'train' ? 'trainSource' : 'testSource');
 }
 
 /**

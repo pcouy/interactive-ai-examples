@@ -269,3 +269,44 @@ describe('formatSeconds', () => {
     expect(formatSeconds(60000)).toBe('60,0 s');
   });
 });
+
+describe('English output', () => {
+  it('localizes the badge and weights origin', () => {
+    expect(badgeText(input({ weightsEdited: true }), 'en')).toBe('Modified');
+    expect(badgeText(input({ state: 'training' }), 'en')).toBe('Training');
+    expect(weightsOriginText(input({ state: 'random' }), 'en')).toBe('Random');
+    expect(weightsOriginText(input({ state: 'pretrained' }), 'en')).toBe('Pre-trained');
+    expect(weightsOriginText(input({ state: 'deterministic' }), 'en')).toBe('Deterministic');
+    expect(weightsOriginText(input({ state: 'trained', metricsStarted: true }), 'en')).toBe(
+      'Trained',
+    );
+  });
+
+  it('localizes the status line', () => {
+    expect(
+      statusLine(
+        input({
+          state: 'training',
+          metricsStarted: true,
+          batchesProcessed: 12,
+          loss: 0.4567,
+          validationAccuracy: 0.964,
+          elapsedMs: 1500,
+          predictedClass: 3,
+          inputSource: 'Gallery',
+          parameters: 11898,
+        }),
+        'en',
+      ),
+    ).toBe(
+      'input: Gallery · predicted class: 3 · 11898 parameters · batches: 12 · loss: 0.457 · validation accuracy (subset): 96.4% · time: 1.5s · training: 600 examples · validation: 100 examples',
+    );
+  });
+
+  it('uses a decimal point and no space before the unit', () => {
+    expect(formatPercent(96.4, 'en')).toBe('96.4%');
+    expect(formatPercent(12.25, 'en')).toBe('12.3%');
+    expect(formatSeconds(1500, 'en')).toBe('1.5s');
+    expect(formatSeconds(60000, 'en')).toBe('60.0s');
+  });
+});

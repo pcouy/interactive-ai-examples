@@ -14,12 +14,22 @@ describe('gallerySplitLabel', () => {
     expect(gallerySplitLabel('train')).toBe('Entraînement');
     expect(gallerySplitLabel('test')).toBe('Validation');
   });
+
+  it('names the splits in English', () => {
+    expect(gallerySplitLabel('train', 'en')).toBe('Training');
+    expect(gallerySplitLabel('test', 'en')).toBe('Validation');
+  });
 });
 
 describe('gallerySourceLabel', () => {
   it('returns the phrase complement for each split', () => {
     expect(gallerySourceLabel('train')).toBe("d'entraînement");
     expect(gallerySourceLabel('test')).toBe('de validation');
+  });
+
+  it('returns the English phrase complement for each split', () => {
+    expect(gallerySourceLabel('train', 'en')).toBe('training');
+    expect(gallerySourceLabel('test', 'en')).toBe('validation');
   });
 });
 

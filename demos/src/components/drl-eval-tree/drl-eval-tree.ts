@@ -31,8 +31,9 @@ import {
   formatMove,
   formatScore,
   keepFirstPruned,
-  NO_CUT_LABEL,
+  noCutLabel,
 } from './display.js';
+import { evalTreeMessage } from './messages.js';
 import '../../ui/drl-controls.js';
 import '../../ui/drl-slider.js';
 
@@ -601,6 +602,14 @@ export class DrlEvalTree<S> extends DemoElement {
     }
   }
 
+  protected override onLocaleChange(): void {
+    // Les cartes, le panneau α/β, le fil d'Ariane et le statut sont écrits
+    // hors du rendu Lit : un tirage complet applique la nouvelle langue.
+    if (this.isConnected) {
+      this.invalidate();
+    }
+  }
+
   protected override willUpdate(changed: PropertyValues<this>): void {
     super.willUpdate(changed);
     if (changed.has('nodeSize')) {
@@ -944,14 +953,18 @@ export class DrlEvalTree<S> extends DemoElement {
       }
       return;
     }
+    const locale = this.locale;
     const next: BoundsView = {
       key: summary.nodeKey,
-      title: summary.move === null ? 'Racine' : `Coup ${formatMove(summary.move)}`,
-      alpha: formatBound(summary.alpha),
-      beta: formatBound(summary.beta),
-      score: formatScore(summary.score),
+      title:
+        summary.move === null
+          ? evalTreeMessage(locale, 'root')
+          : evalTreeMessage(locale, 'move', { move: formatMove(summary.move) }),
+      alpha: formatBound(summary.alpha, locale),
+      beta: formatBound(summary.beta, locale),
+      score: formatScore(summary.score, locale),
       exact: summary.exact,
-      cut: summary.cut === null ? null : cutDescription(summary.cut, summary.triggerMove),
+      cut: summary.cut === null ? null : cutDescription(summary.cut, summary.triggerMove, locale),
     };
     const current = this.boundsText;
     if (
@@ -989,13 +1002,14 @@ export class DrlEvalTree<S> extends DemoElement {
       return;
     }
     const chain: Crumb[] = [];
+    const rootLabel = evalTreeMessage(this.locale, 'rootCrumb');
     let cursor = this.viewRootKey ?? this.model.root()?.nodeKey ?? null;
     while (cursor !== null) {
       const node = this.model.node(cursor);
       if (!node) {
         break;
       }
-      const label = node.move === null ? 'racine' : formatMove(node.move) || 'racine';
+      const label = node.move === null ? rootLabel : formatMove(node.move) || rootLabel;
       chain.push({ key: node.nodeKey, label, current: false });
       cursor = node.parentKey;
     }
@@ -1205,30 +1219,37 @@ export class DrlEvalTree<S> extends DemoElement {
     if (compact) {
       score.textContent = `+${entry.item.collapsedCount}`;
       score.className = 'drl-node-score';
-      card.title = `${entry.item.collapsedCount} descendants masqués (profondeur maximale atteinte)`;
+      card.title = evalTreeMessage(this.locale, 'hiddenDescendants', {
+        count: entry.item.collapsedCount,
+      });
       return;
     }
     card.title = this.nodeTitle(node);
     score.className = pruned
       ? 'drl-node-score drl-node-score--cut'
       : scoreClass(node.score, node.exact);
-    score.textContent = pruned && cut !== null ? cutLabel(cut) : formatScore(node.score);
+    score.textContent =
+      pruned && cut !== null ? cutLabel(cut) : formatScore(node.score, this.locale);
     const game = this.game;
+    let boardEl =
+      boardWrap.firstElementChild instanceof DrlGameBoard ? boardWrap.firstElementChild : null;
+    if (boardEl !== null) {
+      boardEl.locale = this.locale;
+    }
     if (!game || node.state === undefined) {
       return;
     }
     const signature = `${this.gameVersion}:${game.stateKey(node.state)}`;
-    if (card.dataset.sig === signature) {
+    if (card.dataset.sig === signature && boardEl !== null) {
       return;
     }
     card.dataset.sig = signature;
-    let boardEl =
-      boardWrap.firstElementChild instanceof DrlGameBoard ? boardWrap.firstElementChild : null;
     if (!boardEl) {
       boardWrap.replaceChildren();
       boardEl = new DrlGameBoard();
       boardWrap.append(boardEl);
     }
+    boardEl.locale = this.locale;
     const view = game.boardView(node.state);
     boardEl.cellSize = BOARD_CELL_SIZE;
     boardEl.pieceStyle = this.pieceStyle ?? autoPieceStyle(view);
@@ -1237,23 +1258,33 @@ export class DrlEvalTree<S> extends DemoElement {
 
   /** Infobulle d'un nœud : score, fenêtre α/β et coupure éventuelle. */
   private nodeTitle(node: TreeNode<S>): string {
+    const locale = this.locale;
     const parts: string[] = [];
     parts.push(
       node.score === null
-        ? 'Score inconnu'
-        : `Score ${formatScore(node.score)}${node.exact ? ' (exact)' : ' (provisoire)'}`,
+        ? evalTreeMessage(locale, 'unknownScore')
+        : evalTreeMessage(locale, node.exact ? 'scoreExact' : 'scoreProvisional', {
+            score: formatScore(node.score, locale),
+          }),
     );
     const alpha = node.window?.alpha ?? Number.NEGATIVE_INFINITY;
     const beta = node.window?.beta ?? Number.POSITIVE_INFINITY;
-    parts.push(`α ${formatBound(alpha)} · β ${formatBound(beta)}`);
+    parts.push(
+      `${evalTreeMessage(locale, 'alpha')} ${formatBound(alpha, locale)} · ` +
+        `${evalTreeMessage(locale, 'beta')} ${formatBound(beta, locale)}`,
+    );
     const cut = node.cut ?? null;
     if (cut !== null) {
       const triggerMove =
         cut.triggerKey === null ? null : (this.model.node(cut.triggerKey)?.move ?? null);
-      parts.push(cutDescription(cut, triggerMove));
+      parts.push(cutDescription(cut, triggerMove, locale));
     }
     if (node.kind === 'tt-hit' && node.entryDepth !== undefined) {
-      parts.push(`Profondeur table : ${formatEntryDepth(node.entryDepth)}`);
+      parts.push(
+        evalTreeMessage(locale, 'tableDepth', {
+          depth: formatEntryDepth(node.entryDepth),
+        }),
+      );
     }
     return parts.join(' · ');
   }
@@ -1264,20 +1295,29 @@ export class DrlEvalTree<S> extends DemoElement {
       return;
     }
     const driver = this.driver;
-    const parts = [`Nœuds : ${this.model.size()}`, `Masqués : ${this.hiddenCount}`];
+    const locale = this.locale;
+    const parts = [
+      evalTreeMessage(locale, 'nodes', { count: this.model.size() }),
+      evalTreeMessage(locale, 'hidden', { count: this.hiddenCount }),
+    ];
     if (driver) {
-      parts.push(`Curseur : ${driver.current() ?? '–'}`);
-      parts.push(driver.isDone() ? 'Recherche terminée' : 'Recherche en cours');
+      parts.push(evalTreeMessage(locale, 'cursor', { cursor: driver.current() ?? '–' }));
+      parts.push(evalTreeMessage(locale, driver.isDone() ? 'searchDone' : 'searchRunning'));
     } else {
-      parts.push('Aucune recherche liée');
+      parts.push(evalTreeMessage(locale, 'noSearch'));
     }
     statusText.textContent = parts.join(' · ');
   }
 
   protected override renderContent(): TemplateResult {
+    const locale = this.locale;
     const depthValue = this.maxDepth === Number.POSITIVE_INFINITY ? '' : String(this.maxDepth);
     return html`
-      <div class="drl-toolbar" role="toolbar" aria-label="Débogueur d'arbre de recherche">
+      <div
+        class="drl-toolbar"
+        role="toolbar"
+        aria-label=${evalTreeMessage(locale, 'toolbarAria')}
+      >
         ${
           this.stepper
             ? html`
@@ -1285,28 +1325,28 @@ export class DrlEvalTree<S> extends DemoElement {
                 type="button"
                 class="drl-button"
                 data-primitive="in"
-                title="Pas à pas entrant : descendre d'un nœud visité"
+                title=${evalTreeMessage(locale, 'stepInTitle')}
                 @click=${this.handlePrimitive}
               >
-                Entrer
+                ${evalTreeMessage(locale, 'enter')}
               </button>
               <button
                 type="button"
                 class="drl-button"
                 data-primitive="over"
-                title="Pas à pas principal : terminer le sous-arbre courant"
+                title=${evalTreeMessage(locale, 'stepOverTitle')}
                 @click=${this.handlePrimitive}
               >
-                Passer
+                ${evalTreeMessage(locale, 'skip')}
               </button>
               <button
                 type="button"
                 class="drl-button"
                 data-primitive="out"
-                title="Pas à pas sortant : remonter au parent"
+                title=${evalTreeMessage(locale, 'stepOutTitle')}
                 @click=${this.handlePrimitive}
               >
-                Sortir
+                ${evalTreeMessage(locale, 'exit')}
               </button>
             `
             : nothing
@@ -1314,14 +1354,15 @@ export class DrlEvalTree<S> extends DemoElement {
         <button
           type="button"
           class="drl-button drl-root-now"
-          title="Revenir à la racine de la recherche"
+          title=${evalTreeMessage(locale, 'rootNowTitle')}
           @click=${this.handleRootNow}
         >
-          Racine = état courant
+          ${evalTreeMessage(locale, 'rootNow')}
         </button>
         <drl-slider
           class="drl-zoom-slider"
-          label="Zoom"
+          lang=${locale}
+          label=${evalTreeMessage(locale, 'zoom')}
           min="${ZOOM_MIN}"
           max="${ZOOM_MAX}"
           step="0.05"
@@ -1331,63 +1372,68 @@ export class DrlEvalTree<S> extends DemoElement {
         <button
           type="button"
           class="drl-button"
-          title="Ajuster le zoom à l'arbre affiché"
+          title=${evalTreeMessage(locale, 'fitTitle')}
           @click=${this.handleFit}
         >
-          Ajuster
+          ${evalTreeMessage(locale, 'fit')}
         </button>
-        <label class="drl-autofit" title="Recentrer et ajuster le zoom à chaque mise à jour de l'arbre ou déplacement du point de vue">
+        <label class="drl-autofit" title=${evalTreeMessage(locale, 'autoFitTitle')}>
           <input
             type="checkbox"
             .checked=${this.autoFit}
             @change=${this.handleAutoFitChange}
           />
-          <span>Ajuster auto</span>
+          <span>${evalTreeMessage(locale, 'autoFit')}</span>
         </label>
-        <button type="button" class="drl-button" title="Zoom 100 %" @click=${this.handleFull}>
-          100 %
+        <button
+          type="button"
+          class="drl-button"
+          title=${evalTreeMessage(locale, 'zoomFullTitle')}
+          @click=${this.handleFull}
+        >
+          ${evalTreeMessage(locale, 'zoomFull')}
         </button>
         <button
           type="button"
           class="drl-button"
           title=${
             this.isFullscreen
-              ? "Quitter le mode plein écran de l'arbre"
-              : "Afficher l'arbre et ses commandes en plein écran"
+              ? evalTreeMessage(locale, 'exitFullscreenTitle')
+              : evalTreeMessage(locale, 'enterFullscreenTitle')
           }
           @click=${this.handleFullscreen}
         >
-          ${this.isFullscreen ? 'Quitter le plein écran' : 'Plein écran'}
+          ${evalTreeMessage(locale, this.isFullscreen ? 'exitFullscreen' : 'fullscreen')}
         </button>
         <label class="drl-depth">
-          <span>Prof. max</span>
+          <span>${evalTreeMessage(locale, 'maxDepth')}</span>
           <input
             class="drl-depth-input"
             type="number"
             min="1"
             step="1"
-            placeholder="∞"
+            placeholder=${evalTreeMessage(locale, 'infinity')}
             .value=${depthValue}
             @input=${this.handleDepthInput}
           />
         </label>
       </div>
-      <div class="drl-breadcrumbs" aria-label="Fil d'Ariane"></div>
+      <div class="drl-breadcrumbs" aria-label=${evalTreeMessage(locale, 'breadcrumbsAria')}></div>
       <div class="drl-bounds" aria-live="polite">
         ${
           this.boundsText === null
             ? nothing
             : html`
                 <span class="drl-bounds-item drl-bounds-title">${this.boundsText.title}</span>
-                <span class="drl-bounds-item">α ${this.boundsText.alpha}</span>
-                <span class="drl-bounds-item">β ${this.boundsText.beta}</span>
+                <span class="drl-bounds-item">${evalTreeMessage(locale, 'alpha')} ${this.boundsText.alpha}</span>
+                <span class="drl-bounds-item">${evalTreeMessage(locale, 'beta')} ${this.boundsText.beta}</span>
                 <span class="drl-bounds-item">
-                  Score ${this.boundsText.score === '' ? '—' : this.boundsText.score}
-                  ${this.boundsText.exact ? '(exact)' : '(provisoire)'}
+                  ${evalTreeMessage(locale, 'score')} ${this.boundsText.score === '' ? '—' : this.boundsText.score}
+                  ${evalTreeMessage(locale, this.boundsText.exact ? 'exact' : 'provisional')}
                 </span>
                 ${
                   this.boundsText.cut === null
-                    ? html`<span class="drl-bounds-item">${NO_CUT_LABEL}</span>`
+                    ? html`<span class="drl-bounds-item">${noCutLabel(locale)}</span>`
                     : html`<span class="drl-bounds-item drl-bounds-cut">${this.boundsText.cut}</span>`
                 }
               `

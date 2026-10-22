@@ -1,6 +1,7 @@
 import type { PropertyValues, TemplateResult } from 'lit';
-import { css, html, LitElement, nothing } from 'lit';
+import { css, html, nothing } from 'lit';
 import { customElement, property, state } from 'lit/decorators.js';
+import { LocalizedElement } from '../../base/localized-element.js';
 import type { Evaluator } from '../../core/contracts.js';
 import type { Connect4Move, Connect4State } from '../../core/games/connect4.js';
 import type { TicTacToeMove, TicTacToeState } from '../../core/games/tic-tac-toe.js';
@@ -10,6 +11,7 @@ import {
 } from '../../core/search/evaluators/custom.js';
 import { createReadOnlyOverlay } from '../../core/search/transposition.js';
 import type { TreeModel } from '../../core/search/tree-model.js';
+import type { Locale } from '../../i18n/locale.js';
 import '../drl-connect4/drl-connect4.js';
 import '../drl-tic-tac-toe/drl-tic-tac-toe.js';
 import { drlTokens } from '../../styles/tokens.js';
@@ -26,6 +28,7 @@ import {
   sanitizeSamples,
   TIC_TAC_TOE_GAME_CONFIG,
 } from '../shared/create-game-component.js';
+import { type DeepBlueMessageKey, deepBlueMessage } from './messages.js';
 
 export type DeepBlueGameId = 'tic-tac-toe' | 'connect4';
 
@@ -34,14 +37,14 @@ const DEFAULT_PLAYERS = '["human","agent"]';
 const PAGE_ROLLOUT_SAMPLES = 10;
 
 interface VsMode {
-  readonly label: string;
+  readonly labelKey: DeepBlueMessageKey;
   readonly players: string;
 }
 
 const VS_MODES: readonly VsMode[] = [
-  { label: 'Humain vs Agent', players: '["human","agent"]' },
-  { label: 'Agent vs Humain', players: '["agent","human"]' },
-  { label: 'Agent vs Agent', players: '["agent","agent"]' },
+  { labelKey: 'modeHumanAgent', players: '["human","agent"]' },
+  { labelKey: 'modeAgentHuman', players: '["agent","human"]' },
+  { labelKey: 'modeAgentAgent', players: '["agent","agent"]' },
 ];
 
 /** Compare deux configurations de joueurs indépendamment des espaces JSON. */
@@ -108,18 +111,18 @@ export function firstMoveOnPath<S>(model: TreeModel<S>, nodeKey: string | null):
   return null;
 }
 
-function moveLabel(move: unknown, id: DeepBlueGameId): string {
+function moveLabel(move: unknown, id: DeepBlueGameId, locale: Locale = 'fr'): string {
   if (id === 'tic-tac-toe' && isTicTacToeMove(move)) {
-    return `case ${move.index + 1}`;
+    return deepBlueMessage(locale, 'moveCase', { number: move.index + 1 });
   }
   if (id === 'connect4' && isConnect4Move(move)) {
-    return `colonne ${move.col + 1}`;
+    return deepBlueMessage(locale, 'moveColumn', { number: move.col + 1 });
   }
   return '';
 }
 
 @customElement('drl-deep-blue-page')
-export class DrlDeepBluePage extends LitElement {
+export class DrlDeepBluePage extends LocalizedElement {
   static override styles = [
     drlTokens,
     css`
@@ -449,18 +452,19 @@ export class DrlDeepBluePage extends LitElement {
   }
 
   protected override render(): TemplateResult {
+    const locale = this.locale;
     const settings = this.activeSettings;
     return html`
       <header class="drl-page-header">
-        <h1 class="drl-page-title">Deep Blue · recherche adversariale</h1>
+        <h1 class="drl-page-title">${deepBlueMessage(locale, 'title')}</h1>
         <label class="drl-page-picker">
-          <span>Jeu</span>
-          <select aria-label="Choix du jeu" @change=${this.onGamePick}>
+          <span>${deepBlueMessage(locale, 'game')}</span>
+          <select aria-label=${deepBlueMessage(locale, 'gameAriaLabel')} @change=${this.onGamePick}>
             <option value="tic-tac-toe" ?selected=${this.activeGameId === 'tic-tac-toe'}>
-              Morpion
+              ${deepBlueMessage(locale, 'ticTacToe')}
             </option>
             <option value="connect4" ?selected=${this.activeGameId === 'connect4'}>
-              Puissance 4
+              ${deepBlueMessage(locale, 'connect4')}
             </option>
           </select>
         </label>
@@ -473,7 +477,7 @@ export class DrlDeepBluePage extends LitElement {
         <section class="drl-page-panel">
           <div class="drl-page-tree-bar">
             <span class="drl-page-hint">
-              Arbre d'évaluation · la recherche de l'agent se rejoue pas à pas
+              ${deepBlueMessage(locale, 'treeHint')}
             </span>
             ${
               this.replayMove === null
@@ -482,16 +486,19 @@ export class DrlDeepBluePage extends LitElement {
                   <button
                     type="button"
                     class="drl-page-replay"
-                    title="Applique dans la partie le premier coup du chemin menant au nœud sélectionné"
+                    title=${deepBlueMessage(locale, 'replayTitle')}
                     @click=${this.onReplayClick}
                   >
-                    Rejouer ce coup (${moveLabel(this.replayMove, this.activeGameId)})
+                    ${deepBlueMessage(locale, 'replay', {
+                      move: moveLabel(this.replayMove, this.activeGameId, locale),
+                    })}
                   </button>
                 `
             }
           </div>
           <drl-eval-tree
             class="drl-page-tree"
+            lang=${locale}
             .pieceStyle=${settings.pieceStyle}
             .nodeSize=${settings.nodeSize}
             .autoFit=${this.autoFit}
@@ -503,6 +510,7 @@ export class DrlDeepBluePage extends LitElement {
   }
 
   private renderVsModeRow(): TemplateResult {
+    const locale = this.locale;
     return html`
       ${VS_MODES.map(
         (mode) => html`
@@ -513,7 +521,7 @@ export class DrlDeepBluePage extends LitElement {
             aria-pressed=${samePlayers(this.players, mode.players)}
             @click=${this.onModePick}
           >
-            ${mode.label}
+            ${deepBlueMessage(locale, mode.labelKey)}
           </button>
         `,
       )}
@@ -521,11 +529,12 @@ export class DrlDeepBluePage extends LitElement {
   }
 
   private renderSearchFields(): TemplateResult {
+    const locale = this.locale;
     const settings = this.activeSettings;
     const evaluator = parseEvaluatorMode(this.evaluator);
     return html`
       <label class="drl-page-field">
-        <span>Profondeur</span>
+        <span>${deepBlueMessage(locale, 'depth')}</span>
         <input
           class="drl-page-number"
           type="number"
@@ -537,7 +546,7 @@ export class DrlDeepBluePage extends LitElement {
         />
       </label>
       <label class="drl-page-field">
-        <span>Évaluateur</span>
+        <span>${deepBlueMessage(locale, 'evaluator')}</span>
         <select .value=${this.evaluator} @change=${this.onEvaluatorChange}>
           <option value="windows">windows</option>
           <option value="rollout">rollout</option>
@@ -548,7 +557,7 @@ export class DrlDeepBluePage extends LitElement {
       ${evaluator === 'rollout' ? this.renderSamplesField() : nothing}
       ${evaluator === 'random' ? nothing : this.renderDiscountField()}
       <label class="drl-page-field">
-        <span>Élagage</span>
+        <span>${deepBlueMessage(locale, 'pruning')}</span>
         <select .value=${this.pruning ? 'alpha-beta' : 'minimax'} @change=${this.onPruningChange}>
           <option value="alpha-beta">alpha-beta</option>
           <option value="minimax">minimax</option>
@@ -561,7 +570,7 @@ export class DrlDeepBluePage extends LitElement {
           .checked=${this.transposition}
           @change=${this.onTranspositionChange}
         />
-        Transposition
+        ${deepBlueMessage(locale, 'transposition')}
       </label>
     `;
   }
@@ -570,20 +579,30 @@ export class DrlDeepBluePage extends LitElement {
     if (parseEvaluatorMode(this.evaluator) !== 'custom') {
       return nothing;
     }
+    const locale = this.locale;
     return html`
       <section class="drl-page-custom">
         <label class="drl-page-custom-label" for="drl-custom-source">
-          Évaluateur personnalisé (JavaScript)
+          ${deepBlueMessage(locale, 'customEvaluator')}
         </label>
         <p class="drl-page-hint">
-          Le corps reçoit <code>state</code> et <code>ctx</code>, et doit retourner un nombre fini.
-          <code>ctx</code> expose <code>rootPlayer</code>, <code>opponent</code>, <code>rows</code>,
-          <code>cols</code>, <code>game</code>, puis <code>lines</code> (morpion) ou
-          <code>windows</code> (puissance 4).
+          ${deepBlueMessage(locale, 'customHelpReceives')}<code>state</code>${deepBlueMessage(
+            locale,
+            'customHelpAnd',
+          )}<code>ctx</code>${deepBlueMessage(locale, 'customHelpFinite')}<code>ctx</code>${deepBlueMessage(
+            locale,
+            'customHelpExposes',
+          )}<code>rootPlayer</code>, <code>opponent</code>, <code>rows</code>,
+          <code>cols</code>, <code>game</code>${deepBlueMessage(
+            locale,
+            'customHelpThen',
+          )}<code>lines</code>${deepBlueMessage(
+            locale,
+            'customHelpTicTacToe',
+          )}<code>windows</code>${deepBlueMessage(locale, 'customHelpConnect4')}
         </p>
         <p class="drl-page-custom-warning" id="drl-custom-warning">
-          Code exécuté dans la page, sans isolation. À utiliser uniquement en local avec du code de
-          confiance.
+          ${deepBlueMessage(locale, 'customWarning')}
         </p>
         <textarea
           id="drl-custom-source"
@@ -595,8 +614,12 @@ export class DrlDeepBluePage extends LitElement {
           @input=${this.onCustomInput}
         ></textarea>
         <div class="drl-page-custom-actions">
-          <button type="button" @click=${this.onCustomApply}>Appliquer</button>
-          <button type="button" @click=${this.onCustomReset}>Réinitialiser</button>
+          <button type="button" @click=${this.onCustomApply}>
+            ${deepBlueMessage(locale, 'apply')}
+          </button>
+          <button type="button" @click=${this.onCustomReset}>
+            ${deepBlueMessage(locale, 'reset')}
+          </button>
         </div>
         ${
           this.customError === null
@@ -608,9 +631,10 @@ export class DrlDeepBluePage extends LitElement {
   }
 
   private renderSamplesField(): TemplateResult {
+    const locale = this.locale;
     return html`
       <label class="drl-page-field">
-        <span>Échantillons de rollout</span>
+        <span>${deepBlueMessage(locale, 'rolloutSamples')}</span>
         <input
           class="drl-page-number"
           type="number"
@@ -624,9 +648,10 @@ export class DrlDeepBluePage extends LitElement {
   }
 
   private renderDiscountField(): TemplateResult {
+    const locale = this.locale;
     return html`
       <label class="drl-page-field">
-        <span>Actualisation (γ)</span>
+        <span>${deepBlueMessage(locale, 'discount')}</span>
         <input
           class="drl-page-number"
           type="number"
@@ -641,17 +666,18 @@ export class DrlDeepBluePage extends LitElement {
   }
 
   private renderStrictPruningField(): TemplateResult {
+    const locale = this.locale;
     return html`
       <label
         class="drl-page-field"
-        title="Ne coupe que sur un dépassement strict de la borne (max : > β, min : < α) et départage au hasard les coups à valeur égale. Décochez pour l'alpha-bêta classique (>= / <=, premier coup retenu à égalité)."
+        title=${deepBlueMessage(locale, 'strictPruningTitle')}
       >
         <input
           type="checkbox"
           .checked=${this.strictPruning}
           @change=${this.onStrictPruningChange}
         />
-        Élagage strict
+        ${deepBlueMessage(locale, 'strictPruning')}
       </label>
     `;
   }
@@ -661,6 +687,7 @@ export class DrlDeepBluePage extends LitElement {
       return html`
         <drl-connect4
           class="drl-page-game"
+          lang=${this.locale}
           .players=${this.players}
           .depth=${this.depth ?? CONNECT4_GAME_CONFIG.defaultDepth}
           .evaluator=${this.evaluator}
@@ -681,6 +708,7 @@ export class DrlDeepBluePage extends LitElement {
     return html`
       <drl-tic-tac-toe
         class="drl-page-game"
+        lang=${this.locale}
         .players=${this.players}
         .depth=${this.depth ?? TIC_TAC_TOE_GAME_CONFIG.defaultDepth}
         .evaluator=${this.evaluator}

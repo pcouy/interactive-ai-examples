@@ -37,8 +37,10 @@ import {
   type TranspositionSnapshotEntry,
   type TranspositionTable,
 } from '../../core/search/transposition.js';
+import type { Locale } from '../../i18n/locale.js';
 import { drlTokens } from '../../styles/tokens.js';
 import type { DrlCellClickEvent, PieceStyle } from '../drl-game-board/drl-game-board.js';
+import { type GameMessageKey, gameMessage } from './game-messages.js';
 
 export type EvaluatorMode = 'windows' | 'rollout' | 'random' | 'custom';
 
@@ -56,8 +58,9 @@ type TtSortColumn = 'score' | 'depth' | 'samples' | 'exact' | 'turn' | 'pieces';
 
 type TtSortDirection = 'asc' | 'desc';
 
-function formatScoreValue(value: number): string {
-  return value.toFixed(2).replace('.', ',');
+function formatScoreValue(value: number, locale: Locale = 'fr'): string {
+  const fixed = value.toFixed(2);
+  return locale === 'fr' ? fixed.replace('.', ',') : fixed;
 }
 
 /** Profondeur effective certifiée : `SOLVED_DEPTH` s'affiche « ∞ ». */
@@ -130,7 +133,9 @@ function ttSortRows(
 export interface GameComponentConfig<S, M> {
   readonly game: Game<S, M>;
   readonly title: string;
+  readonly titleKey?: GameMessageKey;
   readonly playerNames: readonly [string, string];
+  readonly playerNameKeys?: readonly [GameMessageKey, GameMessageKey];
   readonly defaultDepth: number;
   readonly defaultCellSize: number;
   readonly pieceStyle: PieceStyle;
@@ -146,6 +151,7 @@ export interface SeriesScore {
 }
 
 export interface GameComponentApi<S, M> extends LitElement {
+  locale: Locale;
   readonly game: Game<S, M>;
   readonly title: string;
   readonly pieceStyle: PieceStyle;
@@ -656,7 +662,9 @@ export function createGameComponent<S, M>(
     }
 
     get title(): string {
-      return config.title;
+      return config.titleKey === undefined
+        ? config.title
+        : gameMessage(this.locale, config.titleKey);
     }
 
     get pieceStyle(): PieceStyle {
@@ -664,7 +672,11 @@ export function createGameComponent<S, M>(
     }
 
     get playerNames(): readonly [string, string] {
-      return config.playerNames;
+      const keys = config.playerNameKeys;
+      if (keys === undefined) {
+        return config.playerNames;
+      }
+      return [gameMessage(this.locale, keys[0]), gameMessage(this.locale, keys[1])];
     }
 
     get playerKinds(): readonly [PlayerKind, PlayerKind] {
@@ -847,16 +859,17 @@ export function createGameComponent<S, M>(
     }
 
     protected override renderContent(): TemplateResult {
+      const locale = this.locale;
       const state = this.currentState;
       const player = state === null ? 0 : game.currentPlayer(state);
       const outcome = this.outcome;
       return html`
-        <h2 class="drl-title">${config.title}</h2>
+        <h2 class="drl-title">${this.title}</h2>
         <div class="drl-status" role="status">
           ${
             outcome === null
               ? html`
-                  <span class="drl-turn">Au trait : ${this.playerName(player)}</span>
+                  <span class="drl-turn">${gameMessage(locale, 'toMove', { player: this.playerName(player) })}</span>
                   ${this.renderSearchStatus()} ${this.renderTtCount()} ${this.renderRejected()}
                 `
               : html`<span class="drl-banner">${this.outcomeLabel(outcome)}</span>${this.renderTtCount()}`
@@ -870,7 +883,7 @@ export function createGameComponent<S, M>(
             ?disabled=${this.states.length <= 1}
             @click=${this.onUndoClick}
           >
-            Annuler le coup
+            ${gameMessage(locale, 'undo')}
           </button>
           ${
             this.transposition
@@ -881,7 +894,7 @@ export function createGameComponent<S, M>(
                     ?disabled=${this.ttSize === 0}
                     @click=${this.onClearTtClick}
                   >
-                    Vider la TT
+                    ${gameMessage(locale, 'clearTt')}
                   </button>
                   <button
                     type="button"
@@ -889,7 +902,7 @@ export function createGameComponent<S, M>(
                     ?disabled=${this.ttSize === 0}
                     @click=${this.onBrowseTtClick}
                   >
-                    Parcourir la TT
+                    ${gameMessage(locale, 'browseTt')}
                   </button>
                 `
               : nothing
@@ -907,6 +920,7 @@ export function createGameComponent<S, M>(
           }
         </div>
         <drl-game-board
+          lang=${locale}
           .view=${this.boardView()}
           .pieceStyle=${config.pieceStyle}
           .cellSize=${this.cellSize}
@@ -920,6 +934,18 @@ export function createGameComponent<S, M>(
       this.ttSvgObserver?.disconnect();
       this.ttSvgObserver = null;
       super.disconnectedCallback();
+    }
+
+    protected override onLocaleChange(): void {
+      // Les mini-plateaux de la TT sont remplis hors de Lit. On les vide pour
+      // que l'observateur les reconstruise avec le libellé de la nouvelle langue.
+      const root: ParentNode | undefined = this.renderRoot;
+      if (root === undefined) {
+        return;
+      }
+      root.querySelectorAll<HTMLTableCellElement>('.drl-tt-svg[data-entry-key]').forEach((cell) => {
+        cell.replaceChildren();
+      });
     }
 
     protected override updated(changed: PropertyValues<this>): void {
@@ -954,7 +980,7 @@ export function createGameComponent<S, M>(
             const state = this.seenStates.get(key);
             td.innerHTML =
               state === undefined
-                ? '<span class="drl-tt-svg-empty" title="État non visité par cette partie">–</span>'
+                ? `<span class="drl-tt-svg-empty" title="${gameMessage(this.locale, 'visitedStateTitle')}">–</span>`
                 : this.ttStateSvg(state);
             observer.unobserve(td);
           }
@@ -1032,64 +1058,83 @@ export function createGameComponent<S, M>(
       const page = Math.min(this.ttPage, pageCount - 1);
       const start = page * TT_BROWSER_PAGE_SIZE;
       const rows = sorted.slice(start, start + TT_BROWSER_PAGE_SIZE);
+      const locale = this.locale;
       // Note de bas de dialogue : plage affichée et total retenu (filtré).
       const note =
         sorted.length === 0
-          ? 'Aucune entrée correspondante.'
-          : `Entrées ${start + 1}–${start + rows.length} sur ${sorted.length}` +
-            (sorted.length === all.length ? '' : ` (filtrées sur ${all.length})`) +
+          ? gameMessage(locale, 'noMatchingEntries')
+          : gameMessage(locale, 'entriesRange', {
+              start: start + 1,
+              end: start + rows.length,
+              total: sorted.length,
+            }) +
+            (sorted.length === all.length
+              ? ''
+              : gameMessage(locale, 'filteredSuffix', { total: all.length })) +
             '.';
       return html`
         <dialog class="drl-tt-dialog" @close=${this.onCloseTtClick}>
           <header class="drl-tt-head">
-            <h3 class="drl-tt-title">Table de transposition</h3>
+            <h3 class="drl-tt-title">${gameMessage(locale, 'ttTitle')}</h3>
             <button
               type="button"
               class="drl-button drl-tt-close"
               @click=${this.onCloseTtClick}
             >
-              Fermer
+              ${gameMessage(locale, 'close')}
             </button>
           </header>
           <p class="drl-tt-summary">
-            ${all.length} entrée${all.length > 1 ? 's' : ''} · tour courant :
-            ${this.tt.currentTurn()} · un nœud déjà développé plus profondément
-            (profondeur certifiée stockée strictement supérieure à la profondeur
-            requise) est réutilisé, y compris depuis un tour antérieur. À
-            profondeur égale, le nœud n'est réutilisable que s'il porte le tour
-            courant, sinon il est redéveloppé ; seule exception, une feuille
-            rollout rencontrée à profondeur 0 voit sa moyenne stockée étendue de
-            nouveaux échantillons (samples). L'option probeTurns: 'previous'
-            existe pour refuser en plus les entrées du tour courant.
+            ${gameMessage(locale, 'ttSummary', {
+              count: all.length,
+              entry: this.entryWord(all.length),
+              turn: this.tt.currentTurn(),
+            })}
           </p>
           <label class="drl-tt-filter">
-            <span>Filtrer par clé</span>
+            <span>${gameMessage(locale, 'filterByKey')}</span>
             <input
               type="search"
               .value=${this.ttKeyFilter}
               @input=${this.onTtFilterInput}
-              placeholder="ex. : 001200…"
+              placeholder=${gameMessage(locale, 'filterPlaceholder')}
             />
           </label>
-          <div class="drl-tt-scroll" role="region" aria-label="Entrées de la table">
+          <div class="drl-tt-scroll" role="region" aria-label=${gameMessage(locale, 'tableEntriesAria')}>
             <table class="drl-tt-table">
               <thead>
                 <tr>
-                  <th scope="col">Position</th>
-                  <th scope="col">Clé</th>
-                  ${this.renderTtSortHeader('Score', 'score', 'Trier par score')}
+                  <th scope="col">${gameMessage(locale, 'position')}</th>
+                  <th scope="col">${gameMessage(locale, 'key')}</th>
                   ${this.renderTtSortHeader(
-                    'Profondeur eff.',
-                    'depth',
-                    'Trier par profondeur effective',
+                    gameMessage(locale, 'score'),
+                    'score',
+                    gameMessage(locale, 'sortByScore'),
                   )}
-                  ${this.renderTtSortHeader('Éch.', 'samples', 'Trier par échantillons')}
-                  ${this.renderTtSortHeader('Exact', 'exact', 'Trier par exactitude')}
-                  ${this.renderTtSortHeader('Tour', 'turn', 'Trier par tour de recherche')}
                   ${this.renderTtSortHeader(
-                    'Pièces',
+                    gameMessage(locale, 'effDepth'),
+                    'depth',
+                    gameMessage(locale, 'sortByDepth'),
+                  )}
+                  ${this.renderTtSortHeader(
+                    gameMessage(locale, 'samples'),
+                    'samples',
+                    gameMessage(locale, 'sortBySamples'),
+                  )}
+                  ${this.renderTtSortHeader(
+                    gameMessage(locale, 'exact'),
+                    'exact',
+                    gameMessage(locale, 'sortByExact'),
+                  )}
+                  ${this.renderTtSortHeader(
+                    gameMessage(locale, 'turn'),
+                    'turn',
+                    gameMessage(locale, 'sortByTurn'),
+                  )}
+                  ${this.renderTtSortHeader(
+                    gameMessage(locale, 'pieces'),
                     'pieces',
-                    'Tour intra-partie : nombre de pièces sur le plateau. Cliquer pour trier.',
+                    gameMessage(locale, 'sortByPieces'),
                   )}
                 </tr>
               </thead>
@@ -1099,10 +1144,10 @@ export function createGameComponent<S, M>(
                     <tr>
                       <td class="drl-tt-svg" data-entry-key="${row.key}"></td>
                       <td class="drl-tt-key">${row.key}</td>
-                      <td>${formatScoreValue(row.score)}</td>
+                      <td>${formatScoreValue(row.score, locale)}</td>
                       <td>${formatDepth(row.depth)}</td>
                       <td>${row.samples ?? '–'}</td>
-                      <td>${row.exact ? 'oui' : 'non'}</td>
+                      <td>${row.exact ? gameMessage(locale, 'yes') : gameMessage(locale, 'no')}</td>
                       <td>${row.turn}</td>
                       <td>${row.pieces ?? '–'}</td>
                     </tr>
@@ -1118,16 +1163,16 @@ export function createGameComponent<S, M>(
               ?disabled=${page === 0}
               @click=${this.onTtPrevPage}
             >
-              Précédent
+              ${gameMessage(locale, 'previous')}
             </button>
-            <span>Page ${page + 1} / ${pageCount}</span>
+            <span>${gameMessage(locale, 'page', { page: page + 1, count: pageCount })}</span>
             <button
               type="button"
               class="drl-button"
               ?disabled=${page >= pageCount - 1}
               @click=${this.onTtNextPage}
             >
-              Suivant
+              ${gameMessage(locale, 'next')}
             </button>
           </div>
           <p class="drl-tt-note">${note}</p>
@@ -1248,7 +1293,7 @@ export function createGameComponent<S, M>(
       }
       return html`
         <label class="drl-field">
-          <span>Actualisation (γ)</span>
+          <span>${gameMessage(this.locale, 'discount')}</span>
           <input
             class="drl-number"
             type="number"
@@ -1269,14 +1314,14 @@ export function createGameComponent<S, M>(
       return html`
         <label
           class="drl-field"
-          title="Ne coupe que sur un dépassement strict de la borne (max : > β, min : < α) et départage au hasard les coups à valeur égale. Décochez pour l'alpha-bêta classique (>= / <=, premier coup retenu à égalité)."
+          title=${gameMessage(this.locale, 'strictPruningTitle')}
         >
           <input
             type="checkbox"
             .checked=${this.strictPruning}
             @change=${this.onStrictPruningChange}
           />
-          Élagage strict
+          ${gameMessage(this.locale, 'strictPruning')}
         </label>
       `;
     }
@@ -1521,13 +1566,19 @@ export function createGameComponent<S, M>(
 
     private outcomeLabel(outcome: GameOutcome): string {
       if (outcome === 'draw' || outcome === null) {
-        return 'Partie nulle';
+        return gameMessage(this.locale, 'draw');
       }
-      return `Victoire : ${this.playerName(outcome)}`;
+      return gameMessage(this.locale, 'win', { player: this.playerName(outcome) });
     }
 
     private playerName(player: PlayerId): string {
-      return config.playerNames[player] ?? `Joueur ${player}`;
+      return this.playerNames[player] ?? gameMessage(this.locale, 'player', { number: player });
+    }
+
+    private entryWord(count: number): string {
+      // French keeps the singular for zero to match the original wording.
+      const singular = count === 1 || (this.locale === 'fr' && count === 0);
+      return gameMessage(this.locale, singular ? 'entrySingular' : 'entryPlural');
     }
 
     private renderSearchStatus(): TemplateResult | typeof nothing {
@@ -1535,11 +1586,15 @@ export function createGameComponent<S, M>(
       if (stats === null) {
         return nothing;
       }
-      const label = this.pending === null ? 'Recherche terminée' : 'Recherche en cours';
       return html`<span class="drl-search">
-        ${label} · ${stats.nodesVisited} nœuds · ${stats.nodesPruned} coupures ·
-        ${stats.ttHits} touches TT · ${stats.elapsedSteps} étapes · profondeur
-        effective : ${formatDepth(stats.effectiveDepth)}
+        ${gameMessage(this.locale, 'searchStatus', {
+          label: gameMessage(this.locale, this.pending === null ? 'searchDone' : 'searchRunning'),
+          nodes: stats.nodesVisited,
+          cutoffs: stats.nodesPruned,
+          hits: stats.ttHits,
+          steps: stats.elapsedSteps,
+          depth: formatDepth(stats.effectiveDepth),
+        })}
       </span>`;
     }
 
@@ -1548,8 +1603,9 @@ export function createGameComponent<S, M>(
         return nothing;
       }
       const count = this.ttSize;
-      const plural = count > 1 ? 's' : '';
-      return html`<span class="drl-search">TT : ${count} entrée${plural}</span>`;
+      return html`<span class="drl-search">
+        ${gameMessage(this.locale, 'ttCount', { count, entry: this.entryWord(count) })}
+      </span>`;
     }
 
     /** Série affichée uniquement en agent contre agent (aucune attente humaine). */
@@ -1562,9 +1618,15 @@ export function createGameComponent<S, M>(
       const [first, second] = this.playerNames;
       return html`<span
         class="drl-series"
-        title="Total des parties terminées de la série : victoires de chaque adversaire et parties nulles."
+        title=${gameMessage(this.locale, 'seriesTitle')}
       >
-        Série — ${first} ${wins[0]} · ${second} ${wins[1]} · Nulles ${draws}
+        ${gameMessage(this.locale, 'series', {
+          first,
+          firstWins: wins[0],
+          second,
+          secondWins: wins[1],
+          draws,
+        })}
       </span>`;
     }
 
@@ -1579,7 +1641,7 @@ export function createGameComponent<S, M>(
             .checked=${this.autoRestart}
             @change=${this.onAutoRestartChange}
           />
-          Relancer automatiquement
+          ${gameMessage(this.locale, 'autoRestart')}
         </label>
       `;
     }
@@ -1601,10 +1663,10 @@ export function createGameComponent<S, M>(
         <button
           type="button"
           class="drl-button"
-          title="Jouer exactement un coup de l'agent, recherche complète incluse"
+          title=${gameMessage(this.locale, 'stepByMoveTitle')}
           @click=${this.onStepTurnClick}
         >
-          Pas à pas par coup
+          ${gameMessage(this.locale, 'stepByMove')}
         </button>
       `;
     }
@@ -1615,7 +1677,10 @@ export function createGameComponent<S, M>(
         return nothing;
       }
       return html`<span class="drl-reject">
-        Coup non jouable (ligne ${rejected.row + 1}, colonne ${rejected.col + 1})
+        ${gameMessage(this.locale, 'illegalMove', {
+          row: rejected.row + 1,
+          col: rejected.col + 1,
+        })}
       </span>`;
     }
 
@@ -1625,7 +1690,7 @@ export function createGameComponent<S, M>(
       }
       return html`
         <label class="drl-field">
-          <span>Échantillons de rollout</span>
+          <span>${gameMessage(this.locale, 'rolloutSamples')}</span>
           <input
             class="drl-number"
             type="number"
@@ -1648,8 +1713,10 @@ export function createGameComponent<S, M>(
 
 export const TIC_TAC_TOE_GAME_CONFIG: GameComponentConfig<TicTacToeState, TicTacToeMove> = {
   game: ticTacToe,
-  title: 'Morpion',
-  playerNames: ['Croix', 'Cercles'],
+  title: gameMessage('fr', 'ticTacToeTitle'),
+  titleKey: 'ticTacToeTitle',
+  playerNames: [gameMessage('fr', 'crosses'), gameMessage('fr', 'circles')],
+  playerNameKeys: ['crosses', 'circles'],
   defaultDepth: 6,
   defaultCellSize: 72,
   pieceStyle: 'marks',
@@ -1672,8 +1739,10 @@ export const TIC_TAC_TOE_GAME_CONFIG: GameComponentConfig<TicTacToeState, TicTac
 
 export const CONNECT4_GAME_CONFIG: GameComponentConfig<Connect4State, Connect4Move> = {
   game: connect4,
-  title: 'Puissance 4',
-  playerNames: ['Bleus', 'Rouges'],
+  title: gameMessage('fr', 'connect4Title'),
+  titleKey: 'connect4Title',
+  playerNames: [gameMessage('fr', 'blues'), gameMessage('fr', 'reds')],
+  playerNameKeys: ['blues', 'reds'],
   defaultDepth: 4,
   defaultCellSize: 48,
   pieceStyle: 'discs',

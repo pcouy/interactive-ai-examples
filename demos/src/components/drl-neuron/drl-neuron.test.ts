@@ -1441,3 +1441,114 @@ describe('Neuron prediction background', () => {
     expect(element.showPrediction).toBe(false);
   });
 });
+
+describe('Neuron locale', () => {
+  beforeEach(() => {
+    vi.stubGlobal('requestAnimationFrame', () => 0);
+    vi.stubGlobal('cancelAnimationFrame', () => {});
+  });
+
+  afterEach(() => {
+    vi.unstubAllGlobals();
+    vi.restoreAllMocks();
+  });
+
+  function headerText(element: Neuron): string {
+    return renderTemplateTextFlat(
+      (element as unknown as { renderHeader(): unknown }).renderHeader(),
+    );
+  }
+
+  function contentText(element: Neuron): string {
+    return renderTemplateTextFlat(
+      (element as unknown as { renderContent(): unknown }).renderContent(),
+    );
+  }
+
+  function statusLine(element: Neuron): string {
+    return (element as unknown as { statusLine(): string }).statusLine();
+  }
+
+  it('renders the French header, SVG labels, and aria labels by default', () => {
+    const element = createNeuron();
+    const header = headerText(element);
+    const content = contentText(element);
+
+    expect(header).toContain('Prêt — lancez la descente ou avancez pas à pas');
+    expect(header).toContain('Loss (moyenne)');
+    expect(header).toContain('Itérations');
+    expect(header).toContain('Cochez « Biais » pour éditer b.');
+    expect(content).toContain("Nuage d'exemples et grille de prédictions du neurone");
+    expect(content).toContain('Surface de loss 3D et descente de la bille par batch');
+    expect(content).toContain('t max');
+  });
+
+  it('renders the English header, SVG labels, and aria labels', () => {
+    const element = createNeuron();
+    element.locale = 'en';
+    const header = headerText(element);
+    const content = contentText(element);
+
+    expect(header).toContain('Ready — start the descent or step forward');
+    expect(header).toContain('Weight w₁');
+    expect(header).toContain('Weight w₂');
+    expect(header).toContain('Bias b — check “Bias” to edit it');
+    expect(header).toContain('Check “Bias” to edit b.');
+    expect(header).toContain('Loss (mean)');
+    expect(header).toContain('Iterations');
+    expect(content).toContain('Example cloud and neuron prediction grid');
+    expect(content).toContain('3D loss surface and batch gradient descent ball');
+  });
+
+  it('formats the example line with the locale decimal separator', () => {
+    const element = createNeuron();
+    const internals = element as unknown as {
+      phase: string;
+      exampleNumber: number;
+      currentExample: { x1: number; x2: number; t: number } | null;
+    };
+    internals.phase = 'present';
+    internals.exampleNumber = 2;
+    internals.currentExample = { x1: 1.5, x2: -0.25, t: 0.75 };
+
+    expect(statusLine(element)).toContain('(1,50 ; -0,25) → t = 0,75');
+    expect(statusLine(element)).toContain('Exemple 2/');
+
+    element.locale = 'en';
+    expect(statusLine(element)).toContain('(1.50, -0.25) → t = 0.75');
+    expect(statusLine(element)).toContain('Example 2/');
+  });
+
+  it('localizes the invalid-expression event text', () => {
+    const element = createNeuron();
+    installScene(element, fakeScene());
+    const details: Array<string | null> = [];
+    element.addEventListener('drl-target-error', (event) => {
+      details.push((event as CustomEvent<string | null>).detail);
+    });
+    element.locale = 'en';
+
+    element.expression = 'x1 +';
+    element.regenerateDataset();
+
+    expect(details.at(-1)).toBe('Invalid expression: “x1 +” — “x1 + x2” used by default.');
+  });
+
+  it('runs onLocaleChange through the inherited updated hook', () => {
+    const element = createNeuron();
+    const draw = vi
+      .spyOn(element as unknown as { draw(): void }, 'draw')
+      .mockImplementation(() => {});
+    const onLocaleChange = vi.spyOn(
+      element as unknown as { onLocaleChange(): void },
+      'onLocaleChange',
+    );
+
+    (element as unknown as { updated(changed: Map<string, unknown>): void }).updated(
+      new Map([['locale', 'en']]),
+    );
+
+    expect(onLocaleChange).toHaveBeenCalledOnce();
+    expect(draw).toHaveBeenCalled();
+  });
+});

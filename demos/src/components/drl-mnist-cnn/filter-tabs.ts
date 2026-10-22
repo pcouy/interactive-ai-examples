@@ -8,6 +8,9 @@
  * valeurs.
  */
 
+import type { Locale } from '../../i18n/locale.js';
+import { filterTabsMessage } from './messages.js';
+
 /** Onglets du panneau latéral. */
 export type FilterTab = 'filters' | 'examples';
 
@@ -25,8 +28,8 @@ export function filterTabPanelId(tab: FilterTab): string {
 }
 
 /** Libellé visible de l'onglet. */
-export function filterTabLabel(tab: FilterTab): string {
-  return tab === 'filters' ? 'Filtres de convolution' : 'Exemples';
+export function filterTabLabel(tab: FilterTab, locale: Locale = 'fr'): string {
+  return filterTabsMessage(locale, tab);
 }
 
 /**

@@ -12,6 +12,7 @@ import {
   formatScore,
   keepFirstPruned,
   NO_CUT_LABEL,
+  noCutLabel,
 } from './display.js';
 
 interface FakeState {
@@ -200,6 +201,39 @@ describe('cutDescription', () => {
     // Une chaîne vide n'est pas un coup absent : c'est un coup non représentable.
     expect(cutDescription(cut(), '')).toBe(
       'meilleur +0,50 > β +0,20 · déclenché par le coup coup inconnu',
+    );
+  });
+});
+
+describe('English formatting', () => {
+  it('uses a decimal point for numbers and scores', () => {
+    expect(formatNumber(0.5, 'en')).toBe('0.50');
+    expect(formatScore(0.5, 'en')).toBe('+0.50');
+    expect(formatScore(-0.25, 'en')).toBe('-0.25');
+    expect(formatBound(0.5, 'en')).toBe('+0.50');
+  });
+
+  it('keeps the infinity glyphs in English', () => {
+    expect(formatBound(Number.NEGATIVE_INFINITY, 'en')).toBe('−∞');
+    expect(formatBound(Number.POSITIVE_INFINITY, 'en')).toBe('+∞');
+  });
+});
+
+describe('English bounds labels', () => {
+  it('translates the neutral uncut label', () => {
+    expect(noCutLabel('en')).toBe('Node expansion');
+    expect(noCutLabel()).toBe('Développement du nœud');
+  });
+
+  it('translates the cut description', () => {
+    expect(cutDescription(cut({ triggerKey: 'a' }), 4, 'en')).toBe(
+      'best +0.50 > β +0.20 · triggered by move 4',
+    );
+    expect(cutDescription(cut({ strict: false }), null, 'en')).toBe(
+      'best +0.50 ≥ β +0.20 · without a triggering move',
+    );
+    expect(cutDescription(cut(), '', 'en')).toBe(
+      'best +0.50 > β +0.20 · triggered by move unknown move',
     );
   });
 });

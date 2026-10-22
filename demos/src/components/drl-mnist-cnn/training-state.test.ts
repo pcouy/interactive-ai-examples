@@ -43,6 +43,15 @@ describe('trainingStateBadge', () => {
     expect(trainingStateBadge('trained')).toBe('Entraîné');
     expect(trainingStateBadge('random')).toBe('Poids aléatoires');
   });
+
+  it('maps every state to its English badge', () => {
+    expect(trainingStateBadge('deterministic', 'en')).toBe('Deterministic weights');
+    expect(trainingStateBadge('pretrained', 'en')).toBe('Pre-trained');
+    expect(trainingStateBadge('training', 'en')).toBe('Training');
+    expect(trainingStateBadge('paused', 'en')).toBe('Paused');
+    expect(trainingStateBadge('trained', 'en')).toBe('Trained');
+    expect(trainingStateBadge('random', 'en')).toBe('Random weights');
+  });
 });
 
 describe('initialTrainingState', () => {

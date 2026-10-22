@@ -1254,6 +1254,107 @@ describe('GameComponent onPlay', () => {
   });
 });
 
+describe('GameComponent localization', () => {
+  function renderContent(element: TicTacToeElement): string {
+    const internals = element as unknown as { renderContent(): unknown };
+    return renderTemplateTextFlat(internals.renderContent());
+  }
+
+  it('localizes the title, player names and turn line', () => {
+    const element = createTicTacToeElement();
+    expect(element.title).toBe('Morpion');
+    expect(element.playerNames).toEqual(['Croix', 'Cercles']);
+    expect(renderContent(element)).toContain('Au trait : Croix');
+
+    element.locale = 'en';
+    expect(element.title).toBe('Tic-tac-toe');
+    expect(element.playerNames).toEqual(['Crosses', 'Circles']);
+    const text = renderContent(element);
+    expect(text).toContain('To move: Crosses');
+    expect(text).toContain('Undo move');
+    expect(text).toContain('Tic-tac-toe');
+    expect(text).not.toContain('Morpion');
+    expect(text).not.toContain('Annuler le coup');
+  });
+
+  it('passes the locale to the game board', () => {
+    const element = createTicTacToeElement();
+    expect(renderContent(element)).toContain('lang=fr');
+
+    element.locale = 'en';
+    expect(renderContent(element)).toContain('lang=en');
+  });
+
+  it('localizes outcome labels and the player fallback', () => {
+    const element = createTicTacToeElement();
+    const internals = element as unknown as {
+      outcomeLabel(outcome: 'draw' | 0 | 1): string;
+      playerName(player: number): string;
+    };
+    expect(internals.outcomeLabel('draw')).toBe('Partie nulle');
+    expect(internals.outcomeLabel(0)).toBe('Victoire : Croix');
+    expect(internals.playerName(2)).toBe('Joueur 2');
+
+    element.locale = 'en';
+    expect(internals.outcomeLabel('draw')).toBe('Draw');
+    expect(internals.outcomeLabel(0)).toBe('Win: Crosses');
+    expect(internals.playerName(2)).toBe('Player 2');
+  });
+
+  it('localizes the search fields', () => {
+    const element = createTicTacToeElement();
+    element.evaluator = 'rollout';
+    expect(renderContent(element)).toContain('Échantillons de rollout');
+
+    element.locale = 'en';
+    const text = renderContent(element);
+    expect(text).toContain('Rollout samples');
+    expect(text).toContain('Discount (γ)');
+    expect(text).toContain('Strict pruning');
+    expect(text).toContain('Cuts only on a strict bound overrun');
+    expect(text).not.toContain('Échantillons de rollout');
+    expect(text).not.toContain('Actualisation');
+  });
+
+  it('localizes the transposition table dialog', () => {
+    const element = createTicTacToeElement();
+    element.transposition = true;
+    expect(renderContent(element)).toContain('Table de transposition');
+
+    element.locale = 'en';
+    const text = renderContent(element);
+    expect(text).toContain('Clear the TT');
+    expect(text).toContain('Browse the TT');
+    expect(text).toContain('Transposition table');
+    expect(text).toContain('Close');
+    expect(text).toContain('Filter by key');
+    expect(text).toContain('Table entries');
+    expect(text).toContain('Position');
+    expect(text).toContain('Key');
+    expect(text).toContain('Score');
+    expect(text).toContain('Eff. depth');
+    expect(text).toContain('Samples');
+    expect(text).toContain('Exact');
+    expect(text).toContain('Turn');
+    expect(text).toContain('Pieces');
+    expect(text).toContain('Previous');
+    expect(text).toContain('Page 1 / 1');
+    expect(text).toContain('Next');
+    expect(text).toContain('No matching entries.');
+    expect(text).not.toContain('Table de transposition');
+    expect(text).not.toContain('Fermer');
+  });
+
+  it('localizes the series line', () => {
+    const element = createTicTacToeElement();
+    element.players = '["agent","agent"]';
+    expect(renderContent(element)).toContain('Série — Croix 0 · Cercles 0 · Nulles 0');
+
+    element.locale = 'en';
+    expect(renderContent(element)).toContain('Series — Crosses 0 · Circles 0 · Draws 0');
+  });
+});
+
 describe('GameComponent showSearchFields', () => {
   it('shows the search fields by default with the rollout evaluator', () => {
     const element = createTicTacToeElement();

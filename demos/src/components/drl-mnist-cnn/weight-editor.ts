@@ -14,6 +14,8 @@ import {
   type MnistCnnWeights,
   withKernelWeight,
 } from '../../core/mnist-cnn.js';
+import type { Locale } from '../../i18n/locale.js';
+import { weightEditorMessage } from './messages.js';
 import {
   describeWeightSelection,
   parseWeightInput,
@@ -81,11 +83,12 @@ export function weightEditorView(
   selection: WeightSelection,
   weights: MnistCnnWeights,
   config: MnistCnnConfig,
+  locale: Locale = 'fr',
 ): WeightEditorView | null {
   if (selection === null || selection.kind !== 'weight') {
     return null;
   }
-  const label = describeWeightSelection(selection, config);
+  const label = describeWeightSelection(selection, config, locale);
   if (label === null) {
     return null;
   }
@@ -114,27 +117,25 @@ export function applyWeightDraft(
   selection: WeightSelection,
   weights: MnistCnnWeights,
   config: MnistCnnConfig,
+  locale: Locale = 'fr',
 ): WeightApplyResult {
   if (selection === null || selection.kind !== 'weight') {
-    return { kind: 'error', message: "La sélection courante n'est pas un poids." };
+    return { kind: 'error', message: weightEditorMessage(locale, 'notWeight') };
   }
-  if (describeWeightSelection(selection, config) === null) {
-    return { kind: 'error', message: "Ce poids n'existe pas dans l'architecture courante." };
+  if (describeWeightSelection(selection, config, locale) === null) {
+    return { kind: 'error', message: weightEditorMessage(locale, 'missingWeight') };
   }
   const text = draft.trim();
   if (text === '') {
-    return { kind: 'error', message: 'Saisissez une valeur.' };
+    return { kind: 'error', message: weightEditorMessage(locale, 'empty') };
   }
   const value = parseWeightInput(text);
   if (value === null) {
     const numeric = Number(text.replace(',', '.'));
     if (!Number.isFinite(numeric) && !Number.isNaN(numeric)) {
-      return { kind: 'error', message: 'Valeur non finie : le nombre dépasse les limites.' };
+      return { kind: 'error', message: weightEditorMessage(locale, 'nonFinite') };
     }
-    return {
-      kind: 'error',
-      message: 'Nombre illisible : utilisez un décimal, par exemple 0,5.',
-    };
+    return { kind: 'error', message: weightEditorMessage(locale, 'unreadable') };
   }
   try {
     const applied = withKernelWeight(
@@ -149,14 +150,11 @@ export function applyWeightDraft(
     );
     return { kind: 'applied', weights: applied, value };
   } catch {
-    return {
-      kind: 'error',
-      message: "Les poids affichés ne correspondent pas à l'architecture courante.",
-    };
+    return { kind: 'error', message: weightEditorMessage(locale, 'weightsMismatch') };
   }
 }
 
-/** Une phrase française qui décrit le geste de l'éditeur de poids. */
-export function weightEditorHint(): string {
-  return 'Cliquez une liaison, puis une case de la toile de filtre en aval, puis saisissez la valeur.';
+/** Une phrase qui décrit le geste de l'éditeur de poids. */
+export function weightEditorHint(locale: Locale = 'fr'): string {
+  return weightEditorMessage(locale, 'hint');
 }

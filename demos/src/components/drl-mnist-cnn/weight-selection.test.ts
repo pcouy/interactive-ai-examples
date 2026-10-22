@@ -428,6 +428,30 @@ describe('describeWeightSelection', () => {
     ).toBe('conv2 — entrée 1, sortie 3, position (2, 2)');
   });
 
+  it('labels a link and a weight selection in English', () => {
+    expect(
+      describeWeightSelection(
+        { kind: 'link', boundary: 1, inputChannel: 0, outputChannel: 2 },
+        CONFIG,
+        'en',
+      ),
+    ).toBe('conv2 — input 1, output 3');
+    expect(
+      describeWeightSelection(
+        {
+          kind: 'weight',
+          boundary: 1,
+          inputChannel: 0,
+          outputChannel: 2,
+          ky: 1,
+          kx: 1,
+        },
+        CONFIG,
+        'en',
+      ),
+    ).toBe('conv2 — input 1, output 3, position (2, 2)');
+  });
+
   it('returns null without a selection or outside the active layer count', () => {
     expect(describeWeightSelection(null, CONFIG)).toBeNull();
     expect(

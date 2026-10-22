@@ -32,6 +32,11 @@ describe('filterTabLabel', () => {
     expect(filterTabLabel('filters')).toBe('Filtres de convolution');
     expect(filterTabLabel('examples')).toBe('Exemples');
   });
+
+  it('returns the English label per tab', () => {
+    expect(filterTabLabel('filters', 'en')).toBe('Convolution filters');
+    expect(filterTabLabel('examples', 'en')).toBe('Examples');
+  });
 });
 
 describe('nextFilterTab', () => {

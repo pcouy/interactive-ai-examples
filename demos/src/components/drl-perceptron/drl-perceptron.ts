@@ -6,7 +6,9 @@ import { customElement, property } from 'lit/decorators.js';
 import { DemoElement } from '../../base/demo-element.js';
 import type { DatasetName, LabeledPoint } from '../../core/perceptron.js';
 import { PerceptronCore, PRESET_DATASETS } from '../../core/perceptron.js';
+import type { Locale } from '../../i18n/locale.js';
 import { drlTokens } from '../../styles/tokens.js';
+import { perceptronMessage } from './messages.js';
 
 const PLANE_X = 40;
 const PLANE_Y = 10;
@@ -14,7 +16,6 @@ const PLANE_SIZE = 340;
 const PLANE_RIGHT = PLANE_X + PLANE_SIZE;
 const PLANE_BOTTOM = PLANE_Y + PLANE_SIZE;
 const EPSILON = 1e-6;
-const MISSING_VALUE = '–';
 
 type Point = [number, number];
 
@@ -82,16 +83,19 @@ function dataY(y: number): number {
   return PLANE_BOTTOM - y * PLANE_SIZE;
 }
 
-function formatNumber(value: number): string {
-  return value.toFixed(2).replace('.', ',');
+function formatNumber(value: number, locale: Locale = 'fr'): string {
+  const fixed = value.toFixed(2);
+  return locale === 'fr' ? fixed.replace('.', ',') : fixed;
 }
 
-function formatCoord(value: number | undefined): string {
-  return value === undefined ? MISSING_VALUE : formatNumber(value);
+function formatCoord(value: number | undefined, locale: Locale = 'fr'): string {
+  return value === undefined
+    ? perceptronMessage(locale, 'missingValue')
+    : formatNumber(value, locale);
 }
 
-function classLabel(label: 0 | 1): string {
-  return label === 1 ? 'classe bleue' : 'classe rouge';
+function classLabel(label: 0 | 1, locale: Locale = 'fr'): string {
+  return perceptronMessage(locale, label === 1 ? 'classBlue' : 'classRed');
 }
 
 function weightWidth(weight: number): number {
@@ -684,20 +688,26 @@ export class Perceptron extends DemoElement {
       return;
     }
 
+    const locale = this.locale;
     if (this.explanationHeadline) {
-      this.explanationHeadline.textContent =
-        pending !== null ? 'Prédiction erronée' : 'Règle de mise à jour appliquée';
+      this.explanationHeadline.textContent = perceptronMessage(
+        locale,
+        pending !== null ? 'headlineWrong' : 'headlineUpdate',
+      );
     }
     if (this.explanationDetail) {
-      this.explanationDetail.textContent =
-        `ŷ = ${prediction} (${classLabel(prediction)}) · ` +
-        `attendu t = ${expected} (${classLabel(expected)}).`;
+      this.explanationDetail.textContent = perceptronMessage(locale, 'detail', {
+        prediction,
+        className: classLabel(prediction, locale),
+        expected,
+        expectedClass: classLabel(expected, locale),
+      });
     }
     if (this.explanationHint) {
-      this.explanationHint.textContent =
-        pending !== null
-          ? 'Step : afficher la règle de mise à jour.'
-          : 'Step : présenter le point suivant.';
+      this.explanationHint.textContent = perceptronMessage(
+        locale,
+        pending !== null ? 'hintShowRule' : 'hintNextPoint',
+      );
     }
     if (this.explanationRule) {
       this.explanationRule.hidden = update === null;
@@ -706,28 +716,45 @@ export class Perceptron extends DemoElement {
       return;
     }
 
-    const rate = formatNumber(update.learningRate);
+    const rate = formatNumber(update.learningRate, locale);
     const error = `(${update.expected} − ${update.prediction})`;
-    const x1 = formatNumber(update.point.x);
-    const x2 = formatNumber(update.point.y);
+    const x1 = formatNumber(update.point.x, locale);
+    const x2 = formatNumber(update.point.y, locale);
     if (this.ruleW1) {
-      this.ruleW1.textContent =
-        `w₁ ← w₁ + η·(t − ŷ)·x₁ = ${formatNumber(update.before.w1)} + ` +
-        `${rate}·${error}·${x1} = ${formatNumber(update.after.w1)}`;
+      this.ruleW1.textContent = perceptronMessage(locale, 'ruleW1', {
+        before: formatNumber(update.before.w1, locale),
+        rate,
+        error,
+        x1,
+        after: formatNumber(update.after.w1, locale),
+      });
     }
     if (this.ruleW2) {
-      this.ruleW2.textContent =
-        `w₂ ← w₂ + η·(t − ŷ)·x₂ = ${formatNumber(update.before.w2)} + ` +
-        `${rate}·${error}·${x2} = ${formatNumber(update.after.w2)}`;
+      this.ruleW2.textContent = perceptronMessage(locale, 'ruleW2', {
+        before: formatNumber(update.before.w2, locale),
+        rate,
+        error,
+        x2,
+        after: formatNumber(update.after.w2, locale),
+      });
     }
     if (this.ruleBias) {
-      this.ruleBias.textContent =
-        `b ← b + η·(t − ŷ) = ${formatNumber(update.before.bias)} + ` +
-        `${rate}·${error} = ${formatNumber(update.after.bias)}`;
+      this.ruleBias.textContent = perceptronMessage(locale, 'ruleBias', {
+        before: formatNumber(update.before.bias, locale),
+        rate,
+        error,
+        after: formatNumber(update.after.bias, locale),
+      });
     }
   }
 
+  protected override onLocaleChange(): void {
+    this.draw();
+    this.requestUpdate();
+  }
+
   private draw(): void {
+    const locale = this.locale;
     const boundary = this.boundary;
     const pointsGroup = this.pointsGroup;
     const halo = this.halo;
@@ -789,8 +816,8 @@ export class Perceptron extends DemoElement {
       halo.attr('visibility', 'hidden');
     }
 
-    this.inputValueOne?.text(formatCoord(current?.x));
-    this.inputValueTwo?.text(formatCoord(current?.y));
+    this.inputValueOne?.text(formatCoord(current?.x, locale));
+    this.inputValueTwo?.text(formatCoord(current?.y, locale));
 
     const outputFill =
       current === null
@@ -804,19 +831,27 @@ export class Perceptron extends DemoElement {
     this.arrowTwo?.attr('stroke-width', weightWidth(w2)).attr('stroke', weightColor(w2));
     this.headOne?.attr('fill', weightColor(w1));
     this.headTwo?.attr('fill', weightColor(w2));
-    this.weightOne?.text(`w₁ = ${formatNumber(w1)}`);
-    this.weightTwo?.text(`w₂ = ${formatNumber(w2)}`);
-    this.biasLabel?.text(`b = ${formatNumber(bias)}`);
+    this.weightOne?.text(
+      perceptronMessage(locale, 'weightW1', { value: formatNumber(w1, locale) }),
+    );
+    this.weightTwo?.text(
+      perceptronMessage(locale, 'weightW2', { value: formatNumber(w2, locale) }),
+    );
+    this.biasLabel?.text(
+      perceptronMessage(locale, 'biasValue', { value: formatNumber(bias, locale) }),
+    );
 
     if (this.statusText) {
-      this.statusText.textContent =
-        `Époque ${this.core.epochs} · Précision ${Math.round(this.core.accuracy * 100)} %` +
-        ` · ${this.core.ticksElapsed} présentations`;
+      this.statusText.textContent = perceptronMessage(locale, 'status', {
+        epoch: this.core.epochs,
+        accuracy: Math.round(this.core.accuracy * 100),
+        presentations: this.core.ticksElapsed,
+      });
     }
     if (this.statusBadge) {
       const converged = this.core.isConverged;
       this.statusBadge.textContent = converged
-        ? `Convergé en ${this.core.stepsToConvergence} étapes`
+        ? perceptronMessage(locale, 'converged', { steps: this.core.stepsToConvergence ?? 0 })
         : '';
       this.statusBadge.style.display = converged ? 'inline-block' : 'none';
     }
@@ -826,12 +861,17 @@ export class Perceptron extends DemoElement {
   }
 
   protected override renderContent(): TemplateResult {
+    const locale = this.locale;
     return html`
       <div class="drl-status">
         <span class="drl-status-text"></span>
         <span class="drl-badge"></span>
       </div>
-      <div class="drl-toolbar" role="group" aria-label="Contrôles du perceptron">
+      <div
+        class="drl-toolbar"
+        role="group"
+        aria-label=${perceptronMessage(locale, 'ariaControls')}
+      >
         <button
           type="button"
           class="drl-button"
@@ -839,7 +879,7 @@ export class Perceptron extends DemoElement {
           aria-pressed=${this.datasetName === 'separable' ? 'true' : 'false'}
           @click=${this.handlePresetClick}
         >
-          Séparables
+          ${perceptronMessage(locale, 'presetSeparable')}
         </button>
         <button
           type="button"
@@ -848,7 +888,7 @@ export class Perceptron extends DemoElement {
           aria-pressed=${this.datasetName === 'noisy' ? 'true' : 'false'}
           @click=${this.handlePresetClick}
         >
-          Bruités
+          ${perceptronMessage(locale, 'presetNoisy')}
         </button>
         <button
           type="button"
@@ -857,7 +897,7 @@ export class Perceptron extends DemoElement {
           aria-pressed=${this.datasetName === 'non-separable' ? 'true' : 'false'}
           @click=${this.handlePresetClick}
         >
-          Non séparables
+          ${perceptronMessage(locale, 'presetNonSeparable')}
         </button>
         <button
           type="button"
@@ -866,7 +906,8 @@ export class Perceptron extends DemoElement {
           aria-pressed=${this.activeClass === 1 ? 'true' : 'false'}
           @click=${this.handleClassClick}
         >
-          <span class="drl-dot drl-dot--1" aria-hidden="true"></span>Classe bleue
+          <span class="drl-dot drl-dot--1" aria-hidden="true"></span>
+          ${perceptronMessage(locale, 'classBlueButton')}
         </button>
         <button
           type="button"
@@ -875,15 +916,18 @@ export class Perceptron extends DemoElement {
           aria-pressed=${this.activeClass === 0 ? 'true' : 'false'}
           @click=${this.handleClassClick}
         >
-          <span class="drl-dot drl-dot--0" aria-hidden="true"></span>Classe rouge
+          <span class="drl-dot drl-dot--0" aria-hidden="true"></span>
+          ${perceptronMessage(locale, 'classRedButton')}
         </button>
-        <button type="button" class="drl-button" @click=${this.handleClear}>Effacer</button>
+        <button type="button" class="drl-button" @click=${this.handleClear}>
+          ${perceptronMessage(locale, 'clear')}
+        </button>
       </div>
       <div class="drl-explanation" role="status" aria-live="polite" hidden>
         <p class="drl-explanation-headline"></p>
         <p class="drl-explanation-detail"></p>
         <div class="drl-rule" hidden>
-          <p class="drl-rule-title">Règle de mise à jour</p>
+          <p class="drl-rule-title">${perceptronMessage(locale, 'ruleTitle')}</p>
           <p class="drl-rule-line drl-rule-line--w1"></p>
           <p class="drl-rule-line drl-rule-line--w2"></p>
           <p class="drl-rule-line drl-rule-line--b"></p>
@@ -893,7 +937,7 @@ export class Perceptron extends DemoElement {
       <svg
         viewBox="0 0 640 360"
         role="img"
-        aria-label="Plan de points et frontière de décision du perceptron"
+        aria-label=${perceptronMessage(locale, 'svgAria')}
         @pointerdown=${this.handlePointerDown}
       >
         <defs>
@@ -955,7 +999,9 @@ export class Perceptron extends DemoElement {
           fill="var(--drl-surface)"
           stroke="var(--drl-border)"
         ></circle>
-        <text class="drl-neuron-label" x="432" y="115" text-anchor="middle">x₁</text>
+        <text class="drl-neuron-label" x="432" y="115" text-anchor="middle">
+          ${perceptronMessage(locale, 'labelX1')}
+        </text>
         <text
           class="drl-secondary drl-input-value drl-input-value--1"
           x="432"
@@ -970,7 +1016,9 @@ export class Perceptron extends DemoElement {
           fill="var(--drl-surface)"
           stroke="var(--drl-border)"
         ></circle>
-        <text class="drl-neuron-label" x="432" y="215" text-anchor="middle">x₂</text>
+        <text class="drl-neuron-label" x="432" y="215" text-anchor="middle">
+          ${perceptronMessage(locale, 'labelX2')}
+        </text>
         <text
           class="drl-secondary drl-input-value drl-input-value--2"
           x="432"
@@ -1007,8 +1055,12 @@ export class Perceptron extends DemoElement {
           fill="var(--drl-surface)"
           stroke="var(--drl-border)"
         ></circle>
-        <text class="drl-neuron-label" x="525" y="166" text-anchor="middle">Σ</text>
-        <text class="drl-secondary" x="525" y="212" text-anchor="middle">seuil</text>
+        <text class="drl-neuron-label" x="525" y="166" text-anchor="middle">
+          ${perceptronMessage(locale, 'labelSum')}
+        </text>
+        <text class="drl-secondary" x="525" y="212" text-anchor="middle">
+          ${perceptronMessage(locale, 'labelThreshold')}
+        </text>
         <line
           class="drl-arrow drl-bias-arrow"
           x1="525"
@@ -1028,7 +1080,9 @@ export class Perceptron extends DemoElement {
           fill="var(--drl-surface)"
           stroke="var(--drl-border)"
         ></circle>
-        <text class="drl-neuron-label" x="612" y="165" text-anchor="middle">ŷ</text>
+        <text class="drl-neuron-label" x="612" y="165" text-anchor="middle">
+          ${perceptronMessage(locale, 'labelOutput')}
+        </text>
       </svg>
     `;
   }

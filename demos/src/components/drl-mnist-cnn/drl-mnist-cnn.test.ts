@@ -1,3 +1,4 @@
+import { readFileSync } from 'node:fs';
 import { describe, expect, it, vi } from 'vitest';
 import { getDataset } from '../../core/dataset-registry.js';
 import type {
@@ -36,6 +37,7 @@ import {
   filterKernelSlice,
   filterKernelValues,
   filterLinkGeometry,
+  filterPanelSubtitle,
   filterViewMode,
   galleryClassLabel,
   galleryInputHint,
@@ -47,6 +49,7 @@ import {
   linkGroupIndices,
   linkLineState,
   loadSplitsForDataset,
+  MnistCnn,
   mapCanvasSize,
   mapCellSize,
   mixRgb,
@@ -393,6 +396,18 @@ describe('galleryClassLabel', () => {
 
   it('falls back to the index when the class has no name', () => {
     expect(galleryClassLabel(getDataset('mnist'), 10)).toBe('10');
+  });
+
+  it('uses the English class names under the English locale', () => {
+    expect(galleryClassLabel(getDataset('fashion-mnist'), 1, 'fr')).toContain('Pantalon');
+    expect(galleryClassLabel(getDataset('fashion-mnist'), 1, 'en')).toContain('Trouser');
+    expect(galleryClassLabel(getDataset('quickdraw'), 4, 'fr')).toContain('gâteau');
+    expect(galleryClassLabel(getDataset('quickdraw'), 4, 'en')).toContain('cake');
+  });
+
+  it('keeps the registry class names when a dataset has no English names', () => {
+    const { classNamesEn: _englishNames, ...withoutEnglishNames } = getDataset('fashion-mnist');
+    expect(galleryClassLabel(withoutEnglishNames, 1, 'en')).toBe('1 — Pantalon');
   });
 });
 
@@ -1411,5 +1426,133 @@ describe('stepGalleryIndex', () => {
 
   it('clamps a negative index to the first example', () => {
     expect(stepGalleryIndex(-1, 10, 1)).toBe(0);
+  });
+});
+
+/** Flattens a Lit template into text, including nested templates and values. */
+function templateText(value: unknown): string {
+  if (typeof value === 'string') {
+    return value;
+  }
+  if (typeof value === 'number') {
+    return String(value);
+  }
+  if (Array.isArray(value)) {
+    return value.map(templateText).join('');
+  }
+  if (typeof value === 'object' && value !== null && 'strings' in value && 'values' in value) {
+    const { strings, values } = value as {
+      strings: readonly string[];
+      values: readonly unknown[];
+    };
+    let text = '';
+    for (let index = 0; index < strings.length; index += 1) {
+      text += strings[index];
+      if (index < values.length) {
+        text += templateText(values[index]);
+      }
+    }
+    return text;
+  }
+  return '';
+}
+
+/** Renders the component with the minimal document its canvases need. */
+function renderMnistCnnText(locale: 'fr' | 'en'): string {
+  const globalWithDocument = globalThis as { document?: unknown };
+  const originalDocument = globalWithDocument.document;
+  globalWithDocument.document = {
+    createElement: () => ({ width: 0, height: 0, getContext: () => null }),
+  };
+  try {
+    const element = new MnistCnn();
+    const frame = element as unknown as {
+      performUpdate(): void;
+      render(): unknown;
+    };
+    frame.performUpdate = () => {};
+    element.locale = locale;
+    return templateText(frame.render());
+  } finally {
+    globalWithDocument.document = originalDocument;
+  }
+}
+
+describe('English rendering', () => {
+  it('renders the component labels in English', () => {
+    const text = renderMnistCnnText('en');
+    expect(text).toContain('Drawing 28×28');
+    expect(text).toContain('Training loss');
+    expect(text).toContain('Accuracy (training and validation)');
+    expect(text).toContain('Filters per layer');
+    expect(text).toContain('Convolution filters');
+    expect(text).toContain('Probabilities per class');
+    expect(text).toContain('Next →');
+    expect(text).toContain('Clear');
+    expect(text).not.toContain('Dessin');
+    expect(text).not.toContain('Entraînement');
+    expect(text).not.toContain('Paramètres');
+    expect(text).not.toContain('Résultats');
+    expect(text).not.toContain('Filtres par couche');
+    expect(text).not.toContain('Précédent');
+    expect(text).not.toContain('Effacer');
+  });
+
+  it('passes the locale to every slider', () => {
+    for (const locale of ['en', 'fr'] as const) {
+      const text = renderMnistCnnText(locale);
+      const sliderCount = text.match(/<drl-slider/g)?.length ?? 0;
+      const langCount = text.match(new RegExp(`lang=${locale}`, 'g'))?.length ?? 0;
+      expect(sliderCount).toBeGreaterThan(0);
+      expect(langCount).toBe(sliderCount);
+    }
+  });
+
+  it('passes the locale to every slider in the component source', () => {
+    const source = readFileSync(new URL('./drl-mnist-cnn.ts', import.meta.url), 'utf8');
+    const tags = source.match(/<drl-slider[\s\S]*?>/g) ?? [];
+    // Les deux modèles dans `repeat()` ne sont pas rendus dans ce test : la
+    // source couvre les huit balises, y compris celles des listes répétées.
+    expect(tags.length).toBeGreaterThanOrEqual(8);
+    for (const tag of tags) {
+      expect(tag).toMatch(/lang=\$\{this\.locale\}/);
+    }
+  });
+});
+
+describe('English labels', () => {
+  const filters = [3, 3, 3, 3] as MnistCnnFilters;
+
+  it('localizes the filter, dense and output labels', () => {
+    expect(filterPanelSubtitle(null, 'en')).toBe(
+      'Mean of the input channels for each output channel; blue = positive, red = negative.',
+    );
+    expect(filterBiasCaption(0, 0.1254, 'en')).toBe('output 1 · b = 0.125');
+    expect(denseLayerTitle(0, 2, 8, 'en')).toBe('Dense 1 — 8 units');
+    expect(denseLayerTitle(1, 2, 10, 'en')).toBe('Output — 10 classes');
+    expect(denseSizeLabel(0, 'en')).toBe('Units of dense layer 1');
+    expect(denseCellLabel(2, 0.4234, 'en')).toBe('unit 3: 0.423');
+    expect(outputCellLabel(7, 0.9823, true, undefined, 'en')).toBe('class 7: 98.2%, maximum');
+    expect(describeLinkLabel(null, 1, 0, 2, filters, 4, 'en')).toBe('conv2 — input 1, output 3');
+  });
+
+  it('localizes the gallery labels', () => {
+    expect(galleryClassLabel(getDataset('fashion-mnist'), 0, 'en')).toBe('0 — T-shirt');
+    expect(galleryInputSource(getDataset('mnist'), 3, 'test', 'en')).toBe(
+      'Gallery validation · Example MNIST (3)',
+    );
+    expect(galleryInputHint(getDataset('mnist'), 3, 'test', 'en')).toBe(
+      'Gallery validation example MNIST: the expected class is "3".',
+    );
+    expect(galleryInputHint(getDataset('mnist'), null, 'test', 'en')).toContain(
+      'Draw an input with the mouse or a finger',
+    );
+  });
+
+  it('localizes the activation scale', () => {
+    expect(activationScaleLabels('sigmoid', 'en')).toEqual(['0', '0.5', '1']);
+    expect(activationScaleAriaLabel('sigmoid', 'en')).toBe(
+      'Map scale: red at 0, grey at 0.5, blue at 1',
+    );
   });
 });

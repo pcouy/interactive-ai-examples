@@ -658,3 +658,75 @@ describe('chart layout from a training history', () => {
     expect(path.split(' ')).toHaveLength(9);
   });
 });
+
+describe('English output', () => {
+  it('formats values with a decimal point', () => {
+    expect(formatValue(0.5, 2, 'en')).toBe('0.50');
+    expect(formatValue(1, 3, 'en')).toBe('1.000');
+    expect(formatValue(123.456, 1, 'en')).toBe('123.5');
+    expect(formatValue(-0, 2, 'en')).toBe('0.00');
+  });
+
+  it('localizes single and multi chart aria labels', () => {
+    expect(
+      chartAriaLabel(
+        'Loss',
+        [
+          { x: 1, y: 0.4 },
+          { x: 2, y: 0.3 },
+        ],
+        plainFormat,
+        'en',
+      ),
+    ).toBe('Loss: 2 points, last value 0.3.');
+    expect(chartAriaLabel('Loss', [{ x: 1, y: 0.9 }], plainFormat, 'en')).toBe(
+      'Loss: 1 point, last value 0.9.',
+    );
+    expect(chartAriaLabel('Loss', [], plainFormat, 'en')).toBe('Loss: no data.');
+    expect(
+      multiChartAriaLabel(
+        'Accuracy',
+        [
+          {
+            name: 'Training',
+            points: [
+              { x: 1, y: 0.5 },
+              { x: 2, y: 0.9 },
+            ],
+            lineClass: 'line',
+            format: plainFormat,
+          },
+          {
+            name: 'Validation',
+            points: [
+              { x: 1, y: 0.4 },
+              { x: 2, y: 0.8 },
+            ],
+            lineClass: 'line',
+            format: plainFormat,
+          },
+        ],
+        'en',
+      ),
+    ).toBe('Accuracy: Training: 2 points, last value 0.9. Validation: 2 points, last value 0.8.');
+    expect(multiChartAriaLabel('Accuracy', [], 'en')).toBe('Accuracy: no data.');
+  });
+
+  it('localizes the chart layouts', () => {
+    expect(layoutChart('Loss', [], CHART_BOX, plainFormat, 'en').ariaLabel).toBe('Loss: no data.');
+    const layout = layoutMultiChart(
+      'Accuracy',
+      [
+        {
+          name: 'Training',
+          points: [{ x: 1, y: 0.5 }],
+          lineClass: 'line',
+          format: plainFormat,
+        },
+      ],
+      CHART_BOX,
+      'en',
+    );
+    expect(layout.ariaLabel).toBe('Accuracy: Training: 1 point, last value 0.5.');
+  });
+});

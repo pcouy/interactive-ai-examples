@@ -1,18 +1,21 @@
 import type { CutInfo, VisitKind } from '../../core/contracts.js';
 import type { TreeModel } from '../../core/search/tree-model.js';
+import type { Locale } from '../../i18n/locale.js';
+import { evalTreeMessage } from './messages.js';
 
 export const MOVE_FIELDS = ['index', 'col', 'column', 'row'] as const;
 
-export function formatNumber(value: number): string {
-  return value.toFixed(2).replace('.', ',');
+export function formatNumber(value: number, locale: Locale = 'fr'): string {
+  const fixed = value.toFixed(2);
+  return locale === 'fr' ? fixed.replace('.', ',') : fixed;
 }
 
-export function formatScore(score: number | null): string {
+export function formatScore(score: number | null, locale: Locale = 'fr'): string {
   if (score === null) {
     return '';
   }
   const rounded = Math.abs(score) < 0.005 ? 0 : score;
-  return `${score > 0 ? '+' : ''}${formatNumber(rounded)}`;
+  return `${score > 0 ? '+' : ''}${formatNumber(rounded, locale)}`;
 }
 
 export function formatMove(move: unknown): string {
@@ -96,14 +99,14 @@ export function boundsSummary<S>(
 }
 
 /** Formate une borne : '−∞', '+∞', ou un score signé ('+0,50', '0,00'). */
-export function formatBound(value: number): string {
+export function formatBound(value: number, locale: Locale = 'fr'): string {
   if (value === Number.NEGATIVE_INFINITY) {
     return '−∞';
   }
   if (value === Number.POSITIVE_INFINITY) {
     return '+∞';
   }
-  return formatScore(value);
+  return formatScore(value, locale);
 }
 
 /** Formate la profondeur certifiée d'une entrée de table : chiffres ou '∞'. */
@@ -115,7 +118,11 @@ export function formatEntryDepth(value: number): string {
  * Libellé neutre du panneau α/β quand le nœud dessiné n'a pas de coupure.
  * Afficher un texte de longueur comparable garde une hauteur de panneau stable.
  */
-export const NO_CUT_LABEL = 'Développement du nœud';
+export const NO_CUT_LABEL = evalTreeMessage('fr', 'noCut');
+
+export function noCutLabel(locale: Locale = 'fr'): string {
+  return evalTreeMessage(locale, 'noCut');
+}
 
 /** Étiquette courte d'une coupure : '> β' (strict) / '≥ β' / '< α' / '≤ α'. */
 export function cutLabel(cut: CutInfo): string {
@@ -126,12 +133,13 @@ export function cutLabel(cut: CutInfo): string {
 }
 
 /** Phrase explicative : borne franchie, valeur, coup déclencheur. */
-export function cutDescription(cut: CutInfo, triggerMove: unknown): string {
-  const head = `meilleur ${formatScore(cut.bestScore)} ${cutLabel(cut)} ${formatScore(cut.limit)}`;
+export function cutDescription(cut: CutInfo, triggerMove: unknown, locale: Locale = 'fr'): string {
+  const maybe = evalTreeMessage(locale, 'best', { score: formatScore(cut.bestScore, locale) });
+  const head = `${maybe} ${cutLabel(cut)} ${formatScore(cut.limit, locale)}`;
   if (triggerMove === null || triggerMove === undefined) {
-    return `${head} · sans coup déclencheur`;
+    return `${head} · ${evalTreeMessage(locale, 'withoutTrigger')}`;
   }
   // formatMove peut renvoyer '' pour un coup non représentable.
-  const move = formatMove(triggerMove) || 'coup inconnu';
-  return `${head} · déclenché par le coup ${move}`;
+  const move = formatMove(triggerMove) || evalTreeMessage(locale, 'unknownMove');
+  return `${head} · ${evalTreeMessage(locale, 'triggeredBy', { move })}`;
 }

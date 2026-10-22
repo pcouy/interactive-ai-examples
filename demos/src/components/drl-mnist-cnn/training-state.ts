@@ -19,6 +19,9 @@
  * curseur, déconnexion) fait retomber l'état sur un état inactif.
  */
 
+import type { Locale } from '../../i18n/locale.js';
+import { trainingStateMessage } from './messages.js';
+
 export type TrainingState =
   | 'deterministic'
   | 'pretrained'
@@ -28,20 +31,20 @@ export type TrainingState =
   | 'random';
 
 /** Texte du badge affiché pour chaque état. */
-export function trainingStateBadge(state: TrainingState): string {
+export function trainingStateBadge(state: TrainingState, locale: Locale = 'fr'): string {
   switch (state) {
     case 'training':
-      return 'Entraînement';
+      return trainingStateMessage(locale, 'training');
     case 'paused':
-      return 'En pause';
+      return trainingStateMessage(locale, 'paused');
     case 'trained':
-      return 'Entraîné';
+      return trainingStateMessage(locale, 'trained');
     case 'pretrained':
-      return 'Pré-entraîné';
+      return trainingStateMessage(locale, 'pretrained');
     case 'random':
-      return 'Poids aléatoires';
+      return trainingStateMessage(locale, 'random');
     default:
-      return 'Poids déterministes';
+      return trainingStateMessage(locale, 'deterministic');
   }
 }
 

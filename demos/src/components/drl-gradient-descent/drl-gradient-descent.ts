@@ -9,9 +9,11 @@ import {
   GradientDescentCore,
   landscapeLoss,
 } from '../../core/gradient-descent.js';
+import type { Locale } from '../../i18n/locale.js';
 import { drlTokenValues } from '../../styles/token-values.js';
 import { drlTokens } from '../../styles/tokens.js';
 import { createLandscapeScene, gridIndex, type LandscapeScene } from '../shared/landscape-scene.js';
+import { type GradientDescentMessageKey, gradientDescentMessage } from './messages.js';
 
 type ThreeModule = typeof import('three');
 type ThreeMesh = InstanceType<ThreeModule['Mesh']>;
@@ -48,21 +50,22 @@ const RESET_SEED = 42;
 const CANVAS_WIDTH = 1920;
 const CANVAS_HEIGHT = 1080;
 
-const PHASE_LABELS: Record<Phase, string> = {
-  idle: 'Prêt',
-  present: 'Exemple',
-  gradient: 'Gradient',
-  fade: 'Archivage',
-  mean: 'Moyenne',
-  move: 'Descente',
+const PHASE_MESSAGE_KEYS: Record<Phase, GradientDescentMessageKey> = {
+  idle: 'phaseIdle',
+  present: 'phasePresent',
+  gradient: 'phaseGradient',
+  fade: 'phaseFade',
+  mean: 'phaseMean',
+  move: 'phaseMove',
 };
 
 function clamp(value: number, min: number, max: number): number {
   return Math.min(max, Math.max(min, value));
 }
 
-function formatNumber(value: number): string {
-  return value.toFixed(2).replace('.', ',');
+function formatNumber(value: number, locale: Locale = 'fr'): string {
+  const fixed = value.toFixed(2);
+  return locale === 'fr' ? fixed.replace('.', ',') : fixed;
 }
 
 @customElement('drl-gradient-descent')
@@ -654,42 +657,55 @@ export class GradientDescent extends DemoElement {
     }
   };
 
+  protected override onLocaleChange(): void {
+    this.requestUpdate();
+  }
+
   private statusLine(): string {
+    const locale = this.locale;
     switch (this.phase) {
       case 'idle':
-        return 'Prêt — « Un pas » ou « Une batch »';
+        return gradientDescentMessage(locale, 'statusIdle');
       case 'present': {
         const example = this.currentExample;
         if (!example) {
           return '';
         }
-        const total = this.core.batch.length;
-        return (
-          `Exemple ${this.exampleNumber}/${total} : ` +
-          `(x₁, x₂) = (${formatNumber(example.x1)} ; ${formatNumber(example.x2)}) ` +
-          `→ t = ${formatNumber(example.t)}`
-        );
+        return gradientDescentMessage(locale, 'statusExample', {
+          index: this.exampleNumber,
+          total: this.core.batch.length,
+          x1: formatNumber(example.x1, locale),
+          x2: formatNumber(example.x2, locale),
+          t: formatNumber(example.t, locale),
+        });
       }
       case 'gradient':
-        return 'Flèche : sens de descente pour cet exemple (opposé du gradient)';
+        return gradientDescentMessage(locale, 'statusGradient');
       case 'fade':
-        return 'Flèche archivée en rouge translucide et surface effacée';
+        return gradientDescentMessage(locale, 'statusFade');
       case 'mean':
-        return 'Moyenne des flèches = sens de descente de la batch';
+        return gradientDescentMessage(locale, 'statusMean');
       case 'move':
-        return 'La balle descend : position -= learning rate × gradient de batch';
+        return gradientDescentMessage(locale, 'statusMove');
     }
   }
 
   protected override renderHeader(): TemplateResult {
+    const locale = this.locale;
     return html`
       <div class="drl-status">
-        <span class="drl-badge">${PHASE_LABELS[this.phase]}</span>
+        <span class="drl-badge">
+          ${gradientDescentMessage(locale, PHASE_MESSAGE_KEYS[this.phase])}
+        </span>
         <span class="drl-status-text">${this.statusLine()}</span>
       </div>
-      <div class="drl-toolbar" role="group" aria-label="Contrôles de la descente de gradient">
+      <div
+        class="drl-toolbar"
+        role="group"
+        aria-label=${gradientDescentMessage(locale, 'ariaControls')}
+      >
         <button type="button" class="drl-button" @click=${this.handleSingleStep}>
-          Un pas
+          ${gradientDescentMessage(locale, 'buttonStep')}
         </button>
         <button
           type="button"
@@ -697,45 +713,46 @@ export class GradientDescent extends DemoElement {
           ?disabled=${this.running || this.animating}
           @click=${this.handleBatch}
         >
-          Une batch
+          ${gradientDescentMessage(locale, 'buttonBatch')}
         </button>
       </div>
       <div class="drl-stats">
         <div class="drl-stat">
-          <p class="drl-stat-label">Époque</p>
+          <p class="drl-stat-label">${gradientDescentMessage(locale, 'statEpoch')}</p>
           <p class="drl-stat-value">${this.epoch}</p>
         </div>
         <div class="drl-stat">
-          <p class="drl-stat-label">Position (a, b)</p>
+          <p class="drl-stat-label">${gradientDescentMessage(locale, 'statPosition')}</p>
           <p class="drl-stat-value">
-            ${formatNumber(this.ballA)}, ${formatNumber(this.ballB)}
+            ${formatNumber(this.ballA, locale)}, ${formatNumber(this.ballB, locale)}
           </p>
         </div>
         <div class="drl-stat">
-          <p class="drl-stat-label">Loss</p>
-          <p class="drl-stat-value">${formatNumber(this.lossValue)}</p>
+          <p class="drl-stat-label">${gradientDescentMessage(locale, 'statLoss')}</p>
+          <p class="drl-stat-value">${formatNumber(this.lossValue, locale)}</p>
         </div>
         <div class="drl-stat">
-          <p class="drl-stat-label">|gradient|</p>
-          <p class="drl-stat-value">${formatNumber(this.gradMag)}</p>
+          <p class="drl-stat-label">${gradientDescentMessage(locale, 'statGradient')}</p>
+          <p class="drl-stat-value">${formatNumber(this.gradMag, locale)}</p>
         </div>
       </div>
     `;
   }
 
   protected override renderContent(): TemplateResult {
+    const locale = this.locale;
     if (this.webglError) {
-      return html`<p class="drl-webgl-error">WebGL n'est pas disponible dans cet environnement.</p>`;
+      return html`<p class="drl-webgl-error">
+        ${gradientDescentMessage(locale, 'webglError')}
+      </p>`;
     }
     return html`
       <canvas
         width=${CANVAS_WIDTH}
         height=${CANVAS_HEIGHT}
-        aria-label="Surface de loss 3D et descente de gradient par batch"
+        aria-label=${gradientDescentMessage(locale, 'canvasAria')}
       ></canvas>
-      <p class="drl-hint">
-        Glissez pour tourner, clic molette + glisser pour déplacer, molette pour zoomer.
-      </p>
+      <p class="drl-hint">${gradientDescentMessage(locale, 'hint')}</p>
     `;
   }
 

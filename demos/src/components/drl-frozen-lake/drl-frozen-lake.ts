@@ -4,7 +4,7 @@ import type { PropertyValues, TemplateResult } from 'lit';
 import { css, html } from 'lit';
 import { customElement, property } from 'lit/decorators.js';
 import { DemoElement } from '../../base/demo-element.js';
-import type { FineStepPhase, FrozenLakeAction, FrozenLakeSize } from '../../core/frozen-lake.js';
+import type { FrozenLakeAction, FrozenLakeSize } from '../../core/frozen-lake.js';
 import { FINE_STEP_PHASES, FROZEN_LAKE_ACTIONS, FrozenLakeCore } from '../../core/frozen-lake.js';
 import { drlTokens } from '../../styles/tokens.js';
 import {
@@ -14,6 +14,7 @@ import {
   schematicView,
   updateView,
 } from './frozen-lake-ui.js';
+import { frozenLakeActionName, frozenLakeMessage, frozenLakePhaseLabel } from './messages.js';
 
 const GRID_SIZE = 480;
 const CURVE_WIDTH = 480;
@@ -30,15 +31,6 @@ const ACTION_ROTATION: Record<FrozenLakeAction, number> = {
   left: 180,
   up: 270,
 };
-
-const PHASE_LABELS: Record<FineStepPhase, string> = {
-  observe: 'Observation',
-  act: 'Action',
-  transition: 'Transition',
-};
-
-// Shown for a schematic field that has no value yet.
-const EMPTY_VALUE = '—';
 
 type SingleSelection<ElementType extends BaseType> = Selection<
   ElementType,
@@ -580,6 +572,10 @@ export class FrozenLake extends DemoElement {
     }
   }
 
+  protected override onLocaleChange(): void {
+    this.draw();
+  }
+
   private buildGrid(): void {
     // The grid is rebuilt when the grid size changes, so the tooltip must not
     // survive the rebuild.
@@ -766,7 +762,11 @@ export class FrozenLake extends DemoElement {
       return;
     }
     const { episodes, steps, successRate } = this.core.stats;
-    this.statusText.textContent = `Épisodes ${episodes} · Réussite ${Math.round(successRate * 100)} % · Pas ${steps}`;
+    this.statusText.textContent = frozenLakeMessage(this.locale, 'status', {
+      episodes,
+      success: Math.round(successRate * 100),
+      steps,
+    });
   }
 
   private drawCurve(): void {
@@ -801,19 +801,22 @@ export class FrozenLake extends DemoElement {
   private drawSchematic(): void {
     const state = this.core.fineStepState;
     const view = schematicView(state);
+    const emptyValue = frozenLakeMessage(this.locale, 'emptyValue');
     const actionText =
-      view.action === null ? EMPTY_VALUE : `${ACTION_GLYPHS[view.action]} ${view.action}`;
+      view.action === null
+        ? emptyValue
+        : `${ACTION_GLYPHS[view.action]} ${frozenLakeActionName(this.locale, view.action)}`;
 
     this.setField(
       'schematic-observation',
-      view.observation === null ? EMPTY_VALUE : String(view.observation),
+      view.observation === null ? emptyValue : String(view.observation),
     );
     this.setField('schematic-action', actionText);
     this.setField(
       'schematic-next',
-      view.nextObservation === null ? EMPTY_VALUE : String(view.nextObservation),
+      view.nextObservation === null ? emptyValue : String(view.nextObservation),
     );
-    this.setField('schematic-reward', view.reward === null ? EMPTY_VALUE : view.reward.toFixed(3));
+    this.setField('schematic-reward', view.reward === null ? emptyValue : view.reward.toFixed(3));
 
     for (const phase of FINE_STEP_PHASES) {
       const node = this.renderRoot.querySelector<HTMLElement>(`[data-phase="${phase}"]`);
@@ -849,7 +852,7 @@ export class FrozenLake extends DemoElement {
     placeholder.hidden = true;
     content.hidden = false;
 
-    const view = updateView(update);
+    const view = updateView(update, this.locale);
     this.setField('reward', view.reward);
     this.setField('gamma', view.gamma);
     this.setField('next-value', view.nextValue);
@@ -863,7 +866,13 @@ export class FrozenLake extends DemoElement {
 
     const transition = update.transition;
     const glyph = ACTION_GLYPHS[transition.action];
-    this.setField('qtable-label', `Case ${transition.observation} · ${glyph} ${transition.action}`);
+    this.setField(
+      'qtable-label',
+      frozenLakeMessage(this.locale, 'caseLabel', {
+        observation: transition.observation,
+        action: `${glyph} ${frozenLakeActionName(this.locale, transition.action)}`,
+      }),
+    );
     const values = this.core.actionValues(transition.observation);
     FROZEN_LAKE_ACTIONS.forEach((action, index) => {
       const cell = this.renderRoot.querySelector<HTMLElement>(`[data-qtable-action="${action}"]`);
@@ -908,27 +917,26 @@ export class FrozenLake extends DemoElement {
 
   protected override renderHeader(): TemplateResult {
     return html`
-      <h2 class="drl-title">Frozen Lake — Q-learning tabulaire</h2>
-      <p class="drl-lead">
-        Un agent apprend à traverser un lac gelé sans tomber dans un trou. Il découvre
-        la valeur de chaque paire case et déplacement par essais et erreurs. Epsilon
-        choisit parfois un déplacement au hasard pour explorer. Les flèches montrent le
-        meilleur déplacement pour chaque case.
-      </p>
+      <h2 class="drl-title">${frozenLakeMessage(this.locale, 'title')}</h2>
+      <p class="drl-lead">${frozenLakeMessage(this.locale, 'lead')}</p>
     `;
   }
 
   protected override renderContent(): TemplateResult {
     return html`
       <span class="drl-status-text"></span>
-      <div class="drl-toolbar" role="group" aria-label="Contrôles de Frozen Lake">
+      <div
+        class="drl-toolbar"
+        role="group"
+        aria-label=${frozenLakeMessage(this.locale, 'controlsAria')}
+      >
         <button
           type="button"
           class="drl-button"
           aria-pressed=${this.size === 4 ? 'true' : 'false'}
           @click=${() => this.selectSize(4)}
         >
-          4×4
+          ${frozenLakeMessage(this.locale, 'size4')}
         </button>
         <button
           type="button"
@@ -936,7 +944,7 @@ export class FrozenLake extends DemoElement {
           aria-pressed=${this.size === 6 ? 'true' : 'false'}
           @click=${() => this.selectSize(6)}
         >
-          6×6
+          ${frozenLakeMessage(this.locale, 'size6')}
         </button>
         <button
           type="button"
@@ -944,7 +952,7 @@ export class FrozenLake extends DemoElement {
           aria-pressed=${this.size === 8 ? 'true' : 'false'}
           @click=${() => this.selectSize(8)}
         >
-          8×8
+          ${frozenLakeMessage(this.locale, 'size8')}
         </button>
         <button
           type="button"
@@ -952,7 +960,7 @@ export class FrozenLake extends DemoElement {
           aria-pressed=${this.replayEnabled ? 'true' : 'false'}
           @click=${this.handleReplayToggle}
         >
-          Rejeu
+          ${frozenLakeMessage(this.locale, 'replayToggle')}
         </button>
       </div>
       <div class="drl-layout">
@@ -962,7 +970,7 @@ export class FrozenLake extends DemoElement {
               class="drl-grid"
               viewBox="0 0 ${GRID_SIZE} ${GRID_SIZE}"
               role="img"
-              aria-label="Grille Frozen Lake"
+              aria-label=${frozenLakeMessage(this.locale, 'gridAria')}
             >
               <g class="drl-cells"></g>
               <g class="drl-arrows"></g>
@@ -974,7 +982,7 @@ export class FrozenLake extends DemoElement {
             class="drl-curve-svg"
             viewBox="0 0 ${CURVE_WIDTH} ${CURVE_HEIGHT}"
             role="img"
-            aria-label="Courbe des récompenses"
+            aria-label=${frozenLakeMessage(this.locale, 'curveAria')}
           >
             <path class="drl-curve" visibility="hidden"></path>
           </svg>
@@ -983,105 +991,116 @@ export class FrozenLake extends DemoElement {
         <aside class="drl-side">
           <section class="drl-panel" aria-labelledby="drl-schematic-title">
             <h3 class="drl-panel-title" id="drl-schematic-title">
-              Boucle agent-environnement
+              ${frozenLakeMessage(this.locale, 'loopTitle')}
             </h3>
             <p class="drl-panel-text">
-              L'environnement émet une observation. L'agent choisit une action.
-              L'environnement renvoie une observation et une récompense.
+              ${frozenLakeMessage(this.locale, 'loopDescription')}
             </p>
             <div class="drl-loop">
               <div class="drl-loop-boxes">
                 <div class="drl-loop-box">
-                  <span class="drl-loop-name">Environnement</span>
+                  <span class="drl-loop-name">${frozenLakeMessage(this.locale, 'environment')}</span>
                   <dl class="drl-loop-facts">
                     <div class="drl-loop-fact">
-                      <dt>Observation s</dt>
-                      <dd data-field="schematic-observation">—</dd>
+                      <dt>${frozenLakeMessage(this.locale, 'observation')}</dt>
+                      <dd data-field="schematic-observation">
+                        ${frozenLakeMessage(this.locale, 'emptyValue')}
+                      </dd>
                     </div>
                     <div class="drl-loop-fact">
-                      <dt>Observation s'</dt>
-                      <dd data-field="schematic-next">—</dd>
+                      <dt>${frozenLakeMessage(this.locale, 'nextObservation')}</dt>
+                      <dd data-field="schematic-next">
+                        ${frozenLakeMessage(this.locale, 'emptyValue')}
+                      </dd>
                     </div>
                     <div class="drl-loop-fact">
-                      <dt>Récompense r</dt>
-                      <dd data-field="schematic-reward">—</dd>
+                      <dt>${frozenLakeMessage(this.locale, 'reward')}</dt>
+                      <dd data-field="schematic-reward">
+                        ${frozenLakeMessage(this.locale, 'emptyValue')}
+                      </dd>
                     </div>
                   </dl>
                 </div>
                 <div class="drl-loop-box">
-                  <span class="drl-loop-name">Agent</span>
+                  <span class="drl-loop-name">${frozenLakeMessage(this.locale, 'agent')}</span>
                   <dl class="drl-loop-facts">
                     <div class="drl-loop-fact">
-                      <dt>Action a</dt>
-                      <dd data-field="schematic-action">—</dd>
+                      <dt>${frozenLakeMessage(this.locale, 'action')}</dt>
+                      <dd data-field="schematic-action">
+                        ${frozenLakeMessage(this.locale, 'emptyValue')}
+                      </dd>
                     </div>
                   </dl>
                 </div>
               </div>
               <ul class="drl-loop-links">
-                <li class="drl-loop-link">observation s : Environnement → Agent</li>
-                <li class="drl-loop-link">action a : Agent → Environnement</li>
                 <li class="drl-loop-link">
-                  observation s' et récompense r : Environnement → Agent
+                  ${frozenLakeMessage(this.locale, 'loopObservationLink')}
+                </li>
+                <li class="drl-loop-link">${frozenLakeMessage(this.locale, 'loopActionLink')}</li>
+                <li class="drl-loop-link">
+                  ${frozenLakeMessage(this.locale, 'loopFeedbackLink')}
                 </li>
               </ul>
-              <ol class="drl-phases" aria-label="Phases du pas">
+              <ol class="drl-phases" aria-label=${frozenLakeMessage(this.locale, 'phasesAria')}>
                 ${FINE_STEP_PHASES.map(
                   (phase) => html`
-                    <li class="drl-phase" data-phase=${phase}>${PHASE_LABELS[phase]}</li>
+                    <li class="drl-phase" data-phase=${phase}>
+                      ${frozenLakePhaseLabel(this.locale, phase)}
+                    </li>
                   `,
                 )}
               </ol>
               <button
                 type="button"
                 class="drl-button drl-loop-action"
-                title="Avance d'une phase et met la lecture automatique en pause."
+                title=${frozenLakeMessage(this.locale, 'fineStepTitle')}
                 @click=${this.handleFineStep}
               >
-                Phase suivante
+                ${frozenLakeMessage(this.locale, 'nextPhase')}
               </button>
             </div>
           </section>
           <section class="drl-panel" aria-labelledby="drl-update-title">
-            <h3 class="drl-panel-title" id="drl-update-title">Dernière mise à jour</h3>
-            <p class="drl-formula-line">
-              Q(s, a) ← Q(s, a) + α [ r + γ max Q(s', a') − Q(s, a) ]
-            </p>
+            <h3 class="drl-panel-title" id="drl-update-title">
+              ${frozenLakeMessage(this.locale, 'updateTitle')}
+            </h3>
+            <p class="drl-formula-line">${frozenLakeMessage(this.locale, 'bellmanFormula')}</p>
             <p class="drl-update-placeholder" data-field="update-placeholder">
-              Aucune mise à jour pour l'instant.
+              ${frozenLakeMessage(this.locale, 'updatePlaceholder')}
             </p>
             <div class="drl-update-content" data-field="update-content" hidden>
               <dl class="drl-update-grid">
                 <div class="drl-update-row">
-                  <dt>Récompense r</dt>
+                  <dt>${frozenLakeMessage(this.locale, 'reward')}</dt>
                   <dd data-field="reward"></dd>
                 </div>
                 <div class="drl-update-row">
-                  <dt>Facteur γ</dt>
+                  <dt>${frozenLakeMessage(this.locale, 'gamma')}</dt>
                   <dd data-field="gamma"></dd>
                 </div>
                 <div class="drl-update-row">
-                  <dt>Valeur suivante max Q(s', a')</dt>
+                  <dt>${frozenLakeMessage(this.locale, 'nextValue')}</dt>
                   <dd data-field="next-value"></dd>
                 </div>
                 <div class="drl-update-row">
-                  <dt>Amorçage γ · max Q(s', a')</dt>
+                  <dt>${frozenLakeMessage(this.locale, 'bootstrap')}</dt>
                   <dd data-field="bootstrap"></dd>
                 </div>
                 <div class="drl-update-row">
-                  <dt>Cible</dt>
+                  <dt>${frozenLakeMessage(this.locale, 'target')}</dt>
                   <dd data-field="target"></dd>
                 </div>
                 <div class="drl-update-row">
-                  <dt>Valeur précédente Q(s, a)</dt>
+                  <dt>${frozenLakeMessage(this.locale, 'previous')}</dt>
                   <dd data-field="previous"></dd>
                 </div>
                 <div class="drl-update-row">
-                  <dt>Taux α</dt>
+                  <dt>${frozenLakeMessage(this.locale, 'alpha')}</dt>
                   <dd data-field="alpha"></dd>
                 </div>
                 <div class="drl-update-row">
-                  <dt>Valeur mise à jour</dt>
+                  <dt>${frozenLakeMessage(this.locale, 'updated')}</dt>
                   <dd data-field="updated"></dd>
                 </div>
               </dl>
@@ -1101,10 +1120,7 @@ export class FrozenLake extends DemoElement {
                 </div>
               </div>
             </div>
-            <p class="drl-panel-note">
-              La cible utilise la valeur de l'état suivant. La mise à jour écrit la
-              nouvelle valeur dans la table apprise.
-            </p>
+            <p class="drl-panel-note">${frozenLakeMessage(this.locale, 'updateNote')}</p>
           </section>
         </aside>
       </div>

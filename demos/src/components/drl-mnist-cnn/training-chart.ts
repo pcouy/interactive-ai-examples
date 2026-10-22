@@ -11,6 +11,9 @@
  * qui déborde reste monotone et sans trou.
  */
 
+import type { Locale } from '../../i18n/locale.js';
+import { trainingChartMessage } from './messages.js';
+
 /** Un point de l'historique : une époque achevée et ses trois mesures. */
 export interface TrainingHistoryPoint {
   /** Numéro d'époque, à partir de 1. */
@@ -257,10 +260,11 @@ export function chartPath(
 }
 
 /** Valeur formatée à `digits` décimales, virgule française, `-0` normalisé en `0`. */
-export function formatValue(value: number, digits: number): string {
+export function formatValue(value: number, digits: number, locale: Locale = 'fr'): string {
   const rounded = Number(value.toFixed(digits));
   const normalised = Object.is(rounded, -0) ? 0 : rounded;
-  return normalised.toFixed(digits).replace('.', ',');
+  const text = normalised.toFixed(digits);
+  return locale === 'fr' ? text.replace('.', ',') : text;
 }
 
 /** Libellé accessible d'une courbe : la dernière valeur et le nombre de points. */
@@ -268,12 +272,17 @@ export function chartAriaLabel(
   name: string,
   points: readonly ChartPoint[],
   format: (value: number) => string,
+  locale: Locale = 'fr',
 ): string {
   if (points.length === 0) {
-    return `${name} : aucune donnée.`;
+    return trainingChartMessage(locale, 'noData', { name });
   }
   const latest = points[points.length - 1];
-  return `${name} : ${points.length} point${points.length > 1 ? 's' : ''}, dernière valeur ${format(latest.y)}.`;
+  return trainingChartMessage(locale, points.length > 1 ? 'points' : 'singlePoint', {
+    name,
+    count: points.length,
+    value: format(latest.y),
+  });
 }
 
 /** Courbe complète : points, graduations, tracé, axe et libellé accessible. */
@@ -307,6 +316,7 @@ export function layoutChart(
   points: readonly ChartPoint[],
   box: ChartBox = CHART_BOX,
   format: (value: number) => string = (value) => formatValue(value, 3),
+  locale: Locale = 'fr',
 ): ChartLayout {
   const { min, max } = chartDomain(points);
   return {
@@ -317,7 +327,7 @@ export function layoutChart(
     path: chartPath(points, box, min, max),
     axisY: box.height - box.padBottom,
     empty: points.length < 2,
-    ariaLabel: chartAriaLabel(name, points, format),
+    ariaLabel: chartAriaLabel(name, points, format, locale),
   };
 }
 
@@ -356,16 +366,24 @@ export interface MultiChartLayout {
  * des points. Une courbe sans point est omise. Sans aucune courbe fournie, le
  * libellé signale l'absence de données.
  */
-export function multiChartAriaLabel(name: string, series: readonly ChartSeries[]): string {
+export function multiChartAriaLabel(
+  name: string,
+  series: readonly ChartSeries[],
+  locale: Locale = 'fr',
+): string {
   const present = series.filter((item) => item.points.length > 0);
   if (present.length === 0) {
-    return `${name} : aucune donnée.`;
+    return trainingChartMessage(locale, 'noData', { name });
   }
   const segments = present.map((item) => {
     const latest = item.points[item.points.length - 1];
-    return `${item.name} : ${item.points.length} point${item.points.length > 1 ? 's' : ''}, dernière valeur ${item.format(latest.y)}.`;
+    return trainingChartMessage(locale, item.points.length > 1 ? 'points' : 'singlePoint', {
+      name: item.name,
+      count: item.points.length,
+      value: item.format(latest.y),
+    });
   });
-  return `${name} : ${segments.join(' ')}`;
+  return trainingChartMessage(locale, 'seriesSummary', { name, segments: segments.join(' ') });
 }
 
 /**
@@ -378,6 +396,7 @@ export function layoutMultiChart(
   name: string,
   series: readonly ChartSeries[],
   box: ChartBox = CHART_BOX,
+  locale: Locale = 'fr',
 ): MultiChartLayout {
   const { min, max } = chartDomain(series.flatMap((item) => item.points));
   return {
@@ -390,6 +409,6 @@ export function layoutMultiChart(
     ticks: chartTickPixels(min, max, box),
     axisY: box.height - box.padBottom,
     empty: series.every((item) => item.points.length < 2),
-    ariaLabel: multiChartAriaLabel(name, series),
+    ariaLabel: multiChartAriaLabel(name, series, locale),
   };
 }

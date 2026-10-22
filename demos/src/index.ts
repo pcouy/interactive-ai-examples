@@ -21,6 +21,7 @@ import './components/drl-neuron/drl-neuron.js';
 // @demos-imports
 
 export * from './base/demo-element.js';
+export * from './base/localized-element.js';
 export type {
   FineStepPhase,
   FineStepState,
@@ -43,6 +44,9 @@ export type { QLearningOptions, QUpdateResult, Transition } from './core/q-learn
 export { QLearningAgent } from './core/q-learning.js';
 export type { ReplayBufferOptions } from './core/replay-buffer.js';
 export { ReplayBuffer } from './core/replay-buffer.js';
+export { DEFAULT_LOCALE, type Locale, normalizeLocale } from './i18n/locale.js';
+export type { Catalog } from './i18n/translate.js';
+export { translate } from './i18n/translate.js';
 export { DrlCard } from './ui/drl-card.js';
 export { DrlControls } from './ui/drl-controls.js';
 export { DrlSlider } from './ui/drl-slider.js';

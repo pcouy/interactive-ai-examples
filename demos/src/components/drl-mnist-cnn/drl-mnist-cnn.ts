@@ -1,8 +1,9 @@
-import type { TemplateResult } from 'lit';
-import { css, html, LitElement, nothing, svg } from 'lit';
+import type { PropertyValues, TemplateResult } from 'lit';
+import { css, html, nothing, svg } from 'lit';
 import { customElement, state } from 'lit/decorators.js';
 import { repeat } from 'lit/directives/repeat.js';
 import '../../ui/drl-slider.js';
+import { LocalizedElement } from '../../base/localized-element.js';
 import {
   DATASETS,
   type DatasetDefinition,
@@ -54,6 +55,7 @@ import {
   selectStratifiedIndices,
 } from '../../core/mnist-data.js';
 import { createIdxTrainSource } from '../../core/mnist-train-source.js';
+import type { Locale } from '../../i18n/locale.js';
 import { drlTokenValues } from '../../styles/token-values.js';
 import { drlTokens } from '../../styles/tokens.js';
 import {
@@ -94,6 +96,7 @@ import {
   gallerySourceLabel,
   gallerySplitLabel,
 } from './gallery.js';
+import { type MnistCnnMessageKey, mnistCnnMessage } from './messages.js';
 import {
   fetchMnistCnnManifest,
   loadDatasetGallery,
@@ -442,8 +445,13 @@ export function describeLinkLabel(
   outputChannel: number,
   filters: MnistCnnFilters,
   convLayers: number,
+  locale: Locale = 'fr',
 ): string {
-  const name = `conv${boundary + 1} — entrée ${inputChannel + 1}, sortie ${outputChannel + 1}`;
+  const name = mnistCnnMessage(locale, 'linkLabel', {
+    layer: boundary + 1,
+    input: inputChannel + 1,
+    output: outputChannel + 1,
+  });
   if (
     selection === null ||
     !lineInArchitecture(boundary, inputChannel, outputChannel, filters, convLayers)
@@ -456,7 +464,10 @@ export function describeLinkLabel(
     selection.inputChannel === inputChannel &&
     selection.outputChannel === outputChannel
   ) {
-    return `${name} · 1 poids sur ${CONV_KERNEL_SIZE * CONV_KERNEL_SIZE}`;
+    return mnistCnnMessage(locale, 'linkWeightCount', {
+      name,
+      count: CONV_KERNEL_SIZE * CONV_KERNEL_SIZE,
+    });
   }
   return name;
 }
@@ -467,21 +478,29 @@ export function describeLinkLabel(
  * filtre aval montre le noyau 3×3 exact plutôt que la moyenne : une phrase
  * le signale, sinon l'affichage contredirait le sous-titre.
  */
-export function filterPanelSubtitle(selection: WeightSelection): string {
-  const mean = `Moyenne des canaux d'entrée pour chaque canal de sortie ; bleu = positif, rouge = négatif.`;
-  return selection === null
-    ? mean
-    : `${mean} La toile du couple sélectionné montre le noyau 3×3 exact.`;
+export function filterPanelSubtitle(selection: WeightSelection, locale: Locale = 'fr'): string {
+  const mean = mnistCnnMessage(locale, 'filterSubtitleMean');
+  return selection === null ? mean : `${mean} ${mnistCnnMessage(locale, 'filterSubtitleKernel')}`;
 }
 
 /** Légende d'un canal de sortie : numéro et biais à trois décimales. */
-export function filterBiasCaption(channel: number, bias: number): string {
-  return `sortie ${channel + 1} · b = ${formatValue(bias, 3)}`;
+export function filterBiasCaption(channel: number, bias: number, locale: Locale = 'fr'): string {
+  return mnistCnnMessage(locale, 'biasCaption', {
+    channel: channel + 1,
+    value: formatValue(bias, 3, locale),
+  });
 }
 
 /** Titre d'une couche dense dans le panneau d'activations. */
-export function denseLayerTitle(index: number, total: number, units: number): string {
-  return index === total - 1 ? `Sortie — ${units} classes` : `Dense ${index + 1} — ${units} unités`;
+export function denseLayerTitle(
+  index: number,
+  total: number,
+  units: number,
+  locale: Locale = 'fr',
+): string {
+  return index === total - 1
+    ? mnistCnnMessage(locale, 'outputLayerTitle', { classes: units })
+    : mnistCnnMessage(locale, 'denseLayerTitle', { index: index + 1, units });
 }
 
 /** Colonnes d'un paquet d'activations pour rester compact quelle que soit sa taille. */
@@ -490,8 +509,8 @@ export function densePackColumns(size: number): number {
 }
 
 /** Libellé du curseur de largeur d'une couche dense cachée. */
-export function denseSizeLabel(layer: number): string {
-  return `Unités de la couche dense ${layer + 1}`;
+export function denseSizeLabel(layer: number, locale: Locale = 'fr'): string {
+  return mnistCnnMessage(locale, 'denseSizeLabel', { layer: layer + 1 });
 }
 
 /** Borne une largeur de couche dense cachée dans les limites du modèle. */
@@ -505,8 +524,11 @@ export function isReferenceDenseSizes(denseSizes: readonly number[]): boolean {
 }
 
 /** Libellé accessible d'une unité cachée. */
-export function denseCellLabel(unit: number, value: number): string {
-  return `unité ${unit + 1} : ${formatValue(value, 3)}`;
+export function denseCellLabel(unit: number, value: number, locale: Locale = 'fr'): string {
+  return mnistCnnMessage(locale, 'denseCellLabel', {
+    unit: unit + 1,
+    value: formatValue(value, 3, locale),
+  });
 }
 
 /** Libellé accessible d'une classe de sortie, avec la mention du maximum. */
@@ -515,16 +537,36 @@ export function outputCellLabel(
   probability: number,
   isMax: boolean,
   className?: string,
+  locale: Locale = 'fr',
 ): string {
   const name = className ? ` (${className})` : '';
-  const base = `classe ${digit}${name} : ${formatValue(probability * 100, 1)} %`;
-  return isMax ? `${base}, maximum` : base;
+  const base = mnistCnnMessage(locale, 'outputCellLabel', {
+    digit,
+    className: name,
+    percent: formatValue(probability * 100, 1, locale),
+  });
+  return isMax ? mnistCnnMessage(locale, 'outputCellMax', { base }) : base;
 }
 
 /** Libellé d'une classe dans le sélecteur de galerie. */
-export function galleryClassLabel(dataset: DatasetDefinition, index: number): string {
-  const name = dataset.classNames[index] ?? String(index);
-  return name === String(index) ? name : `${index} — ${name}`;
+export function galleryClassLabel(
+  dataset: DatasetDefinition,
+  index: number,
+  locale: Locale = 'fr',
+): string {
+  const name = datasetClassNames(dataset, locale)[index] ?? String(index);
+  return name === String(index) ? name : mnistCnnMessage(locale, 'classLabel', { index, name });
+}
+
+/**
+ * Noms de classes affichés : les noms anglais quand le jeu en fournit et que la
+ * locale est l'anglais, les noms du registre sinon. Un jeu sans `classNamesEn`
+ * garde donc ses noms dans les deux locales.
+ */
+export function datasetClassNames(dataset: DatasetDefinition, locale: Locale): readonly string[] {
+  return locale === 'en' && dataset.classNamesEn !== undefined
+    ? dataset.classNamesEn
+    : dataset.classNames;
 }
 
 /** Libellé de la source d'entrée quand l'entrée est un exemple de la galerie. */
@@ -532,8 +574,13 @@ export function galleryInputSource(
   dataset: DatasetDefinition,
   index: number,
   split: GallerySplit,
+  locale: Locale = 'fr',
 ): string {
-  return `Galerie ${gallerySourceLabel(split)} · Exemple ${dataset.name} (${galleryClassLabel(dataset, index)})`;
+  return mnistCnnMessage(locale, 'galleryInputSource', {
+    source: gallerySourceLabel(split, locale),
+    name: dataset.name,
+    className: galleryClassLabel(dataset, index, locale),
+  });
 }
 
 /** Texte d'aide sous la surface de dessin pour le jeu courant. */
@@ -541,12 +588,17 @@ export function galleryInputHint(
   dataset: DatasetDefinition,
   classIndex: number | null,
   split: GallerySplit,
+  locale: Locale = 'fr',
 ): string {
   if (classIndex === null) {
-    return `Dessinez une entrée à la souris ou au doigt, ou choisissez un exemple de ${dataset.name} ; l'inférence se met à jour pendant le tracé.`;
+    return mnistCnnMessage(locale, 'galleryInputHintDrawing', { name: dataset.name });
   }
-  const name = dataset.classNames[classIndex] ?? String(classIndex);
-  return `Exemple de la galerie ${gallerySourceLabel(split)} ${dataset.name} : la classe attendue est « ${name} ».`;
+  const name = datasetClassNames(dataset, locale)[classIndex] ?? String(classIndex);
+  return mnistCnnMessage(locale, 'galleryInputHintExample', {
+    source: gallerySourceLabel(split, locale),
+    name: dataset.name,
+    className: name,
+  });
 }
 
 /**
@@ -667,14 +719,21 @@ export function activationRgb(
 /** Étiquettes des trois repères de l'échelle, dans le domaine de l'activation. */
 export function activationScaleLabels(
   activation: MnistCnnActivation,
+  locale: Locale = 'fr',
 ): readonly [string, string, string] {
-  return activation === 'tanh' ? ['-1', '0', '1'] : ['0', '0,5', '1'];
+  if (activation === 'tanh') {
+    return ['-1', '0', '1'];
+  }
+  return locale === 'fr' ? ['0', '0,5', '1'] : ['0', '0.5', '1'];
 }
 
 /** Libellé accessible de l'échelle divergente pour une activation. */
-export function activationScaleAriaLabel(activation: MnistCnnActivation): string {
-  const [low, mid, high] = activationScaleLabels(activation);
-  return `Échelle des cartes : rouge à ${low}, gris à ${mid}, bleu à ${high}`;
+export function activationScaleAriaLabel(
+  activation: MnistCnnActivation,
+  locale: Locale = 'fr',
+): string {
+  const [low, mid, high] = activationScaleLabels(activation, locale);
+  return mnistCnnMessage(locale, 'activationScaleAria', { low, mid, high });
 }
 
 /**
@@ -871,7 +930,7 @@ export function nextGalleryClass(
 }
 
 @customElement('drl-mnist-cnn')
-export class MnistCnn extends LitElement {
+export class MnistCnn extends LocalizedElement {
   static override styles = [
     drlTokens,
     css`
@@ -1707,8 +1766,9 @@ export class MnistCnn extends LitElement {
   @state()
   private result: MnistCnnForwardResult | null = null;
 
+  /** Origine de l'image d'entrée : dessin manuel ou exemple de la galerie. */
   @state()
-  private inputSource = 'Dessin';
+  private inputSource: 'drawing' | 'gallery' = 'drawing';
 
   private drawing = false;
 
@@ -1946,6 +2006,24 @@ export class MnistCnn extends LitElement {
   /** Jeux chargés (mis en cache par le port `loadSplits`), ou null. */
   private splits: MnistSplits | null = null;
 
+  /** Message localisé du composant. */
+  private msg(key: MnistCnnMessageKey, params?: Record<string, string | number>): string {
+    return mnistCnnMessage(this.locale, key, params);
+  }
+
+  /** Libellé localisé de la source de l'image d'entrée. */
+  private get inputSourceLabel(): string {
+    if (this.inputSource === 'drawing') {
+      return this.msg('drawing');
+    }
+    return galleryInputSource(
+      this.currentDataset,
+      this.galleryLabel ?? this.galleryClass ?? 0,
+      this.gallerySplit,
+      this.locale,
+    );
+  }
+
   private get predictedClass(): number | null {
     return this.result ? argmaxIndex(this.result.probabilities) : null;
   }
@@ -1995,7 +2073,7 @@ export class MnistCnn extends LitElement {
       validationExampleCount: this.validationExampleCount,
       parameters: mnistCnnParameterCount(this.architectureConfig),
       predictedClass: this.predictedClass === null ? null : this.displayClass(this.predictedClass),
-      inputSource: this.inputSource,
+      inputSource: this.inputSourceLabel,
     };
   }
 
@@ -2030,7 +2108,7 @@ export class MnistCnn extends LitElement {
   }
 
   private get inputHint(): string {
-    return galleryInputHint(this.currentDataset, this.galleryLabel, this.gallerySplit);
+    return galleryInputHint(this.currentDataset, this.galleryLabel, this.gallerySplit, this.locale);
   }
 
   /** Nombre d'exemples proposés par classe dans la galerie chargée. */
@@ -2063,8 +2141,12 @@ export class MnistCnn extends LitElement {
 
   /** Courbe de perte d'entraînement, un point par époque achevée. */
   private get lossLayout(): ChartLayout {
-    return layoutChart("Perte d'entraînement", lossPoints(this.history), CHART_BOX, (value) =>
-      formatValue(value, 3),
+    return layoutChart(
+      this.msg('chartTrainingLoss'),
+      lossPoints(this.history),
+      CHART_BOX,
+      (value) => formatValue(value, 3, this.locale),
+      this.locale,
     );
   }
 
@@ -2075,22 +2157,22 @@ export class MnistCnn extends LitElement {
    * et sur la légende textuelle.
    */
   private get accuracyLayout(): MultiChartLayout {
-    const percent = (value: number): string => `${formatValue(value * 100, 1)} %`;
+    const percent = (value: number): string => formatPercent(value * 100, this.locale);
     const series: ChartSeries[] = [
       {
-        name: 'Entraînement',
+        name: this.msg('chartTraining'),
         points: trainAccuracyPoints(this.history),
         lineClass: 'drl-chart-line--accuracy-train',
         format: percent,
       },
       {
-        name: 'Validation',
+        name: this.msg('chartValidation'),
         points: accuracyPoints(this.history),
         lineClass: 'drl-chart-line--accuracy',
         format: percent,
       },
     ];
-    return layoutMultiChart('Précision (entraînement et validation)', series, CHART_BOX);
+    return layoutMultiChart(this.msg('chartAccuracy'), series, CHART_BOX, this.locale);
   }
 
   /**
@@ -2120,7 +2202,7 @@ export class MnistCnn extends LitElement {
     }
     this.inputPixels.set(pixels);
     this.galleryLabel = classIndex;
-    this.inputSource = galleryInputSource(this.currentDataset, classIndex, this.gallerySplit);
+    this.inputSource = 'gallery';
     this.runInference();
   }
 
@@ -2955,11 +3037,19 @@ export class MnistCnn extends LitElement {
     });
   };
 
-  protected override updated(): void {
+  protected override updated(changed: PropertyValues<this>): void {
+    super.updated(changed);
     if (this.canvasesDirty) {
       this.canvasesDirty = false;
       this.drawCanvases();
     }
+  }
+
+  protected override onLocaleChange(): void {
+    // Le texte est rendu par Lit, mais les toiles et les lignes de liaison sont
+    // dessinées après la mise à jour : elles doivent suivre le nouveau libellé.
+    this.canvasesDirty = true;
+    this.requestUpdate();
   }
 
   private runInference(): void {
@@ -3007,7 +3097,7 @@ export class MnistCnn extends LitElement {
     // Le tracé remplace l'exemple de la galerie : la classe attendue n'a plus
     // de sens, l'entrée redevient un dessin.
     this.galleryLabel = null;
-    this.inputSource = 'Dessin';
+    this.inputSource = 'drawing';
     paintDisc(this.inputPixels, cell[0], cell[1]);
     this.runInference();
   }
@@ -3015,7 +3105,7 @@ export class MnistCnn extends LitElement {
   private readonly handleClearDrawing = (): void => {
     this.inputPixels.fill(0);
     this.galleryLabel = null;
-    this.inputSource = 'Dessin';
+    this.inputSource = 'drawing';
     this.runInference();
   };
 
@@ -3032,7 +3122,7 @@ export class MnistCnn extends LitElement {
     this.weightError = null;
     const view =
       this.selection !== null && this.selection.kind === 'weight'
-        ? weightEditorView(this.selection, this.weights, this.architectureConfig)
+        ? weightEditorView(this.selection, this.weights, this.architectureConfig, this.locale)
         : null;
     if (view !== null) {
       this.weightDraft = view.text;
@@ -3173,6 +3263,7 @@ export class MnistCnn extends LitElement {
       this.selection,
       this.weights,
       this.architectureConfig,
+      this.locale,
     );
     if (result.kind === 'error') {
       this.weightError = result.message;
@@ -3384,8 +3475,8 @@ export class MnistCnn extends LitElement {
   protected renderHeader(): TemplateResult {
     return html`
       <div class="drl-status">
-        <span class="drl-badge">${badgeText(this.demoStatus)}</span>
-        <span class="drl-status-text" role="status">${statusLine(this.demoStatus)}</span>
+        <span class="drl-badge">${badgeText(this.demoStatus, this.locale)}</span>
+        <span class="drl-status-text" role="status">${statusLine(this.demoStatus, this.locale)}</span>
       </div>
     `;
   }
@@ -3432,7 +3523,7 @@ export class MnistCnn extends LitElement {
                   y=${tick.y}
                   text-anchor="end"
                   dominant-baseline="middle"
-                  >${formatValue(tick.value, 2)}</text
+                  >${formatValue(tick.value, 2, this.locale)}</text
                 >
               `,
             )}
@@ -3451,7 +3542,7 @@ export class MnistCnn extends LitElement {
                 x=${box.width / 2}
                 y=${box.height / 2}
                 text-anchor="middle"
-                >En attente de deux époques</text
+                >${this.msg('chartWaiting')}</text
               >`
               : svg`<path class="drl-chart-line ${lineClass}" d=${layout.path} fill="none"></path>`
           }
@@ -3497,7 +3588,7 @@ export class MnistCnn extends LitElement {
                   y=${tick.y}
                   text-anchor="end"
                   dominant-baseline="middle"
-                  >${formatValue(tick.value, 2)}</text
+                  >${formatValue(tick.value, 2, this.locale)}</text
                 >
               `,
             )}
@@ -3516,7 +3607,7 @@ export class MnistCnn extends LitElement {
                 x=${box.width / 2}
                 y=${box.height / 2}
                 text-anchor="middle"
-                >En attente de deux époques</text
+                >${this.msg('chartWaiting')}</text
               >`
               : layout.series
                   .filter((series) => series.points.length > 0)
@@ -3566,17 +3657,22 @@ export class MnistCnn extends LitElement {
   private renderDenseActivations(result: MnistCnnForwardResult): TemplateResult {
     return html`
       <div class="drl-layer-block">
-        <h5 class="drl-layer-title">Couches denses</h5>
+        <h5 class="drl-layer-title">${this.msg('denseLayersTitle')}</h5>
         ${result.denseActivations.slice(0, -1).map((values, layer) => {
           const rgbOf = (value: number) => activationRgb(value, this.activation);
-          const title = denseLayerTitle(layer, result.denseActivations.length, values.length);
+          const title = denseLayerTitle(
+            layer,
+            result.denseActivations.length,
+            values.length,
+            this.locale,
+          );
           return html`
             <div class="drl-dense-layer">
               <p class="drl-dense-title">${title}</p>
               <ul
                 class="drl-dense-pack"
                 role="list"
-                aria-label=${`Activations de ${title}`}
+                aria-label=${this.msg('activationsOf', { title })}
                 style=${`grid-template-columns: repeat(${densePackColumns(values.length)}, 1fr)`}
               >
                 ${Array.from(values, (value, unit) => {
@@ -3586,7 +3682,7 @@ export class MnistCnn extends LitElement {
                       class="drl-dense-cell"
                       role="listitem"
                       style=${`background: rgb(${rgb[0]}, ${rgb[1]}, ${rgb[2]})`}
-                      aria-label=${denseCellLabel(unit, value)}
+                      aria-label=${denseCellLabel(unit, value, this.locale)}
                     ></li>
                   `;
                 })}
@@ -3604,9 +3700,10 @@ export class MnistCnn extends LitElement {
                   result.denseActivations.length - 1,
                   result.denseActivations.length,
                   probabilities.length,
+                  this.locale,
                 )}
               </p>
-              <ol class="drl-dense-output" aria-label="Probabilités par classe, maximum surligné">
+              <ol class="drl-dense-output" aria-label=${this.msg('probabilitiesMaxAria')}>
                 ${Array.from(probabilities, (probability, networkIndex) => {
                   const rgb = activationRgb(probability, 'sigmoid');
                   const isMax = networkIndex === maximum;
@@ -3618,7 +3715,8 @@ export class MnistCnn extends LitElement {
                         original,
                         probability,
                         isMax,
-                        this.currentDataset.classNames[original],
+                        datasetClassNames(this.currentDataset, this.locale)[original],
+                        this.locale,
                       )}
                     >
                       <span
@@ -3648,41 +3746,59 @@ export class MnistCnn extends LitElement {
     }
     return html`
       <fieldset class="drl-class-picker">
-        <legend>Classes (${this.enabledClasses.length} sur ${dataset.classNames.length})</legend>
+        <legend>
+          ${this.msg('classesLegend', {
+            count: this.enabledClasses.length,
+            total: dataset.classNames.length,
+          })}
+        </legend>
         <div class="drl-class-grid">
           ${dataset.classNames.map((_name, index) => {
             const checked = this.enabledClasses.includes(index);
             return html`
-              <label class="drl-class-option" title=${galleryClassLabel(dataset, index)}>
+              <label
+                class="drl-class-option"
+                title=${galleryClassLabel(dataset, index, this.locale)}
+              >
                 <input
                   type="checkbox"
                   .checked=${checked}
                   ?disabled=${checked && this.enabledClasses.length <= MIN_ENABLED_CLASSES}
                   @change=${(event: Event) => this.handleClassToggle(index, event)}
                 />
-                <span class="drl-class-name">${galleryClassLabel(dataset, index)}</span>
+                <span class="drl-class-name">${galleryClassLabel(dataset, index, this.locale)}</span>
               </label>
             `;
           })}
         </div>
-        <p class="drl-hint">Deux classes minimum. Sortie : ${this.outputClasses} neurones.</p>
+        <p class="drl-hint">${this.msg('minClassesHint', { count: this.outputClasses })}</p>
       </fieldset>
     `;
   }
 
   protected renderContent(): TemplateResult {
     const result = this.result;
+    const [activationLow, activationMid, activationHigh] = activationScaleLabels(
+      this.activation,
+      this.locale,
+    );
+    const activationName = this.activation === 'tanh' ? 'tanh' : this.msg('sigmoid');
+    const mapSizes = featureMapSizes(this.convLayers);
+    const mapSizeText =
+      mapSizes.length > 0
+        ? this.msg('featureMapSizes', { sizes: mapSizes.join(', ') })
+        : this.msg('noConvMap');
     return html`
       <div class="drl-mnist-layout">
         <div class="drl-mnist-left">
-          <section class="drl-panel" aria-label="Zone de dessin et choix de l'entrée">
-            <h4 class="drl-panel-title">Dessin 28×28</h4>
+          <section class="drl-panel" aria-label=${this.msg('inputPanelAria')}>
+            <h4 class="drl-panel-title">${this.msg('drawingTitle')}</h4>
             <canvas
               class="drl-canvas drl-canvas--input"
               width=${INPUT_CANVAS_SIZE}
               height=${INPUT_CANVAS_SIZE}
               role="img"
-              aria-label="Surface de dessin 28 par 28 pixels"
+              aria-label=${this.msg('drawingCanvasAria')}
               @pointerdown=${this.onDrawPointerDown}
               @pointermove=${this.onDrawPointerMove}
               @pointerup=${this.onDrawPointerUp}
@@ -3690,10 +3806,12 @@ export class MnistCnn extends LitElement {
             ></canvas>
             <p class="drl-hint">${this.inputHint}</p>
             <div class="drl-dataset-field">
-              <label class="drl-field-label" for="drl-mnist-cnn-dataset">Jeu de données</label>
+              <label class="drl-field-label" for="drl-mnist-cnn-dataset"
+                >${this.msg('dataset')}</label
+              >
               <select
                 id="drl-mnist-cnn-dataset"
-                aria-label="Jeu de données"
+                aria-label=${this.msg('dataset')}
                 .value=${this.selectedDatasetId}
                 @change=${this.handleDatasetChange}
               >
@@ -3703,7 +3821,7 @@ export class MnistCnn extends LitElement {
               </select>
               ${
                 this.datasetLoading
-                  ? html`<span class="drl-hint" role="status">Chargement du jeu…</span>`
+                  ? html`<span class="drl-hint" role="status">${this.msg('loadingDataset')}</span>`
                   : nothing
               }
               ${
@@ -3714,42 +3832,38 @@ export class MnistCnn extends LitElement {
             </div>
             <div class="drl-field">
               <label class="drl-field-label" for="drl-mnist-cnn-sample"
-                >Exemple ${this.currentDataset.name}</label
+                >${this.msg('example', { name: this.currentDataset.name })}</label
               >
               <select
                 id="drl-mnist-cnn-sample"
-                aria-label="Choisir un exemple de ${this.currentDataset.name}"
+                aria-label=${this.msg('chooseExample', { name: this.currentDataset.name })}
                 @click=${this.handleSampleSelectorOpen}
                 @change=${this.handleGallerySelect}
               >
                 ${
                   this.galleryLoading
-                    ? html`<option>Chargement de la galerie…</option>`
+                    ? html`<option>${this.msg('loadingGallery')}</option>`
                     : this.gallerySample === null
-                      ? html`<option value="">Charger la galerie…</option>`
+                      ? html`<option value="">${this.msg('loadGallery')}</option>`
                       : repeat(
                           this.galleryClassIndices,
                           (index) => index,
                           (index) =>
                             html`<option value=${index} ?selected=${index === this.galleryClass}>
-                              ${galleryClassLabel(this.currentDataset, index)}
+                              ${galleryClassLabel(this.currentDataset, index, this.locale)}
                             </option>`,
                         )
                 }
               </select>
             </div>
-            <div
-              class="drl-toolbar"
-              role="group"
-              aria-label="Parcourir les exemples du chiffre choisi"
-            >
+            <div class="drl-toolbar" role="group" aria-label=${this.msg('browseDigitExamplesAria')}>
               <button
                 type="button"
                 class="drl-button"
                 ?disabled=${this.galleryLoading}
                 @click=${this.handleGalleryPrevious}
               >
-                ← Précédent
+                ${this.msg('previous')}
               </button>
               <span class="drl-gallery-counter">${this.galleryCounterText}</span>
               <button
@@ -3758,35 +3872,28 @@ export class MnistCnn extends LitElement {
                 ?disabled=${this.galleryLoading}
                 @click=${this.handleGalleryNext}
               >
-                Suivant →
+                ${this.msg('next')}
               </button>
             </div>
             <div class="drl-toolbar">
               <button type="button" class="drl-button" @click=${this.handleClearDrawing}>
-                Effacer
+                ${this.msg('clear')}
               </button>
             </div>
           </section>
 
-          <section class="drl-panel" aria-label="Entraînement du modèle">
-            <h4 class="drl-panel-title">Entraînement</h4>
-            <p class="drl-panel-subtitle">
-              TensorFlow.js est chargé au premier clic sur un bouton d'entraînement, ainsi que les
-              exemples MNIST locaux. L'entraînement repart toujours des poids affichés :
-              pré-entraînés, aléatoires ou modifiés à la main. « Entraîner 1 époque » fait une
-              passe ; « Entraîner en boucle » enchaîne les époques jusqu'à Pause. La courbe en
-              pointillés mesure la précision d'entraînement sur l'échantillon borné ; la courbe en
-              trait plein mesure la précision de validation sur le sous-ensemble tenu à l'écart.
-            </p>
+          <section class="drl-panel" aria-label=${this.msg('trainingPanelAria')}>
+            <h4 class="drl-panel-title">${this.msg('trainingTitle')}</h4>
+            <p class="drl-panel-subtitle">${this.msg('trainingParagraph')}</p>
             ${this.renderClassPicker()}
-            <div class="drl-toolbar" role="group" aria-label="Lancer et contrôler l'entraînement">
+            <div class="drl-toolbar" role="group" aria-label=${this.msg('trainingControlsAria')}>
               <button
                 type="button"
                 class="drl-button drl-primary"
                 ?disabled=${isTrainingActive(this.trainingState) || !this.classSelectionReady}
                 @click=${this.handleStartTraining}
               >
-                Entraîner 1 époque
+                ${this.msg('trainOneEpoch')}
               </button>
               <button
                 type="button"
@@ -3794,7 +3901,7 @@ export class MnistCnn extends LitElement {
                 ?disabled=${isTrainingActive(this.trainingState) || !this.classSelectionReady}
                 @click=${this.handleStartLoopTraining}
               >
-                Entraîner en boucle
+                ${this.msg('trainInLoop')}
               </button>
               <button
                 type="button"
@@ -3802,22 +3909,23 @@ export class MnistCnn extends LitElement {
                 ?disabled=${!isTrainingActive(this.trainingState)}
                 @click=${this.handlePauseTraining}
               >
-                Pause
+                ${this.msg('pause')}
               </button>
               <button type="button" class="drl-button" @click=${this.handleResetWeights}>
-                Réinitialiser les poids
+                ${this.msg('resetWeights')}
               </button>
               <button type="button" class="drl-button" @click=${this.handleRandomResetWeights}>
-                Poids aléatoires
+                ${this.msg('randomWeights')}
               </button>
             </div>
             <div
               class="drl-sliders"
               role="group"
-              aria-label="Fraction des jeux d'entraînement et de validation, taux d'apprentissage et taille des lots"
+              aria-label=${this.msg('trainingSlidersAria')}
             >
               <drl-slider
-                label="Données d'entraînement"
+                lang=${this.locale}
+                label=${this.msg('trainingData')}
                 min=${MIN_PERCENT}
                 max=${MAX_PERCENT}
                 step="1"
@@ -3825,7 +3933,8 @@ export class MnistCnn extends LitElement {
                 @drl-input=${(event: CustomEvent<number>) => this.setTrainPercent(event.detail)}
               ></drl-slider>
               <drl-slider
-                label="Validation"
+                lang=${this.locale}
+                label=${this.msg('validation')}
                 min=${MIN_PERCENT}
                 max=${MAX_PERCENT}
                 step="1"
@@ -3833,7 +3942,8 @@ export class MnistCnn extends LitElement {
                 @drl-input=${(event: CustomEvent<number>) => this.setValidationPercent(event.detail)}
               ></drl-slider>
               <drl-slider
-                label="Taux d'apprentissage"
+                lang=${this.locale}
+                label=${this.msg('learningRate')}
                 min=${MIN_LEARNING_RATE}
                 max=${MAX_LEARNING_RATE}
                 step="0.0005"
@@ -3841,7 +3951,8 @@ export class MnistCnn extends LitElement {
                 @drl-input=${(event: CustomEvent<number>) => this.setLearningRate(event.detail)}
               ></drl-slider>
               <drl-slider
-                label="Taille des lots"
+                lang=${this.locale}
+                label=${this.msg('batchSize')}
                 min=${MIN_BATCH_SIZE}
                 max=${MAX_BATCH_SIZE}
                 step="8"
@@ -3852,45 +3963,49 @@ export class MnistCnn extends LitElement {
             <p class="drl-hint">
               ${
                 this.trainingError !== null
-                  ? html`Erreur d'entraînement : ${this.trainingError}`
-                  : "Les curseurs de pourcentage, de taux et de taille des lots ne prennent effet qu'au prochain entraînement, sans interrompre une run."
+                  ? this.msg('trainingError', { message: this.trainingError })
+                  : this.msg('slidersNote')
               }
             </p>
           </section>
         </div>
 
-        <section class="drl-panel" aria-label="Statistiques, probabilités et courbes d'entraînement">
-          <h4 class="drl-panel-title">Résultats</h4>
+        <section class="drl-panel" aria-label=${this.msg('resultsPanelAria')}>
+          <h4 class="drl-panel-title">${this.msg('resultsTitle')}</h4>
           <div class="drl-stats">
             <div class="drl-stat">
-              <p class="drl-stat-label">Paramètres</p>
+              <p class="drl-stat-label">${this.msg('parameters')}</p>
               <p class="drl-stat-value">${mnistCnnParameterCount(this.architectureConfig)}</p>
             </div>
             <div class="drl-stat">
-              <p class="drl-stat-label">Classe prédite</p>
+              <p class="drl-stat-label">${this.msg('predictedClass')}</p>
               <p class="drl-stat-value">
                 ${
                   this.predictedClass === null
                     ? '–'
-                    : galleryClassLabel(this.currentDataset, this.displayClass(this.predictedClass))
+                    : galleryClassLabel(
+                        this.currentDataset,
+                        this.displayClass(this.predictedClass),
+                        this.locale,
+                      )
                 }
               </p>
             </div>
             <div class="drl-stat">
-              <p class="drl-stat-label">Entrée</p>
-              <p class="drl-stat-value">${this.inputSource}</p>
+              <p class="drl-stat-label">${this.msg('input')}</p>
+              <p class="drl-stat-value">${this.inputSourceLabel}</p>
             </div>
             <div class="drl-stat">
-              <p class="drl-stat-label">Poids</p>
-              <p class="drl-stat-value">${weightsOriginText(this.demoStatus)}</p>
+              <p class="drl-stat-label">${this.msg('weights')}</p>
+              <p class="drl-stat-value">${weightsOriginText(this.demoStatus, this.locale)}</p>
             </div>
           </div>
 
-          <h4 class="drl-panel-title">Probabilités par classe</h4>
+          <h4 class="drl-panel-title">${this.msg('probabilitiesPerClass')}</h4>
           <div
             class="drl-probs"
             role="list"
-            aria-label="Probabilités par classe pour ${this.currentDataset.name}"
+            aria-label=${this.msg('probabilitiesAria', { name: this.currentDataset.name })}
           >
             ${
               result
@@ -3899,7 +4014,7 @@ export class MnistCnn extends LitElement {
                     (_probability: number, networkIndex: number) => networkIndex,
                     (probability, networkIndex) => {
                       const original = this.displayClass(networkIndex);
-                      const label = `${galleryClassLabel(this.currentDataset, original)} : ${formatPercent(probability * 100)}`;
+                      const label = `${galleryClassLabel(this.currentDataset, original, this.locale)} : ${formatPercent(probability * 100, this.locale)}`;
                       return html`
                     <div
                       class="${networkIndex === this.predictedClass ? 'drl-prob-row drl-prob-row--max' : 'drl-prob-row'}"
@@ -3912,12 +4027,14 @@ export class MnistCnn extends LitElement {
                         ><span class="drl-prob-bar" style="width:${(probability * 100).toFixed(1)}%"
                         ></span
                       ></span>
-                      <span class="drl-prob-value">${formatPercent(probability * 100)}</span>
+                      <span class="drl-prob-value"
+                        >${formatPercent(probability * 100, this.locale)}</span
+                      >
                     </div>
                   `;
                     },
                   )
-                : html`<p class="drl-hint">En attente du premier passage avant.</p>`
+                : html`<p class="drl-hint">${this.msg('waitingFirstForward')}</p>`
             }
           </div>
 
@@ -3929,22 +4046,13 @@ export class MnistCnn extends LitElement {
       </div>
 
       <details class="drl-filter-counts" open>
-        <summary><h4 class="drl-panel-title">Filtres par couche</h4></summary>
+        <summary><h4 class="drl-panel-title">${this.msg('filtersPerLayer')}</h4></summary>
         <div class="drl-filter-counts-body">
-          <p class="drl-panel-subtitle">
-            Chaque curseur arrête l'entraînement et reconstruit le modèle : poids pré-entraînés
-            (manifeste) si l'architecture correspond, poids déterministes (graine ${SEED}) sinon. Les
-            curseurs de profondeur changent le nombre de couches de convolution (0 à 4) et de couches
-            denses (1 à 3) ; le choix de la fonction d'activation arrête aussi la run et reconstruit le
-            modèle ; le manifeste pré-entraîné ne s'applique qu'à la profondeur de référence (quatre
-            convolutions, deux couches denses) et avec la sigmoïde, toute autre configuration repart
-            des poids déterministes. Les curseurs de largeur règlent les unités de chaque couche dense
-            cachée (1 à 128) et arrêtent la run ; le manifeste exige la largeur de référence, soit une
-            couche cachée de 8 unités.
-          </p>
-          <div class="drl-sliders" role="group" aria-label="Profondeur du réseau">
+          <p class="drl-panel-subtitle">${this.msg('filtersParagraph', { seed: SEED })}</p>
+          <div class="drl-sliders" role="group" aria-label=${this.msg('networkDepthAria')}>
             <drl-slider
-              label="Couches de convolution"
+              lang=${this.locale}
+              label=${this.msg('convLayers')}
               min=${MIN_CONV_LAYERS}
               max=${MAX_CONV_LAYERS}
               step="1"
@@ -3952,7 +4060,8 @@ export class MnistCnn extends LitElement {
               @drl-input=${(event: CustomEvent<number>) => this.setConvLayers(event.detail)}
             ></drl-slider>
             <drl-slider
-              label="Couches denses"
+              lang=${this.locale}
+              label=${this.msg('denseLayers')}
               min=${MIN_DENSE_LAYERS}
               max=${MAX_DENSE_LAYERS}
               step="1"
@@ -3963,13 +4072,18 @@ export class MnistCnn extends LitElement {
           ${
             this.denseLayers > 1
               ? html`
-                  <div class="drl-sliders" role="group" aria-label="Taille des couches denses cachées">
+                  <div
+                    class="drl-sliders"
+                    role="group"
+                    aria-label=${this.msg('hiddenDenseSizesAria')}
+                  >
                     ${repeat(
                       Array.from({ length: this.denseLayers - 1 }, (_, layer) => layer),
                       (layer) => layer,
                       (layer) => html`
                         <drl-slider
-                          label=${denseSizeLabel(layer)}
+                          lang=${this.locale}
+                          label=${denseSizeLabel(layer, this.locale)}
                           min=${MIN_HIDDEN_DENSE_SIZE}
                           max=${MAX_HIDDEN_DENSE_SIZE}
                           step="1"
@@ -3985,29 +4099,30 @@ export class MnistCnn extends LitElement {
           }
           <div class="drl-activation-field">
             <label class="drl-field-label" for="drl-mnist-cnn-activation">
-              Fonction d'activation
+              ${this.msg('activationFunction')}
             </label>
             <select
               id="drl-mnist-cnn-activation"
-              aria-label="Fonction d'activation des convolutions et de la couche cachée"
+              aria-label=${this.msg('activationFunctionAria')}
               .value=${this.activation}
               @change=${this.handleActivationChange}
             >
-              <option value="sigmoid">Sigmoïde</option>
+              <option value="sigmoid">${this.msg('sigmoid')}</option>
               <option value="tanh">tanh</option>
             </select>
           </div>
           <div
             class="drl-sliders"
             role="group"
-            aria-label="Nombre de filtres de chaque couche de convolution"
+            aria-label=${this.msg('filterCountsAria')}
           >
             ${repeat(
               Array.from({ length: this.convLayers }, (_, layer) => layer),
               (name) => name,
               (_name, layer) => html`
                 <drl-slider
-                  label="Filtres ${convLayerName(layer)}"
+                  lang=${this.locale}
+                  label=${this.msg('filtersLayer', { layer: convLayerName(layer) })}
                   min=${MIN_FILTER_COUNT}
                   max=${MAX_FILTER_COUNT}
                   step="1"
@@ -4022,8 +4137,8 @@ export class MnistCnn extends LitElement {
       </details>
 
       <div class="drl-panels-row">
-        <section class="drl-panel drl-panel--filters" aria-label="Filtres et exemples">
-          <div class="drl-tabs" role="tablist" aria-label="Filtres de convolution et exemples">
+        <section class="drl-panel drl-panel--filters" aria-label=${this.msg('filtersAndExamplesAria')}>
+          <div class="drl-tabs" role="tablist" aria-label=${this.msg('filtersTabsAria')}>
             ${FILTER_TABS.map(
               (tab) => html`
                 <button
@@ -4036,7 +4151,7 @@ export class MnistCnn extends LitElement {
                   @click=${() => this.setFilterTab(tab)}
                   @keydown=${this.handleFilterTabKeyDown}
                 >
-                  ${filterTabLabel(tab)}
+                  ${filterTabLabel(tab, this.locale)}
                 </button>
               `,
             )}
@@ -4049,19 +4164,26 @@ export class MnistCnn extends LitElement {
             aria-labelledby=${filterTabId('filters')}
             ?hidden=${this.filterTab !== 'filters'}
           >
-            <h4 class="drl-panel-title">Filtres de convolution 3×3</h4>
-            <p class="drl-panel-subtitle">${filterPanelSubtitle(this.selection)}</p>
+            <h4 class="drl-panel-title">${this.msg('convFiltersTitle')}</h4>
+            <p class="drl-panel-subtitle">
+              ${filterPanelSubtitle(this.selection, this.locale)}
+            </p>
             ${this.renderWeightEditor()}
             ${
               this.convLayers === 0
-                ? html`<p class="drl-hint">Aucune couche de convolution : l'entrée 28×28 est aplatie vers les couches denses.</p>`
+                ? html`<p class="drl-hint">${this.msg('noConv')}</p>`
                 : result
                   ? repeat(
                       Array.from({ length: this.convLayers }, (_, layer) => layer),
                       (name) => name,
                       (_name, layer) => html`
                       <div class="drl-layer-block">
-                        <h5 class="drl-layer-title">${convLayerName(layer)} — ${this.filterCounts[layer]} canal(aux)</h5>
+                        <h5 class="drl-layer-title">
+                          ${this.msg('convLayerChannels', {
+                            layer: convLayerName(layer),
+                            count: this.filterCounts[layer],
+                          })}
+                        </h5>
                         <div class="drl-cells-grid">
                           ${repeat(
                             Array.from(
@@ -4078,11 +4200,23 @@ export class MnistCnn extends LitElement {
                                   width=${FILTER_CANVAS_SIZE}
                                   height=${FILTER_CANVAS_SIZE}
                                   role="img"
-                                  aria-label=${`Filtre ${convLayerName(layer)}, canal de sortie ${channel + 1}, biais ${formatValue(this.filterBias(layer, channel), 3)}`}
+                                  aria-label=${this.msg('filterCanvasAria', {
+                                    layer: convLayerName(layer),
+                                    channel: channel + 1,
+                                    bias: formatValue(
+                                      this.filterBias(layer, channel),
+                                      3,
+                                      this.locale,
+                                    ),
+                                  })}
                                   @pointerdown=${this.handleFilterCellClick}
                                 ></canvas>
                                 <figcaption>
-                                  ${filterBiasCaption(channel, this.filterBias(layer, channel))}
+                                  ${filterBiasCaption(
+                                    channel,
+                                    this.filterBias(layer, channel),
+                                    this.locale,
+                                  )}
                                 </figcaption>
                               </figure>
                             `,
@@ -4091,7 +4225,7 @@ export class MnistCnn extends LitElement {
                       </div>
                     `,
                     )
-                  : html`<p class="drl-hint">En attente du premier passage avant.</p>`
+                  : html`<p class="drl-hint">${this.msg('waitingFirstForward')}</p>`
             }
             ${this.renderFilterLinks()}
           </div>
@@ -4108,7 +4242,7 @@ export class MnistCnn extends LitElement {
               width=${INPUT_CANVAS_SIZE}
               height=${INPUT_CANVAS_SIZE}
               role="img"
-              aria-label="Exemple de la galerie, surface de dessin 28 par 28 pixels"
+              aria-label=${this.msg('examplesCanvasAria')}
               @pointerdown=${this.onDrawPointerDown}
               @pointermove=${this.onDrawPointerMove}
               @pointerup=${this.onDrawPointerUp}
@@ -4116,7 +4250,7 @@ export class MnistCnn extends LitElement {
             ></canvas>
             <p class="drl-hint">${this.inputHint}</p>
             <fieldset class="drl-source-field">
-              <legend>Source des exemples</legend>
+              <legend>${this.msg('sourceOfExamples')}</legend>
               <div class="drl-source-options">
                 ${GALLERY_SPLITS.map(
                   (split) => html`
@@ -4128,7 +4262,7 @@ export class MnistCnn extends LitElement {
                         .checked=${this.gallerySplit === split}
                         @change=${this.handleGallerySplitChange}
                       />
-                      ${gallerySplitLabel(split)}
+                      ${gallerySplitLabel(split, this.locale)}
                     </label>
                   `,
                 )}
@@ -4136,25 +4270,25 @@ export class MnistCnn extends LitElement {
             </fieldset>
             <div class="drl-field drl-example-class">
               <label class="drl-field-label" for="drl-mnist-cnn-sample-tab"
-                >Exemple ${this.currentDataset.name} (onglet Exemples)</label
+                >${this.msg('exampleTab', { name: this.currentDataset.name })}</label
               >
               <select
                 id="drl-mnist-cnn-sample-tab"
-                aria-label="Choisir un exemple de ${this.currentDataset.name} dans l'onglet Exemples"
+                aria-label=${this.msg('chooseExampleTab', { name: this.currentDataset.name })}
                 @click=${this.handleSampleSelectorOpen}
                 @change=${this.handleGallerySelect}
               >
                 ${
                   this.galleryLoading
-                    ? html`<option>Chargement de la galerie…</option>`
+                    ? html`<option>${this.msg('loadingGallery')}</option>`
                     : this.gallerySample === null
-                      ? html`<option value="">Charger la galerie…</option>`
+                      ? html`<option value="">${this.msg('loadGallery')}</option>`
                       : repeat(
                           this.galleryClassIndices,
                           (index) => index,
                           (index) =>
                             html`<option value=${index} ?selected=${index === this.galleryClass}>
-                              ${galleryClassLabel(this.currentDataset, index)}
+                              ${galleryClassLabel(this.currentDataset, index, this.locale)}
                             </option>`,
                         )
                 }
@@ -4163,26 +4297,20 @@ export class MnistCnn extends LitElement {
             ${
               this.galleryError !== null
                 ? html`<p class="drl-hint" role="alert">
-                    Galerie indisponible : ${this.galleryError}
+                    ${this.msg('galleryUnavailable', { message: this.galleryError })}
                   </p>`
                 : this.gallerySample === null && !this.galleryLoading
-                  ? html`<p class="drl-hint">
-                      Choisissez « Charger la galerie… » dans la liste pour afficher des exemples.
-                    </p>`
+                  ? html`<p class="drl-hint">${this.msg('chooseLoadGallery')}</p>`
                   : nothing
             }
-            <div
-              class="drl-toolbar"
-              role="group"
-              aria-label="Parcourir les exemples de la galerie"
-            >
+            <div class="drl-toolbar" role="group" aria-label=${this.msg('browseGalleryAria')}>
               <button
                 type="button"
                 class="drl-button"
                 ?disabled=${this.galleryLoading}
                 @click=${this.handleGalleryPrevious}
               >
-                ← Précédent
+                ${this.msg('previous')}
               </button>
               <span class="drl-gallery-counter">${this.galleryCounterText}</span>
               <button
@@ -4191,34 +4319,38 @@ export class MnistCnn extends LitElement {
                 ?disabled=${this.galleryLoading}
                 @click=${this.handleGalleryNext}
               >
-                Suivant →
+                ${this.msg('next')}
               </button>
             </div>
           </div>
         </section>
 
-        <section class="drl-panel" aria-label="Cartes de caractéristiques">
-          <h4 class="drl-panel-title">Cartes de caractéristiques</h4>
+        <section class="drl-panel" aria-label=${this.msg('featureMapsAria')}>
+          <h4 class="drl-panel-title">${this.msg('featureMapsTitle')}</h4>
           <p class="drl-panel-subtitle">
-            Activations après ${this.activation === 'tanh' ? 'tanh' : 'sigmoïde'} ; rouge = ${activationScaleLabels(this.activation)[0]}, gris = ${activationScaleLabels(this.activation)[1]}, bleu = ${activationScaleLabels(this.activation)[2]}. ${
-              featureMapSizes(this.convLayers).length > 0
-                ? `Tailles : ${featureMapSizes(this.convLayers).join(', ')}.`
-                : 'Aucune carte de convolution.'
-            }
+            ${this.msg('activationsAfter', {
+              activation: activationName,
+              low: activationLow,
+              mid: activationMid,
+              high: activationHigh,
+            })}
+            ${mapSizeText}
           </p>
           <div
             class="drl-activation-scale"
             role="img"
-            aria-label=${activationScaleAriaLabel(this.activation)}
+            aria-label=${activationScaleAriaLabel(this.activation, this.locale)}
           >
             <span class="drl-activation-scale-bar"></span>
             <span class="drl-activation-scale-labels" aria-hidden="true">
-              ${activationScaleLabels(this.activation).map((label) => html`<span>${label}</span>`)}
+              ${activationScaleLabels(this.activation, this.locale).map(
+                (label) => html`<span>${label}</span>`,
+              )}
             </span>
           </div>
           ${
             this.convLayers === 0
-              ? html`<p class="drl-hint">Aucune couche de convolution : l'entrée 28×28 est aplatie vers les couches denses.</p>`
+              ? html`<p class="drl-hint">${this.msg('noConv')}</p>`
               : result
                 ? repeat(
                     result.featureMaps,
@@ -4243,9 +4375,14 @@ export class MnistCnn extends LitElement {
                                     width=${size}
                                     height=${size}
                                     role="img"
-                                    aria-label="Carte de caractéristiques ${featureMap.name}, canal ${channel + 1}"
+                                    aria-label=${this.msg('featureMapAria', {
+                                      name: featureMap.name,
+                                      channel: channel + 1,
+                                    })}
                                   ></canvas>
-                                  <figcaption>canal ${channel + 1}</figcaption>
+                                  <figcaption>
+                                    ${this.msg('channel', { channel: channel + 1 })}
+                                  </figcaption>
                                 </figure>
                               `,
                             )}
@@ -4254,7 +4391,7 @@ export class MnistCnn extends LitElement {
                       `;
                     },
                   )
-                : html`<p class="drl-hint">En attente du premier passage avant.</p>`
+                : html`<p class="drl-hint">${this.msg('waitingFirstForward')}</p>`
           }
           ${result ? this.renderDenseActivations(result) : nothing}
         </section>
@@ -4276,12 +4413,12 @@ export class MnistCnn extends LitElement {
     }
     const selection = this.selection;
     if (selection !== null && selection.kind === 'link') {
-      return html`<p class="drl-hint">${weightEditorHint()}</p>`;
+      return html`<p class="drl-hint">${weightEditorHint(this.locale)}</p>`;
     }
     if (selection === null) {
       return nothing;
     }
-    const view = weightEditorView(selection, this.weights, this.architectureConfig);
+    const view = weightEditorView(selection, this.weights, this.architectureConfig, this.locale);
     if (view === null) {
       return nothing;
     }
@@ -4300,10 +4437,10 @@ export class MnistCnn extends LitElement {
             @keydown=${this.handleWeightKeyDown}
           />
           <button type="button" class="drl-button drl-primary" @click=${this.handleApplyWeight}>
-            Appliquer
+            ${this.msg('apply')}
           </button>
           <button type="button" class="drl-button" @click=${this.handleCancelWeight}>
-            Annuler
+            ${this.msg('cancel')}
           </button>
         </div>
         ${
@@ -4355,6 +4492,7 @@ export class MnistCnn extends LitElement {
       link.outputChannel,
       this.filterCounts,
       this.convLayers,
+      this.locale,
     );
     return html`
       <g

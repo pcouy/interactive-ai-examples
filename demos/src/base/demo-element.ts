@@ -1,7 +1,8 @@
 import type { ComplexAttributeConverter, PropertyValues, TemplateResult } from 'lit';
-import { css, html, LitElement, nothing } from 'lit';
+import { css, html, nothing } from 'lit';
 import { property } from 'lit/decorators.js';
 import { drlTokens } from '../styles/tokens.js';
+import { LocalizedElement } from './localized-element.js';
 
 export const BASE_TICKS_PER_SECOND = 30;
 
@@ -13,7 +14,7 @@ const positiveSpeed: ComplexAttributeConverter<number> = {
   toAttribute: (value) => String(value),
 };
 
-export abstract class DemoElement extends LitElement {
+export abstract class DemoElement extends LocalizedElement {
   static styles = [
     drlTokens,
     css`
@@ -130,6 +131,7 @@ export abstract class DemoElement extends LitElement {
   }
 
   protected override willUpdate(changed: PropertyValues<this>): void {
+    super.willUpdate(changed);
     if (changed.has('running')) {
       if (this.running) {
         this.startLoop();
@@ -146,6 +148,7 @@ export abstract class DemoElement extends LitElement {
     return html`
       ${this.renderHeader()}
       <drl-controls
+        lang=${this.locale}
         .running=${this.running}
         .speed=${this.speed}
         @drl-play=${this.handlePlay}

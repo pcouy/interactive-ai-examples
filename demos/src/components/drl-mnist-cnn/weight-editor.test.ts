@@ -316,4 +316,53 @@ describe('weightEditorHint', () => {
     expect(hint).toContain('toile de filtre');
     expect(hint).toContain('valeur');
   });
+
+  it('describes the gesture in English', () => {
+    const hint = weightEditorHint('en');
+    expect(hint).toContain('connection');
+    expect(hint).toContain('filter canvas');
+    expect(hint).toContain('value');
+  });
+});
+
+describe('English output', () => {
+  it('localizes the view label', () => {
+    expect(weightEditorView(WEIGHT_SELECTION, WEIGHTS, CONFIG, 'en')?.label).toBe(
+      'conv2 — input 1, output 3, position (2, 2)',
+    );
+  });
+
+  it('localizes every error message', () => {
+    expect(applyWeightDraft('', WEIGHT_SELECTION, WEIGHTS, CONFIG, 'en')).toEqual({
+      kind: 'error',
+      message: 'Enter a value.',
+    });
+    expect(applyWeightDraft('abc', WEIGHT_SELECTION, WEIGHTS, CONFIG, 'en')).toEqual({
+      kind: 'error',
+      message: 'Unreadable number: use a decimal, for example 0.5.',
+    });
+    expect(applyWeightDraft('9'.repeat(400), WEIGHT_SELECTION, WEIGHTS, CONFIG, 'en')).toEqual({
+      kind: 'error',
+      message: 'Non-finite value: the number exceeds the limits.',
+    });
+    expect(applyWeightDraft('0.5', null, WEIGHTS, CONFIG, 'en')).toEqual({
+      kind: 'error',
+      message: 'The current selection is not a weight.',
+    });
+    expect(applyWeightDraft('0.5', LINK_SELECTION, WEIGHTS, CONFIG, 'en')).toEqual({
+      kind: 'error',
+      message: 'The current selection is not a weight.',
+    });
+    expect(
+      applyWeightDraft('0.5', { ...WEIGHT_SELECTION, outputChannel: 5 }, WEIGHTS, CONFIG, 'en'),
+    ).toEqual({
+      kind: 'error',
+      message: 'This weight does not exist in the current architecture.',
+    });
+    const mismatched = initializeMnistCnnWeights(OTHER_CONFIG, 42);
+    expect(applyWeightDraft('0.5', WEIGHT_SELECTION, mismatched, CONFIG, 'en')).toEqual({
+      kind: 'error',
+      message: 'The displayed weights do not match the current architecture.',
+    });
+  });
 });

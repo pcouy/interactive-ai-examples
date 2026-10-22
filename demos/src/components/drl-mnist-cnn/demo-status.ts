@@ -15,6 +15,9 @@
  * run active avec des poids édités est en pratique inatteignable.
  */
 
+import type { Locale } from '../../i18n/locale.js';
+import { demoStatusMessage } from './messages.js';
+import { formatValue } from './training-chart.js';
 import { isTrainingActive, type TrainingState, trainingStateBadge } from './training-state.js';
 
 /** Données d'entrée du badge et de la ligne d'état, sans dépendance au DOM. */
@@ -56,29 +59,31 @@ export interface DemoStatusInput {
 }
 
 /** Pourcentage à une décimale, format français (virgule). */
-export function formatPercent(value: number): string {
-  return `${value.toFixed(1).replace('.', ',')} %`;
+export function formatPercent(value: number, locale: Locale = 'fr'): string {
+  const text = value.toFixed(1);
+  return locale === 'fr' ? `${text.replace('.', ',')} %` : `${text}%`;
 }
 
 /** Perte à trois décimales, format français (virgule) ; « – » si absente ou non finie. */
-function formatLoss(value: number | null): string {
-  return value !== null && Number.isFinite(value) ? value.toFixed(3).replace('.', ',') : '–';
+function formatLoss(value: number | null, locale: Locale): string {
+  return value !== null && Number.isFinite(value) ? formatValue(value, 3, locale) : '–';
 }
 
 /** Durée en secondes à une décimale, format français (virgule). */
-export function formatSeconds(ms: number): string {
-  return `${(ms / 1000).toFixed(1).replace('.', ',')} s`;
+export function formatSeconds(ms: number, locale: Locale = 'fr'): string {
+  const text = (ms / 1000).toFixed(1);
+  return locale === 'fr' ? `${text.replace('.', ',')} s` : `${text}s`;
 }
 
 /**
  * Texte du badge : « Modifié » quand les poids ont été édités à la main et
  * qu'aucune run n'est active, le badge de l'état sinon.
  */
-export function badgeText(input: DemoStatusInput): string {
+export function badgeText(input: DemoStatusInput, locale: Locale = 'fr'): string {
   if (input.weightsEdited && !isTrainingActive(input.state)) {
-    return 'Modifié';
+    return demoStatusMessage(locale, 'modified');
   }
-  return trainingStateBadge(input.state);
+  return trainingStateBadge(input.state, locale);
 }
 
 /**
@@ -89,20 +94,22 @@ export function badgeText(input: DemoStatusInput): string {
  * (`onManifestLoaded`, `onManifestFailed`, `onWeightsReset`), il sert donc de
  * signal pour « Pré-entraîné » ou « Déterministes ».
  */
-export function weightsOriginText(input: DemoStatusInput): string {
+export function weightsOriginText(input: DemoStatusInput, locale: Locale = 'fr'): string {
   if (input.weightsEdited) {
-    return 'Modifié';
+    return demoStatusMessage(locale, 'modified');
   }
   if (input.state === 'random') {
-    return 'Aléatoires';
+    return demoStatusMessage(locale, 'random');
   }
   if (
     input.metricsStarted &&
     (input.state === 'training' || input.state === 'paused' || input.state === 'trained')
   ) {
-    return 'Entraîné';
+    return demoStatusMessage(locale, 'trained');
   }
-  return input.state === 'pretrained' ? 'Pré-entraîné' : 'Déterministes';
+  return input.state === 'pretrained'
+    ? demoStatusMessage(locale, 'pretrained')
+    : demoStatusMessage(locale, 'deterministic');
 }
 
 /**
@@ -111,26 +118,29 @@ export function weightsOriginText(input: DemoStatusInput): string {
  * quand elles sont fournies, effectifs des sous-ensembles, note d'édition
  * manuelle des poids, erreur de manifeste. Parties jointes par ` · `.
  */
-export function statusLine(input: DemoStatusInput): string {
+export function statusLine(input: DemoStatusInput, locale: Locale = 'fr'): string {
   const parts = [
-    `Entrée : ${input.inputSource}`,
-    `classe prédite : ${input.predictedClass === null ? '–' : String(input.predictedClass)}`,
-    `${input.parameters} paramètres`,
+    demoStatusMessage(locale, 'input', { source: input.inputSource }),
+    demoStatusMessage(locale, 'predictedClass', {
+      className: input.predictedClass === null ? '–' : String(input.predictedClass),
+    }),
+    demoStatusMessage(locale, 'parameters', { count: input.parameters }),
   ];
   if (input.metricsStarted) {
     parts.push(
-      `lots : ${input.batchesProcessed}`,
-      `perte : ${formatLoss(input.loss)}`,
-      `précision validation (sous-ensemble) : ${
-        input.validationAccuracy === null || !Number.isFinite(input.validationAccuracy)
-          ? '–'
-          : formatPercent(input.validationAccuracy * 100)
-      }`,
-      `temps : ${formatSeconds(input.elapsedMs)}`,
+      demoStatusMessage(locale, 'batches', { count: input.batchesProcessed }),
+      demoStatusMessage(locale, 'loss', { value: formatLoss(input.loss, locale) }),
+      demoStatusMessage(locale, 'validationAccuracy', {
+        value:
+          input.validationAccuracy === null || !Number.isFinite(input.validationAccuracy)
+            ? '–'
+            : formatPercent(input.validationAccuracy * 100, locale),
+      }),
+      demoStatusMessage(locale, 'time', { value: formatSeconds(input.elapsedMs, locale) }),
     );
   }
   if (input.completedEpochs !== null && input.completedEpochs !== undefined) {
-    parts.push(`époque ${input.completedEpochs}`);
+    parts.push(demoStatusMessage(locale, 'epoch', { count: input.completedEpochs }));
   }
   if (
     input.roundIndex !== null &&
@@ -138,20 +148,25 @@ export function statusLine(input: DemoStatusInput): string {
     input.roundsPerEpoch !== null &&
     input.roundsPerEpoch !== undefined
   ) {
-    parts.push(`round ${input.roundIndex}/${input.roundsPerEpoch}`);
+    parts.push(
+      demoStatusMessage(locale, 'round', {
+        index: input.roundIndex,
+        total: input.roundsPerEpoch,
+      }),
+    );
   }
   if (input.windowShards !== null && input.windowShards !== undefined) {
-    parts.push(`fenêtre ${input.windowShards} fragments`);
+    parts.push(demoStatusMessage(locale, 'window', { count: input.windowShards }));
   }
   parts.push(
-    `entraînement : ${input.trainExampleCount} exemples`,
-    `validation : ${input.validationExampleCount} exemples`,
+    demoStatusMessage(locale, 'trainingCount', { count: input.trainExampleCount }),
+    demoStatusMessage(locale, 'validationCount', { count: input.validationExampleCount }),
   );
   if (input.weightsEdited) {
-    parts.push('poids modifiés à la main');
+    parts.push(demoStatusMessage(locale, 'weightsModified'));
   }
   if (input.manifestError !== null) {
-    parts.push(`manifeste inaccessible : ${input.manifestError}`);
+    parts.push(demoStatusMessage(locale, 'manifestUnavailable', { message: input.manifestError }));
   }
   return parts.join(' · ');
 }

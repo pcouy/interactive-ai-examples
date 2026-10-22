@@ -1,8 +1,10 @@
 import type { SVGTemplateResult, TemplateResult } from 'lit';
-import { css, html, LitElement, nothing, svg } from 'lit';
+import { css, html, nothing, svg } from 'lit';
 import { customElement, property } from 'lit/decorators.js';
+import { LocalizedElement } from '../../base/localized-element.js';
 import type { BoardView, Cell, CellCoord } from '../../core/contracts.js';
 import { drlTokens } from '../../styles/tokens.js';
+import { gameBoardMessage } from './messages.js';
 
 export type PieceStyle = 'discs' | 'marks';
 
@@ -58,7 +60,7 @@ function pieceStroke(size: number): number {
 }
 
 @customElement('drl-game-board')
-export class DrlGameBoard extends LitElement {
+export class DrlGameBoard extends LocalizedElement {
   static override styles = [
     drlTokens,
     css`
@@ -156,7 +158,7 @@ export class DrlGameBoard extends LitElement {
     return html`
       <svg
         role="img"
-        aria-label="Plateau de jeu ${rows}×${cols}"
+        aria-label=${gameBoardMessage(this.locale, 'ariaLabel', { rows, cols })}
         viewBox="0 0 ${width} ${height}"
         width=${width}
         height=${height}

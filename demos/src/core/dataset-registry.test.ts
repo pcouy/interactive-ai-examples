@@ -106,6 +106,15 @@ describe('dataset-registry', () => {
     expect(quickdraw.downloadCommand).toBe('npm run quickdraw:data');
   });
 
+  it('keeps every English class-name list aligned with the class names', () => {
+    for (const dataset of DATASETS) {
+      if (dataset.classNamesEn === undefined) {
+        continue;
+      }
+      expect(dataset.classNamesEn).toHaveLength(dataset.classNames.length);
+    }
+  });
+
   it('makes QuickDraw the only dataset with a selectable class subset', () => {
     const quickdraw = getDataset('quickdraw');
     expect(quickdraw.selectable).toBe(true);

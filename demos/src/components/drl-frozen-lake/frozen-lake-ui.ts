@@ -1,5 +1,8 @@
 import type { FineStepState, FrozenLakeAction } from '../../core/frozen-lake.js';
 import type { QUpdateResult, Transition } from '../../core/q-learning.js';
+import type { Locale } from '../../i18n/locale.js';
+import { frozenLakeMessage } from './messages.js';
+import { replayMessage } from './replay-messages.js';
 
 /** Event name the Frozen Lake demo dispatches with the current replay state. */
 export const FROZEN_LAKE_REPLAY_EVENT = 'drl-replay-state';
@@ -26,15 +29,19 @@ export const ACTION_GLYPHS: Record<FrozenLakeAction, string> = {
 };
 
 /** Header line of the replay panel. */
-export function replayHeader(state: FrozenLakeReplayState): string {
-  return `Rejeu · échantillon ${state.batch.length} · mémoire ${state.bufferSize}/${state.capacity}`;
+export function replayHeader(state: FrozenLakeReplayState, locale: Locale = 'fr'): string {
+  return replayMessage(locale, 'header', {
+    count: state.batch.length,
+    used: state.bufferSize,
+    capacity: state.capacity,
+  });
 }
 
 /**
  * Replay rows, newest first: the last batch entry comes first, then the older
  * entries in their current order.
  */
-export function replayRows(state: FrozenLakeReplayState): ReplayRow[] {
+export function replayRows(state: FrozenLakeReplayState, locale: Locale = 'fr'): ReplayRow[] {
   const batch = state.batch;
   if (batch.length === 0) {
     return [];
@@ -42,12 +49,17 @@ export function replayRows(state: FrozenLakeReplayState): ReplayRow[] {
   const ordered = [batch[batch.length - 1], ...batch.slice(0, -1)];
   return ordered.map((transition, position) => {
     const newest = position === 0;
-    let text = `case ${transition.observation} ${ACTION_GLYPHS[transition.action]} case ${transition.nextObservation} · r ${transition.reward}`;
+    let text = replayMessage(locale, 'row', {
+      from: transition.observation,
+      glyph: ACTION_GLYPHS[transition.action],
+      to: transition.nextObservation,
+      reward: transition.reward,
+    });
     if (transition.done) {
-      text += ' · fin';
+      text += ` ${replayMessage(locale, 'end')}`;
     }
     if (newest) {
-      text += ' · dernier pas';
+      text += ` ${replayMessage(locale, 'lastStep')}`;
     }
     return { text, newest };
   });
@@ -72,8 +84,11 @@ function formatNumber(value: number): string {
   return value.toFixed(3);
 }
 
-/** Builds the French labels and formulas of the update panel. */
-export function updateView(update: QUpdateResult<number, FrozenLakeAction>): UpdateView {
+/** Builds the localized labels and formulas of the update panel. */
+export function updateView(
+  update: QUpdateResult<number, FrozenLakeAction>,
+  locale: Locale = 'fr',
+): UpdateView {
   const reward = formatNumber(update.transition.reward);
   const gamma = formatNumber(update.discountFactor);
   const nextValue = formatNumber(update.nextValue);
@@ -91,8 +106,18 @@ export function updateView(update: QUpdateResult<number, FrozenLakeAction>): Upd
     previous,
     alpha,
     updated,
-    targetFormula: `r + γ · max Q(s', a') = ${reward} + ${gamma} × ${nextValue} = ${target}`,
-    updateFormula: `Q(s, a) ← ${previous} + ${alpha} × (${target} − ${previous}) = ${updated}`,
+    targetFormula: frozenLakeMessage(locale, 'targetFormula', {
+      reward,
+      gamma,
+      nextValue,
+      target,
+    }),
+    updateFormula: frozenLakeMessage(locale, 'updateFormula', {
+      previous,
+      alpha,
+      target,
+      updated,
+    }),
   };
 }
 

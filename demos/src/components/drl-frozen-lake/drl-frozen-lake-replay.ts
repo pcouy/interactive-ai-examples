@@ -1,6 +1,7 @@
 import type { TemplateResult } from 'lit';
-import { css, html, LitElement, nothing } from 'lit';
+import { css, html, nothing } from 'lit';
 import { customElement, property } from 'lit/decorators.js';
+import { LocalizedElement } from '../../base/localized-element.js';
 import { drlTokens } from '../../styles/tokens.js';
 import {
   type FrozenLakeReplayState,
@@ -8,9 +9,10 @@ import {
   replayHeader,
   replayRows,
 } from './frozen-lake-ui.js';
+import { replayMessage } from './replay-messages.js';
 
 @customElement('drl-frozen-lake-replay')
-export class FrozenLakeReplay extends LitElement {
+export class FrozenLakeReplay extends LocalizedElement {
   static override styles = [
     drlTokens,
     css`
@@ -69,16 +71,16 @@ export class FrozenLakeReplay extends LitElement {
     if (state === null || !state.enabled) {
       return nothing;
     }
-    const rows = replayRows(state);
+    const rows = replayRows(state, this.locale);
     return html`
-      <section class="drl-replay" aria-label="Rejeu">
-        <p class="drl-replay-header">${replayHeader(state)}</p>
+      <section class="drl-replay" aria-label=${replayMessage(this.locale, 'ariaLabel')}>
+        <p class="drl-replay-header">${replayHeader(state, this.locale)}</p>
         <ul class="drl-replay-list">
           ${
             rows.length === 0
               ? html`
                 <li class="drl-replay-row drl-replay-row--muted">
-                  Aucun échantillon pour l'instant.
+                  ${replayMessage(this.locale, 'empty')}
                 </li>
               `
               : rows.map((row) => this.renderRow(row))
