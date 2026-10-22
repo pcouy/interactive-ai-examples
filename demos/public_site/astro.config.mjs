@@ -9,9 +9,9 @@ export default defineConfig({
   // PUBLIC_SITE_URL overrides the default GitHub Pages URL for a custom domain.
   site: process.env.PUBLIC_SITE_URL || 'https://pierre-couy.dev/interactive-ai-examples',
   output: 'static',
-  trailingSlash: 'never',
+  trailingSlash: 'ignore',
   build: {
-    format: 'file',
+    format: 'preserve',
     inlineStylesheets: 'always',
   },
   markdown: {

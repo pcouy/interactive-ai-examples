@@ -1,0 +1,73 @@
+---
+import { Content as HomeContent } from '../../content/en/home.md';
+import { routeFor, ui } from '../../i18n/site';
+import Base from '../../layouts/Base.astro';
+
+const copy = ui.en.home;
+---
+
+<Base title="Play to understand AI — interactive demos" lang="en">
+  <section class="home-hero">
+    <div class="home-hero__inner">
+      <div>
+        <p class="eyebrow">{copy.eyebrow}</p>
+        <h1>{copy.title}</h1>
+        <p class="lede">{copy.lede}</p>
+        <div class="home-actions">
+          <a class="button button--primary" href={routeFor('en', 'deep-blue')}>
+            {copy.deepBlueCta}
+          </a>
+          <a class="button button--ghost" href={routeFor('en', 'frozen-lake')}>
+            {copy.frozenLakeCta}
+          </a>
+        </div>
+        <p class="home-meta">{copy.meta}</p>
+      </div>
+
+      <div class="home-motif" aria-hidden="true">
+        <span class="home-motif__cell home-motif__cell--start"></span>
+        <span class="home-motif__cell"></span>
+        <span class="home-motif__cell home-motif__cell--hole"></span>
+        <span class="home-motif__cell home-motif__cell--hole"></span>
+        <span class="home-motif__cell"></span>
+        <span class="home-motif__cell"></span>
+        <span class="home-motif__cell home-motif__cell--hole"></span>
+        <span class="home-motif__cell"></span>
+        <span class="home-motif__cell"></span>
+        <span class="home-motif__cell home-motif__cell--hole"></span>
+        <span class="home-motif__cell"></span>
+        <span class="home-motif__cell home-motif__cell--hole"></span>
+        <span class="home-motif__cell home-motif__cell--hole"></span>
+        <span class="home-motif__cell"></span>
+        <span class="home-motif__cell"></span>
+        <span class="home-motif__cell home-motif__cell--goal"></span>
+      </div>
+    </div>
+  </section>
+
+  <section class="section" aria-labelledby="demos-title">
+    <h2 class="section-title" id="demos-title">{copy.demosTitle}</h2>
+    <div class="card-grid">
+      <article class="card">
+        <p class="card__eyebrow">{copy.deepBlueEyebrow}</p>
+        <h3 class="card__title">Deep Blue</h3>
+        <p class="card__body">{copy.deepBlueBody}</p>
+        <a class="card__link" href={routeFor('en', 'deep-blue')}>{copy.cardLink}</a>
+      </article>
+
+      <article class="card">
+        <p class="card__eyebrow">{copy.frozenLakeEyebrow}</p>
+        <h3 class="card__title">Frozen Lake</h3>
+        <p class="card__body">{copy.frozenLakeBody}</p>
+        <a class="card__link" href={routeFor('en', 'frozen-lake')}>{copy.cardLink}</a>
+      </article>
+    </div>
+  </section>
+
+  <section class="section" aria-labelledby="about-title">
+    <h2 class="section-title" id="about-title">{copy.aboutTitle}</h2>
+    <div class="prose">
+      <HomeContent />
+    </div>
+  </section>
+</Base>

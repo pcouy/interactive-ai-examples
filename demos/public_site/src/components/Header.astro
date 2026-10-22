@@ -1,35 +1,66 @@
 ---
+import {
+  DEFAULT_LANG,
+  relativeHref,
+  routeFor,
+  ui,
+  type Lang,
+  type PageId,
+} from '../i18n/site';
 import ThemeToggle from './ThemeToggle.astro';
 
 interface Props {
-  current?: string;
+  current?: PageId;
+  lang?: Lang;
 }
 
-const { current } = Astro.props;
+const { current = 'home', lang = DEFAULT_LANG } = Astro.props;
+
+const page = current;
 
 const links = [
-  { id: 'home', label: 'Accueil', href: '/' },
-  { id: 'deep-blue', label: 'Deep Blue', href: '/deep-blue' },
-  { id: 'frozen-lake', label: 'Frozen Lake', href: '/frozen-lake' },
-];
+  { id: 'home', label: ui[lang].nav.home, href: routeFor(lang, 'home') },
+  { id: 'deep-blue', label: ui[lang].nav.deepBlue, href: routeFor(lang, 'deep-blue') },
+  { id: 'frozen-lake', label: ui[lang].nav.frozenLake, href: routeFor(lang, 'frozen-lake') },
+] as const;
+
+const languages = [
+  { code: 'fr', label: 'FR', href: relativeHref(Astro.url.pathname, routeFor('fr', page)) },
+  { code: 'en', label: 'EN', href: relativeHref(Astro.url.pathname, routeFor('en', page)) },
+] as const;
 ---
 
 <header class="site-header">
   <div class="site-header__inner">
-    <a class="site-brand" href="/">
+    <a class="site-brand" href={routeFor(lang, 'home')}>
       <span class="site-brand__mark" aria-hidden="true"></span>
-      Comprendre l'IA par l'exemple
+      {ui[lang].brand}
     </a>
-    <nav class="site-nav" aria-label="Navigation principale">
+    <nav class="site-nav" aria-label={ui[lang].navLabel}>
       {
         links.map((link) => (
-          <a href={link.href} aria-current={current === link.id ? 'page' : undefined}>
+          <a href={link.href} aria-current={page === link.id ? 'page' : undefined}>
             {link.label}
           </a>
         ))
       }
-      <a class="site-back" href="https://pierre-couy.dev">← Retour au blog</a>
+      <a class="site-back" href="https://pierre-couy.dev">{ui[lang].backToBlog}</a>
     </nav>
-    <ThemeToggle />
+    <ThemeToggle lang={lang} />
+    <nav class="lang-picker" aria-label={ui[lang].languagePickerLabel}>
+      {
+        languages.map((language) => (
+          <a
+            href={language.href}
+            hreflang={language.code}
+            lang={language.code}
+            data-set-lang={language.code}
+            aria-current={lang === language.code ? 'true' : undefined}
+          >
+            {language.label}
+          </a>
+        ))
+      }
+    </nav>
   </div>
 </header>

@@ -1,31 +1,38 @@
 ---
+import { DEFAULT_LANG, routeFor, ui, type Lang } from '../i18n/site';
+
+interface Props {
+  lang?: Lang;
+}
+
+const { lang = DEFAULT_LANG } = Astro.props;
 const year = new Date().getFullYear();
 
 const links = [
-  { label: 'Accueil', href: '/' },
-  { label: 'Deep Blue', href: '/deep-blue' },
-  { label: 'Frozen Lake', href: '/frozen-lake' },
+  { label: ui[lang].nav.home, href: routeFor(lang, 'home') },
+  { label: ui[lang].nav.deepBlue, href: routeFor(lang, 'deep-blue') },
+  { label: ui[lang].nav.frozenLake, href: routeFor(lang, 'frozen-lake') },
 ];
 ---
 
 <footer class="site-footer">
   <div class="site-footer__inner">
     <div class="site-footer__brand">
-      <a class="site-brand" href="/">
+      <a class="site-brand" href={routeFor(lang, 'home')}>
         <span class="site-brand__mark" aria-hidden="true"></span>
-        Comprendre l'IA par l'exemple
+        {ui[lang].brand}
       </a>
-      <p>Démonstrations pédagogiques. Tout s'exécute dans le navigateur.</p>
+      <p>{ui[lang].footerTagline}</p>
     </div>
-    <nav class="site-footer__nav" aria-label="Navigation de pied de page">
+    <nav class="site-footer__nav" aria-label={ui[lang].footerNavLabel}>
       {links.map((link) => <a href={link.href}>{link.label}</a>)}
     </nav>
-    <nav class="site-footer__links" aria-label="Liens externes">
-      <h2 class="site-footer__heading">Liens</h2>
+    <nav class="site-footer__links" aria-label={ui[lang].footerLinksLabel}>
+      <h2 class="site-footer__heading">{ui[lang].footerHeading}</h2>
       <ul>
         <li>
           <a href="https://pierre-couy.dev" target="_blank" rel="noopener noreferrer">
-            Mon site<span class="sr-only"> (nouvel onglet)</span>
+            {ui[lang].externalSite}<span class="sr-only">{ui[lang].newTabSuffix}</span>
           </a>
         </li>
         <li>
@@ -34,7 +41,7 @@ const links = [
             target="_blank"
             rel="noopener noreferrer"
           >
-            Dépôt GitHub<span class="sr-only"> (nouvel onglet)</span>
+            {ui[lang].externalGithub}<span class="sr-only">{ui[lang].newTabSuffix}</span>
           </a>
         </li>
       </ul>

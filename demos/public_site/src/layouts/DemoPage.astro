@@ -1,4 +1,5 @@
 ---
+import { DEFAULT_LANG, routeFor, ui, type Lang } from '../i18n/site';
 import Base from './Base.astro';
 
 interface Props {
@@ -6,12 +7,13 @@ interface Props {
   description?: string;
   eyebrow: string;
   wide?: boolean;
+  lang?: Lang;
 }
 
-const { title, description, eyebrow, wide = false } = Astro.props;
+const { title, description, eyebrow, wide = false, lang = DEFAULT_LANG } = Astro.props;
 ---
 
-<Base title={title} description={description} wide={wide}>
+<Base title={title} description={description} wide={wide} lang={lang}>
   <header class="demo-header">
     <div>
       <p class="eyebrow">{eyebrow}</p>
@@ -27,7 +29,9 @@ const { title, description, eyebrow, wide = false } = Astro.props;
   </article>
 
   <p>
-    <a class="button button--ghost" href="/">← Toutes les démos</a>
+    <a class="button button--ghost" href={routeFor(lang, 'home')}>
+      {ui[lang].allDemos}
+    </a>
   </p>
 
   <slot name="scripts" />

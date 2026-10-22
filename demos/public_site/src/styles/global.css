@@ -355,6 +355,40 @@ textarea {
 }
 
 /* --------------------------------------------------------------------------
+   Language picker
+   -------------------------------------------------------------------------- */
+
+.lang-picker {
+  display: inline-flex;
+  flex: none;
+  align-items: center;
+  gap: 2px;
+  padding: 2px;
+  border: 1px solid var(--site-border);
+  border-radius: var(--radius-pill);
+  background: var(--site-surface);
+}
+
+.lang-picker a {
+  padding: var(--space-1) var(--space-2);
+  border-radius: var(--radius-pill);
+  color: var(--site-muted);
+  font-size: var(--step--1);
+  font-weight: 600;
+  letter-spacing: 0.04em;
+  text-decoration: none;
+}
+
+.lang-picker a:hover {
+  color: var(--site-fg);
+}
+
+.lang-picker a[aria-current='true'] {
+  color: var(--site-fg);
+  background: color-mix(in oklab, var(--site-accent) 12%, transparent);
+}
+
+/* --------------------------------------------------------------------------
    Home page
    -------------------------------------------------------------------------- */
 
@@ -975,6 +1009,7 @@ textarea {
   .site-footer,
   .skip-link,
   .theme-toggle,
+  .lang-picker,
   .home-motif {
     display: none !important;
   }

@@ -44,9 +44,12 @@ const MIME_TYPES = new Map([
 ]);
 
 const PAGES = [
-  { label: 'index.html', path: `${PREFIX}` },
-  { label: 'deep-blue.html', path: `${PREFIX}deep-blue.html` },
-  { label: 'frozen-lake.html', path: `${PREFIX}frozen-lake.html` },
+  { label: 'index.html', path: `${PREFIX}`, lang: 'fr' },
+  { label: 'deep-blue.html', path: `${PREFIX}deep-blue.html`, lang: 'fr' },
+  { label: 'frozen-lake.html', path: `${PREFIX}frozen-lake.html`, lang: 'fr' },
+  { label: 'en/index.html', path: `${PREFIX}en/`, lang: 'en' },
+  { label: 'en/deep-blue.html', path: `${PREFIX}en/deep-blue.html`, lang: 'en' },
+  { label: 'en/frozen-lake.html', path: `${PREFIX}en/frozen-lake.html`, lang: 'en' },
 ];
 
 const ASSETS = [
@@ -175,10 +178,10 @@ function countMatches(value, pattern) {
   return (value.match(pattern) ?? []).length;
 }
 
-function checkHtmlDocument(label, html) {
+function checkHtmlDocument(label, html, expectedLang) {
   check(
-    /<html\b[^>]*\blang=["']fr["']/i.test(html),
-    `${label}: html element uses lang="fr"`,
+    new RegExp(`<html\\b[^>]*\\blang=["']${expectedLang}["']`, 'i').test(html),
+    `${label}: html element uses lang="${expectedLang}"`,
   );
 
   const h1Count = countMatches(html, /<h1\b/gi);
@@ -228,18 +231,14 @@ function checkHtmlDocument(label, html) {
   check(!html.includes('/src/'), `${label}: has no /src/ reference`);
 }
 
-function checkDeepBluePage(html) {
-  const label = 'deep-blue.html';
-
+function checkDeepBluePage(html, label) {
   check(html.includes('drl-deep-blue-page'), `${label}: contains drl-deep-blue-page`);
   check(html.includes('data-demo-log'), `${label}: contains data-demo-log`);
   check(html.includes('demo/drl-demos.js'), `${label}: loads demo/drl-demos.js`);
   check(html.includes('class="katex"'), `${label}: contains rendered KaTeX markup`);
 }
 
-function checkFrozenLakePage(html) {
-  const label = 'frozen-lake.html';
-
+function checkFrozenLakePage(html, label) {
   check(html.includes('drl-frozen-lake'), `${label}: contains drl-frozen-lake`);
   check(
     html.includes('drl-frozen-lake-replay'),
@@ -264,6 +263,13 @@ function checkHomePage(html) {
   check(
     html.includes("Jouer pour comprendre l'IA"),
     "index.html: contains the title text \"Jouer pour comprendre l'IA\"",
+  );
+}
+
+function checkEnglishHomePage(html) {
+  check(
+    html.includes('Play to understand AI'),
+    'en/index.html: contains the title text "Play to understand AI"',
   );
 }
 
@@ -331,23 +337,32 @@ async function main() {
     for (const page of PAGES) {
       const result = pageResponses.get(page.label);
       if (result) {
-        checkHtmlDocument(page.label, result.body);
+        checkHtmlDocument(page.label, result.body, page.lang);
       }
     }
 
-    const deepBlue = pageResponses.get('deep-blue.html');
-    if (deepBlue) {
-      checkDeepBluePage(deepBlue.body);
+    for (const label of ['deep-blue.html', 'en/deep-blue.html']) {
+      const deepBlue = pageResponses.get(label);
+      if (deepBlue) {
+        checkDeepBluePage(deepBlue.body, label);
+      }
     }
 
-    const frozenLake = pageResponses.get('frozen-lake.html');
-    if (frozenLake) {
-      checkFrozenLakePage(frozenLake.body);
+    for (const label of ['frozen-lake.html', 'en/frozen-lake.html']) {
+      const frozenLake = pageResponses.get(label);
+      if (frozenLake) {
+        checkFrozenLakePage(frozenLake.body, label);
+      }
     }
 
     const home = pageResponses.get('index.html');
     if (home) {
       checkHomePage(home.body);
+    }
+
+    const englishHome = pageResponses.get('en/index.html');
+    if (englishHome) {
+      checkEnglishHomePage(englishHome.body);
     }
 
     // The redirect probe uses the bare prefix without a trailing slash. Every

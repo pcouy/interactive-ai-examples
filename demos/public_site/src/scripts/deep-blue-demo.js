@@ -1,10 +1,39 @@
 const page = document.getElementById('deep-blue-demo');
 const log = document.querySelector('[data-demo-log]');
+const isEnglish = document.documentElement.lang === 'en';
 
 const PLAYER_NAMES = {
-  'tic-tac-toe': ['Croix', 'Cercles'],
-  connect4: ['Bleus', 'Rouges'],
+  'tic-tac-toe': isEnglish ? ['Crosses', 'Circles'] : ['Croix', 'Cercles'],
+  connect4: isEnglish ? ['Blues', 'Reds'] : ['Bleus', 'Rouges'],
 };
+
+const TEXT = isEnglish
+  ? {
+      player: (id) => `Player ${id}`,
+      square: (index) => `square ${index}`,
+      column: (index) => `column ${index}`,
+      draw: 'Draw',
+      win: (name) => `Win: ${name}`,
+      move: (move, name) => `Move ${move} (${name})`,
+      search: (name) => `Search started for ${name}`,
+      displayRoot: 'Display root: search root',
+      displayedNode: (key) => `Displayed node: ${key}`,
+      undone: (count) => `${count} move(s) undone`,
+      reset: 'Game reset',
+    }
+  : {
+      player: (id) => `Joueur ${id}`,
+      square: (index) => `case ${index}`,
+      column: (index) => `colonne ${index}`,
+      draw: 'Partie nulle',
+      win: (name) => `Victoire : ${name}`,
+      move: (move, name) => `Coup ${move} (${name})`,
+      search: (name) => `Recherche lancée pour ${name}`,
+      displayRoot: 'Racine d\u2019affichage : racine de recherche',
+      displayedNode: (key) => `Nœud affiché : ${key}`,
+      undone: (count) => `${count} coup(s) annulé(s)`,
+      reset: 'Partie réinitialisée',
+    };
 
 const entries = [];
 
@@ -33,49 +62,49 @@ function playerName(player) {
     return names[index];
   }
   if (Number.isInteger(index) && index >= 0) {
-    return `Joueur ${index + 1}`;
+    return TEXT.player(index + 1);
   }
-  return `Joueur ${player}`;
+  return TEXT.player(player);
 }
 
 function moveLabel(move) {
   if (move && typeof move.index === 'number') {
-    return `case ${move.index + 1}`;
+    return TEXT.square(move.index + 1);
   }
   if (move && typeof move.col === 'number') {
-    return `colonne ${move.col + 1}`;
+    return TEXT.column(move.col + 1);
   }
   return JSON.stringify(move);
 }
 
 function outcomeLabel(outcome) {
   if (outcome === 'draw') {
-    return 'Partie nulle';
+    return TEXT.draw;
   }
-  return `Victoire : ${playerName(toNumber(outcome))}`;
+  return TEXT.win(playerName(toNumber(outcome)));
 }
 
 if (page) {
   page.addEventListener('drl-move-played', (event) => {
-    push(`Coup ${moveLabel(event.detail.move)} (${playerName(event.detail.player)})`);
+    push(TEXT.move(moveLabel(event.detail.move), playerName(event.detail.player)));
   });
   page.addEventListener('drl-search-started', (event) => {
-    push(`Recherche lancée pour ${playerName(event.detail.player)}`);
+    push(TEXT.search(playerName(event.detail.player)));
   });
   page.addEventListener('drl-root-changed', (event) => {
     push(
       event.detail.nodeKey === null
-        ? 'Racine d\u2019affichage : racine de recherche'
-        : `Nœud affiché : ${event.detail.nodeKey}`,
+        ? TEXT.displayRoot
+        : TEXT.displayedNode(event.detail.nodeKey),
     );
   });
   page.addEventListener('drl-game-over', (event) => {
     push(outcomeLabel(event.detail.outcome));
   });
   page.addEventListener('drl-move-undone', (event) => {
-    push(`${event.detail.plies} coup(s) annulé(s)`);
+    push(TEXT.undone(event.detail.plies));
   });
   page.addEventListener('drl-game-reset', () => {
-    push('Partie réinitialisée');
+    push(TEXT.reset);
   });
 }

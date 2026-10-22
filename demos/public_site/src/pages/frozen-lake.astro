@@ -1,5 +1,6 @@
 ---
 import { Content, frontmatter } from '../content/frozen-lake.md';
+import { ui } from '../i18n/site';
 import DemoPage from '../layouts/DemoPage.astro';
 import frozenLakeGlue from '../scripts/frozen-lake-demo.js?raw';
 ---
@@ -7,7 +8,7 @@ import frozenLakeGlue from '../scripts/frozen-lake-demo.js?raw';
 <DemoPage
   title={frontmatter.title}
   description={frontmatter.description}
-  eyebrow="Apprentissage par renforcement"
+  eyebrow={ui.fr.eyebrowFrozenLake}
 >
   <Fragment slot="demo">
     <section class="demo-surface">
@@ -16,49 +17,49 @@ import frozenLakeGlue from '../scripts/frozen-lake-demo.js?raw';
           <div class="demo-controls">
             <drl-slider
               data-param="learning-rate"
-              label="Taux d'apprentissage"
+              label={ui.fr.sliders.learningRate}
               min="0.01"
               max="1"
               step="0.01"
               value="0.1"></drl-slider>
             <drl-slider
               data-param="epsilon"
-              label="Epsilon (exploration)"
+              label={ui.fr.sliders.epsilon}
               min="0"
               max="1"
               step="0.01"
               value="0.1"></drl-slider>
             <drl-slider
               data-param="discount-factor"
-              label="Facteur d'actualisation"
+              label={ui.fr.sliders.discountFactor}
               min="0.5"
               max="1"
               step="0.01"
               value="0.99"></drl-slider>
             <drl-slider
               data-param="slip-probability"
-              label="Glissade (probabilité)"
+              label={ui.fr.sliders.slipProbability}
               min="0"
               max="1"
               step="0.05"
               value="0"></drl-slider>
             <drl-slider
               data-param="initial-value"
-              label="Valeur initiale Q"
+              label={ui.fr.sliders.initialValue}
               min="-1"
               max="5"
               step="0.1"
               value="0"></drl-slider>
             <drl-slider
               data-param="candy-reward"
-              label="Récompense bonbon"
+              label={ui.fr.sliders.candyReward}
               min="0"
               max="1"
               step="0.05"
               value="0.1"></drl-slider>
             <drl-slider
               data-param="replay-batch-size"
-              label="Taille de l'échantillon"
+              label={ui.fr.sliders.replayBatchSize}
               min="1"
               max="64"
               step="1"

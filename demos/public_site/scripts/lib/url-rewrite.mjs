@@ -1,3 +1,5 @@
+import path from 'node:path';
+
 function splitSuffix(value) {
   const match = /^([^?#]*)([?#].*)?$/.exec(value);
   return {
@@ -6,60 +8,76 @@ function splitSuffix(value) {
   };
 }
 
-function hasFileExtension(path) {
-  const lastSegment = path.slice(path.lastIndexOf('/') + 1);
+function hasFileExtension(pathname) {
+  const lastSegment = pathname.slice(pathname.lastIndexOf('/') + 1);
   return lastSegment.includes('.');
+}
+
+function withDotSlash(relative) {
+  if (relative === '') return './';
+  return relative.startsWith('.') || relative.startsWith('/') ? relative : `./${relative}`;
 }
 
 /**
  * Rewrite one root-absolute URL. `kind` is `"href"` for navigable links and
- * `"src"`/`"asset"` for resources. Only a single leading slash is rewritable:
- * protocol-relative URLs, fragments, and URLs with a scheme stay untouched.
+ * `"src"`/`"asset"` for resources. `fromDir` is the dist-relative directory of
+ * the page being rewritten (`""` for root pages, `"en"` for nested pages).
+ * Only a single leading slash is rewritable: protocol-relative URLs,
+ * fragments, and URLs with a scheme stay untouched.
  */
-export function rewriteUrl(value, kind = 'href') {
+export function rewriteUrl(value, kind = 'href', fromDir = '') {
   if (typeof value !== 'string' || !value.startsWith('/') || value.startsWith('//')) {
     return value;
   }
 
-  const { path, suffix } = splitSuffix(value);
+  const { path: urlPath, suffix } = splitSuffix(value);
+  const baseDir = fromDir || '.';
 
   if (kind !== 'href') {
-    return `./${path.slice(1)}${suffix}`;
+    const targetPath = urlPath.slice(1);
+    if (targetPath === '') {
+      const relative = path.posix.relative(baseDir, '.');
+      return relative === '' ? `./${suffix}` : `${relative}/${suffix}`;
+    }
+
+    const relative = path.posix.relative(baseDir, targetPath);
+    const rewritten = urlPath.endsWith('/') ? `${relative}/` : relative;
+    return `${withDotSlash(rewritten)}${suffix}`;
   }
 
-  if (path === '/' || path === '') {
-    return `./index.html${suffix}`;
+  if (urlPath === '' || urlPath === '/') {
+    return `${withDotSlash(path.posix.relative(baseDir, 'index.html'))}${suffix}`;
   }
 
-  let target = path.replace(/\/+$/, '');
-  if (target === '') {
-    return `./index.html${suffix}`;
-  }
-
-  if (!hasFileExtension(target)) {
+  let target = urlPath.slice(1);
+  if (urlPath.endsWith('/')) {
+    target = `${target}index.html`;
+  } else if (!hasFileExtension(target)) {
     target = `${target}.html`;
   }
 
-  return `./${target.slice(1)}${suffix}`;
+  return `${withDotSlash(path.posix.relative(baseDir, target))}${suffix}`;
 }
 
-function rewriteCssUrl(match, quote, value) {
+function rewriteCssUrl(match, quote, value, fromDir) {
   if (!value.startsWith('/') || value.startsWith('//')) {
     return match;
   }
-  return `url(${quote}${rewriteUrl(value, 'asset')}${quote})`;
+  return `url(${quote}${rewriteUrl(value, 'asset', fromDir)}${quote})`;
 }
 
-function rewriteChunk(chunk) {
+function rewriteChunk(chunk, fromDir) {
   return chunk
     .replace(
       /(\s)(href|src)\s*=\s*(["'])(\/(?!\/)[^"']*)\3/gi,
       (_match, space, name, quote, value) => {
         const kind = name.toLowerCase() === 'href' ? 'href' : 'src';
-        return `${space}${name}=${quote}${rewriteUrl(value, kind)}${quote}`;
+        return `${space}${name}=${quote}${rewriteUrl(value, kind, fromDir)}${quote}`;
       },
     )
-    .replace(/url\(\s*(["']?)(\/(?!\/)[^"')]*?)\1\s*\)/gi, rewriteCssUrl);
+    .replace(/url\(\s*(["']?)(\/(?!\/)[^"')]*?)\1\s*\)/gi, (match, quote, value) =>
+      rewriteCssUrl(match, quote, value, fromDir),
+    );
 }
 
 /**
@@ -68,15 +86,15 @@ function rewriteChunk(chunk) {
  * Inline script bodies stay untouched because they contain JavaScript, not
  * markup. The opening tag of an external script is still rewritten.
  */
-export function rewriteHtml(html) {
+export function rewriteHtml(html, fromDir = '') {
   const parts = html.split(/(<script\b[^>]*>[\s\S]*?<\/script>)/i);
 
   return parts
     .map((part, index) => {
       if (index % 2 === 1) {
-        return part.replace(/^<script\b[^>]*>/i, (tag) => rewriteChunk(tag));
+        return part.replace(/^<script\b[^>]*>/i, (tag) => rewriteChunk(tag, fromDir));
       }
-      return rewriteChunk(part);
+      return rewriteChunk(part, fromDir);
     })
     .join('');
 }

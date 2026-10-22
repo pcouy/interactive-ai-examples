@@ -1,5 +1,6 @@
 ---
 import { Content, frontmatter } from '../content/deep-blue.md';
+import { ui } from '../i18n/site';
 import DemoPage from '../layouts/DemoPage.astro';
 import deepBlueGlue from '../scripts/deep-blue-demo.js?raw';
 ---
@@ -7,7 +8,7 @@ import deepBlueGlue from '../scripts/deep-blue-demo.js?raw';
 <DemoPage
   title={frontmatter.title}
   description={frontmatter.description}
-  eyebrow="Recherche adversariale"
+  eyebrow={ui.fr.eyebrowDeepBlue}
   wide
 >
   <Fragment slot="demo">

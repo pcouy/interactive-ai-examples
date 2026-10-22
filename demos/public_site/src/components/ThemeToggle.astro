@@ -1,4 +1,11 @@
 ---
+import { DEFAULT_LANG, ui, type Lang } from '../i18n/site';
+
+interface Props {
+  lang?: Lang;
+}
+
+const { lang = DEFAULT_LANG } = Astro.props;
 ---
 
 <button
@@ -6,7 +13,7 @@
   type="button"
   data-theme-toggle
   aria-pressed="false"
-  aria-label="Passer au thème sombre"
+  aria-label={ui[lang].themeToDark}
 >
   <span class="theme-toggle__icon theme-toggle__icon--moon" aria-hidden="true">
     <svg
@@ -35,7 +42,7 @@
       ></path>
     </svg>
   </span>
-  <span class="theme-toggle__label" data-theme-label>Passer au thème sombre</span>
+  <span class="theme-toggle__label" data-theme-label>{ui[lang].themeToDark}</span>
 </button>
 <script is:inline>
   window.__drlSyncThemeToggle?.();

@@ -1,5 +1,6 @@
 ---
 import { Content as HomeContent } from '../content/home.md';
+import { ui } from '../i18n/site';
 import Base from '../layouts/Base.astro';
 ---
 
@@ -7,17 +8,14 @@ import Base from '../layouts/Base.astro';
   <section class="home-hero">
     <div class="home-hero__inner">
       <div>
-        <p class="eyebrow">Apprentissage par renforcement et recherche adversariale</p>
-        <h1>Comprendre les bases de l'IA, un pas à la fois.</h1>
-        <p class="lede">
-          Deux démonstrations interactives : la recherche adversariale arborescente de Deep Blue et
-          l'apprentissage par renforcement sur l'environnement Frozen Lake. Tout s'exécute dans le navigateur.
-        </p>
+        <p class="eyebrow">{ui.fr.home.eyebrow}</p>
+        <h1>{ui.fr.home.title}</h1>
+        <p class="lede">{ui.fr.home.lede}</p>
         <div class="home-actions">
-          <a class="button button--primary" href="/deep-blue">Explorer Deep Blue</a>
-          <a class="button button--ghost" href="/frozen-lake">Ouvrir Frozen Lake</a>
+          <a class="button button--primary" href="/deep-blue">{ui.fr.home.deepBlueCta}</a>
+          <a class="button button--ghost" href="/frozen-lake">{ui.fr.home.frozenLakeCta}</a>
         </div>
-        <p class="home-meta">Deux démos · Aucune installation</p>
+        <p class="home-meta">{ui.fr.home.meta}</p>
       </div>
 
       <div class="home-motif" aria-hidden="true">
@@ -42,32 +40,26 @@ import Base from '../layouts/Base.astro';
   </section>
 
   <section class="section" aria-labelledby="demos-title">
-    <h2 class="section-title" id="demos-title">Les démos</h2>
+    <h2 class="section-title" id="demos-title">{ui.fr.home.demosTitle}</h2>
     <div class="card-grid">
       <article class="card">
-        <p class="card__eyebrow">Recherche adversariale</p>
+        <p class="card__eyebrow">{ui.fr.home.deepBlueEyebrow}</p>
         <h3 class="card__title">Deep Blue</h3>
-        <p class="card__body">
-          Un moteur de recherche qui évalue les coups au tic-tac-toe et au Puissance 4. Réglez
-          la profondeur et l'évaluateur, puis jouez contre l'agent.
-        </p>
-        <a class="card__link" href="/deep-blue">Voir la démo</a>
+        <p class="card__body">{ui.fr.home.deepBlueBody}</p>
+        <a class="card__link" href="/deep-blue">{ui.fr.home.cardLink}</a>
       </article>
 
       <article class="card">
-        <p class="card__eyebrow">Apprentissage par renforcement</p>
+        <p class="card__eyebrow">{ui.fr.home.frozenLakeEyebrow}</p>
         <h3 class="card__title">Frozen Lake</h3>
-        <p class="card__body">
-          Un agent Q-learning apprend à traverser un lac gelé. Suivez la table Q, les
-          récompenses et l'exploration, épisode après épisode.
-        </p>
-        <a class="card__link" href="/frozen-lake">Voir la démo</a>
+        <p class="card__body">{ui.fr.home.frozenLakeBody}</p>
+        <a class="card__link" href="/frozen-lake">{ui.fr.home.cardLink}</a>
       </article>
     </div>
   </section>
 
   <section class="section" aria-labelledby="about-title">
-    <h2 class="section-title" id="about-title">À propos</h2>
+    <h2 class="section-title" id="about-title">{ui.fr.home.aboutTitle}</h2>
     <div class="prose">
       <HomeContent />
     </div>

@@ -129,3 +129,53 @@ test('rewriteHtml rewrites url() inside a style block', () => {
   assert.equal(rewriteHtml(html), '<style>.a{background:url(./x)}</style>');
 });
 
+test('rewriteUrl maps root pages from a nested page', () => {
+  assert.equal(rewriteUrl('/', 'href', 'en'), '../index.html');
+  assert.equal(rewriteUrl('/deep-blue', 'href', 'en'), '../deep-blue.html');
+  assert.equal(rewriteUrl('/frozen-lake', 'href', 'en'), '../frozen-lake.html');
+});
+
+test('rewriteUrl maps nested pages from a root page', () => {
+  assert.equal(rewriteUrl('/en/', 'href', ''), './en/index.html');
+  assert.equal(rewriteUrl('/en/deep-blue', 'href', ''), './en/deep-blue.html');
+  assert.equal(rewriteUrl('/en/frozen-lake', 'href', ''), './en/frozen-lake.html');
+});
+
+test('rewriteUrl maps nested pages from a nested page', () => {
+  assert.equal(rewriteUrl('/en/', 'href', 'en'), './index.html');
+  assert.equal(rewriteUrl('/en/deep-blue', 'href', 'en'), './deep-blue.html');
+  assert.equal(
+    rewriteUrl('/en/deep-blue?mode=demo#board', 'href', 'en'),
+    './deep-blue.html?mode=demo#board',
+  );
+});
+
+test('rewriteUrl maps assets from a nested page', () => {
+  assert.equal(rewriteUrl('/katex/katex.min.css', 'asset', 'en'), '../katex/katex.min.css');
+  assert.equal(rewriteUrl('/demo/drl-demos.js', 'src', 'en'), '../demo/drl-demos.js');
+  assert.equal(rewriteUrl('/demo/board.svg', 'asset', 'en'), '../demo/board.svg');
+  assert.equal(rewriteUrl('/', 'src', 'en'), '../');
+  assert.equal(rewriteUrl('/', 'src', ''), './');
+});
+
+test('rewriteHtml rewrites root-absolute values from a nested page', () => {
+  const html = [
+    '<a href="/">Accueil</a>',
+    '<a href="/en/deep-blue">Deep Blue</a>',
+    '<a href="/deep-blue">Deep Blue FR</a>',
+    '<link rel="stylesheet" href="/katex/katex.min.css">',
+    '<a href="../index.html">Already relative</a>',
+  ].join('\n');
+
+  assert.equal(
+    rewriteHtml(html, 'en'),
+    [
+      '<a href="../index.html">Accueil</a>',
+      '<a href="./deep-blue.html">Deep Blue</a>',
+      '<a href="../deep-blue.html">Deep Blue FR</a>',
+      '<link rel="stylesheet" href="../katex/katex.min.css">',
+      '<a href="../index.html">Already relative</a>',
+    ].join('\n'),
+  );
+});
+

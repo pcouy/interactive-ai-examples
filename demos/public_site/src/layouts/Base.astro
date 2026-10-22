@@ -2,54 +2,79 @@
 import { drlPalette } from '../../../src/styles/token-values.js';
 import Footer from '../components/Footer.astro';
 import Header from '../components/Header.astro';
+import {
+  DEFAULT_LANG,
+  absoluteUrl,
+  pageFromPath,
+  relativeHref,
+  routeFor,
+  ui,
+  type Lang,
+} from '../i18n/site';
+import langInit from '../scripts/lang-init.js?raw';
 import '../styles/global.css';
 
 interface Props {
   title: string;
   description?: string;
   wide?: boolean;
+  lang?: Lang;
 }
 
 const {
   title,
-  description = "Démonstrations interactives pour comprendre l'apprentissage par renforcement et la recherche adversariale.",
+  lang = DEFAULT_LANG,
+  description = ui[lang].description,
   wide = false,
 } = Astro.props;
 
-const cleanPath = Astro.url.pathname.replace(/\.html$/, '').replace(/\/+$/, '');
-const current =
-  cleanPath === '' || cleanPath === '/index' ? 'home' : cleanPath.replace(/^\//, '');
+const page = pageFromPath(Astro.url.pathname);
 
-const siteName = 'Jouer pour comprendre l\'IA';
+const siteName = ui[lang].siteName;
 const fullTitle = title.includes(siteName) ? title : `${title} | ${siteName}`;
 // `Astro.url.pathname` is absolute, so joining it directly to `Astro.site` would
 // drop the GitHub Pages subpath. Join the site path explicitly instead.
 const siteBase = Astro.site;
 if (!siteBase) throw new Error('Set `site` in astro.config.mjs.');
-const canonicalPath = Astro.url.pathname.replace(/\/index\.html$/, '/');
-const canonical = new URL(
-  `${siteBase.pathname.replace(/\/+$/, '')}${canonicalPath}`,
-  siteBase.origin,
-);
+
+const canonical = absoluteUrl(siteBase, routeFor(lang, page));
+const frenchUrl = absoluteUrl(siteBase, routeFor('fr', page));
+const englishUrl = absoluteUrl(siteBase, routeFor('en', page));
+const alternateLocale = lang === 'fr' ? 'en_US' : 'fr_FR';
+const locale = lang === 'fr' ? 'fr_FR' : 'en_US';
+
+const langFr = relativeHref(Astro.url.pathname, routeFor('fr', page));
+const langEn = relativeHref(Astro.url.pathname, routeFor('en', page));
 ---
 
 <!doctype html>
-<html lang="fr" dir="ltr">
+<html
+  lang={lang}
+  dir="ltr"
+  data-lang-fr={langFr}
+  data-lang-en={langEn}
+  data-theme-label-to-light={ui[lang].themeToLight}
+  data-theme-label-to-dark={ui[lang].themeToDark}
+>
   <head>
     <meta charset="utf-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1" />
     <meta name="color-scheme" content="light dark" />
     <title>{fullTitle}</title>
     <meta name="description" content={description} />
-    <link rel="canonical" href={canonical.href} />
+    <link rel="canonical" href={canonical} />
+    <link rel="alternate" hreflang="fr" href={frenchUrl} />
+    <link rel="alternate" hreflang="en" href={englishUrl} />
+    <link rel="alternate" hreflang="x-default" href={frenchUrl} />
     <meta name="author" content="Pierre Couy" />
     <link rel="icon" href="/favicon.svg" type="image/svg+xml" />
     <meta property="og:type" content="website" />
     <meta property="og:site_name" content={siteName} />
-    <meta property="og:locale" content="fr_FR" />
+    <meta property="og:locale" content={locale} />
+    <meta property="og:locale:alternate" content={alternateLocale} />
     <meta property="og:title" content={fullTitle} />
     <meta property="og:description" content={description} />
-    <meta property="og:url" content={canonical.href} />
+    <meta property="og:url" content={canonical} />
     <meta name="twitter:card" content="summary" />
     <meta name="twitter:title" content={fullTitle} />
     <meta name="twitter:description" content={description} />
@@ -60,6 +85,7 @@ const canonical = new URL(
       data-dark={drlPalette.dark.bg}
     />
     <script defer data-domain="pierre-couy.dev" src="https://coucou.pierre-couy.fr/js/script.js"></script>
+    <script is:inline set:html={langInit}></script>
     <script is:inline>
       (() => {
         const KEY = 'drl-theme';
@@ -76,7 +102,9 @@ const canonical = new URL(
         }
 
         const labelFor = (theme) =>
-          theme === 'dark' ? 'Passer au thème clair' : 'Passer au thème sombre';
+          theme === 'dark'
+            ? root.dataset.themeLabelToLight
+            : root.dataset.themeLabelToDark;
 
         const applyThemeColor = (theme) => {
           if (!themeMeta) return;
@@ -148,11 +176,11 @@ const canonical = new URL(
     <link rel="stylesheet" href="/katex/katex.min.css" />
   </head>
   <body>
-    <a class="skip-link" href="#main">Aller au contenu</a>
-    <Header current={current} />
+    <a class="skip-link" href="#main">{ui[lang].skipLink}</a>
+    <Header current={page} lang={lang} />
     <main id="main" class={wide ? 'page-wide' : 'page'} tabindex="-1">
       <slot />
     </main>
-    <Footer />
+    <Footer lang={lang} />
   </body>
 </html>

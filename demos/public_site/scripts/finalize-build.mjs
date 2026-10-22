@@ -10,7 +10,7 @@ const distDir = path.resolve(scriptDir, '../dist');
 const ATTRIBUTE_ROOT = /\b(?:href|src)\s*=\s*["']\/(?!\/)/gi;
 const CSS_ROOT = /url\(\s*["']?\/(?!\/)/gi;
 const REFERENCE =
-  /(?:\b(?:href|src)\s*=\s*["'](\.\/[^"']*)["'])|(?:url\(\s*["']?(\.\/[^"')]*)["']?\s*\))/gi;
+  /(?:\b(?:href|src)\s*=\s*["']((?:\.\.?\/)[^"']*)["'])|(?:url\(\s*["']?((?:\.\.?\/)[^"')]*)["']?\s*\))/gi;
 
 async function walkHtml(directory) {
   const entries = await readdir(directory, { withFileTypes: true });
@@ -65,7 +65,8 @@ let checkedReferences = 0;
 
 for (const file of htmlFiles) {
   const before = await readFile(file, 'utf8');
-  const after = rewriteHtml(before);
+  const fromDir = path.relative(distDir, path.dirname(file)).split(path.sep).join('/');
+  const after = rewriteHtml(before, fromDir);
   const rewritten = countRootAbsolute(before);
 
   if (after !== before) {

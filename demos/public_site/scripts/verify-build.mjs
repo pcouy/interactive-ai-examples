@@ -20,6 +20,9 @@ const REQUIRED_FILES = [
   'index.html',
   'deep-blue.html',
   'frozen-lake.html',
+  'en/index.html',
+  'en/deep-blue.html',
+  'en/frozen-lake.html',
   'favicon.svg',
   'demo/drl-demos.js',
   'demo/drl-three.js',
@@ -31,12 +34,14 @@ const REQUIRED_FILES = [
 const DEMO_PAGES = {
   'deep-blue.html': 'drl-deep-blue-page',
   'frozen-lake.html': 'drl-frozen-lake',
+  'en/deep-blue.html': 'drl-deep-blue-page',
+  'en/frozen-lake.html': 'drl-frozen-lake',
 };
 
 const ROOT_ATTRIBUTE = /\b(?:href|src)\s*=\s*["']\/(?!\/)/i;
 const ROOT_CSS_URL = /url\(\s*["']?\/(?!\/)/i;
 const REFERENCE =
-  /(?:\b(?:href|src)\s*=\s*["'](\.\/[^"']*)["'])|(?:url\(\s*["']?(\.\/[^"')]*)["']?\s*\))/gi;
+  /(?:\b(?:href|src)\s*=\s*["']((?:\.\.?\/)[^"']*)["'])|(?:url\(\s*["']?((?:\.\.?\/)[^"')]*)["']?\s*\))/gi;
 const COLOUR_LITERAL = /#[0-9a-f]{3,8}\b|\brgba?\(|\bhsla?\(|\boklch\(/i;
 
 const failures = [];
@@ -165,10 +170,17 @@ check(
 );
 
 for (const file of htmlFiles) {
-  const label = path.relative(distDir, file);
+  const label = path.relative(distDir, file).split(path.sep).join('/');
   const html = await readFile(file, 'utf8');
+  const expectedLang = label.startsWith('en/') ? 'en' : 'fr';
+  const pageDir = path.posix.dirname(label);
+  const rootPrefix = path.posix.relative(pageDir, '.') || '.';
+  const assetPrefix = rootPrefix === '.' ? './' : `${rootPrefix}/`;
 
-  check(/<html\b[^>]*\blang=["']fr["']/i.test(html), `${label}: <html> must use lang="fr".`);
+  check(
+    new RegExp(`<html\\b[^>]*\\blang=["']${expectedLang}["']`, 'i').test(html),
+    `${label}: <html> must use lang="${expectedLang}".`,
+  );
 
   const h1Count = (html.match(/<h1\b/gi) ?? []).length;
   check(h1Count === 1, `${label}: expected exactly one <h1>, found ${h1Count}.`);
@@ -187,8 +199,8 @@ for (const file of htmlFiles) {
   check(/\baria-pressed=/i.test(toggle), `${label}: theme toggle is missing aria-pressed.`);
 
   check(
-    /<link\b[^>]*\bhref=["']\.\/katex\/katex\.min\.css["']/i.test(html),
-    `${label}: missing the local KaTeX stylesheet link.`,
+    html.includes(`href="${assetPrefix}katex/katex.min.css"`),
+    `${label}: missing the local KaTeX stylesheet link ${assetPrefix}katex/katex.min.css.`,
   );
 
   const currentCount = (html.match(/\baria-current=["']page["']/gi) ?? []).length;
@@ -221,25 +233,43 @@ for (const file of htmlFiles) {
   );
 
   check(
-    /<link\b[^>]*rel=["']icon["'][^>]*href=["']\.\/favicon\.svg["']/i.test(html),
-    `${label}: missing the favicon link ./favicon.svg.`,
+    /<link\b[^>]*\brel=["']icon["'][^>]*>/i.test(html) &&
+      html.includes(`href="${assetPrefix}favicon.svg"`),
+    `${label}: missing the favicon link ${assetPrefix}favicon.svg.`,
   );
 
   const blogLink =
-    /href="https:\/\/pierre-couy\.dev"[^>]*target="_blank"[^>]*rel="noopener noreferrer"[^>]*>Mon site/;
+    /href="https:\/\/pierre-couy\.dev"[^>]*target="_blank"[^>]*rel="noopener noreferrer"/;
   const githubLink =
-    /href="https:\/\/github\.com\/pcouy\/interactive-ai-examples"[^>]*target="_blank"[^>]*rel="noopener noreferrer"[^>]*>Dépôt GitHub/;
+    /href="https:\/\/github\.com\/pcouy\/interactive-ai-examples"[^>]*target="_blank"[^>]*rel="noopener noreferrer"/;
+  const externalLabels =
+    expectedLang === 'en' ? ['My site', 'GitHub repository'] : ['Mon site', 'Dépôt GitHub'];
   check(
-    blogLink.test(html) && githubLink.test(html),
-    `${label}: external links are missing or lose their new-tab attributes`,
+    blogLink.test(html) &&
+      githubLink.test(html) &&
+      externalLabels.every((text) => html.includes(`>${text}`)),
+    `${label}: external links are missing, keep their new-tab attributes, or use the wrong labels`,
   );
 
-  const baseName = path.basename(file);
-  const demoTag = DEMO_PAGES[baseName];
+  const languageLinks = [
+    ...html.matchAll(/<a\b[^>]*\bdata-set-lang=["'](fr|en)["'][^>]*>/gi),
+  ];
+  check(
+    languageLinks.length === 2 &&
+      languageLinks.some((match) => match[1] === 'fr') &&
+      languageLinks.some((match) => match[1] === 'en'),
+    `${label}: expected one FR and one EN language link.`,
+  );
+  check(
+    languageLinks.filter((match) => /\baria-current=["']true["']/i.test(match[0])).length === 1,
+    `${label}: expected exactly one language link with aria-current="true".`,
+  );
+
+  const demoTag = DEMO_PAGES[label];
   if (demoTag) {
     check(
-      /<script\b[^>]*\bsrc=["']\.\/demo\/drl-demos\.js["']/i.test(html),
-      `${label}: missing the demo bundle script ./demo/drl-demos.js.`,
+      html.includes(`src="${assetPrefix}demo/drl-demos.js"`),
+      `${label}: missing the demo bundle script ${assetPrefix}demo/drl-demos.js.`,
     );
     check(
       /<section\b[^>]*class=(["'])[^"']*\bdemo-surface\b[^"']*\1/i.test(html),
