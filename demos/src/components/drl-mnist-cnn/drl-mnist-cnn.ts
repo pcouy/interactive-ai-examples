@@ -2387,6 +2387,7 @@ export class MnistCnn extends LitElement {
       shardsByClass: groupEntriesByNetworkClass(testEntries, this.enabledClasses),
       shardSize: index.shardSize,
       seed: SEED,
+      coverage: 'full',
     });
     if (trainPlan.totalCount !== trainStore.totalCount) {
       throw new Error(

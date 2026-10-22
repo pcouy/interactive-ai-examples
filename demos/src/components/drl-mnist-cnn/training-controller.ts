@@ -225,7 +225,7 @@ export class MnistTrainingController {
       };
       if (segmented !== null) {
         this.ports.onCountsChanged(
-          segmented.trainPlan.totalCount,
+          segmented.trainPlan.epochCount,
           segmented.validation?.count ?? segmented.validationPlan?.totalCount ?? 0,
         );
         const trainer = await this.ports.createTrainer(trainerConfig);

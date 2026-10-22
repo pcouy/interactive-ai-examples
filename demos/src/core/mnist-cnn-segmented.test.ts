@@ -43,13 +43,16 @@ describe('buildSegmentPlan', () => {
     expect(plan.classes).toBe(15);
     expect(plan.shardSize).toBe(1000);
     expect(plan.totalCount).toBe(15 * 4 * 2);
+    expect(plan.epochCount).toBe(15 * 4 * 1000);
     expect(plan.roundsPerEpoch).toBe(4);
 
+    const classOrder = Array.from({ length: 15 }, (_unused, classIndex) => classIndex);
     const rounds = plan.roundsForEpoch(0);
     expect(rounds).toHaveLength(4);
     expect(new Set(rounds.map((round) => round.index))).toEqual(new Set([0, 1, 2, 3]));
     for (const round of rounds) {
       expect(round.entries).toHaveLength(15);
+      expect(round.entries.map((entry) => entry.classIndex)).toEqual(classOrder);
     }
     // Chaque fragment sélectionné apparaît une seule fois dans l'époque.
     const files = rounds.flatMap((round) => round.entries.map((entry) => entry.file));
@@ -76,13 +79,16 @@ describe('buildSegmentPlan', () => {
     }
     const plan = buildSegmentPlan({ shardsByClass, shardSize: 1000, seed: 3 });
     expect(plan.roundsPerEpoch).toBe(3);
+    expect(plan.epochCount).toBe(8 * 3 * 1000);
     expect(plan.totalCount).toBe((4 * 3 + 4 * 7) * 2);
 
+    const classOrder = Array.from({ length: 8 }, (_unused, classIndex) => classIndex);
     const rounds = plan.roundsForEpoch(0);
     expect(rounds).toHaveLength(3);
     expect(new Set(rounds.map((round) => round.index))).toEqual(new Set([0, 1, 2]));
     for (const round of rounds) {
       expect(round.entries).toHaveLength(8);
+      expect(round.entries.map((entry) => entry.classIndex)).toEqual(classOrder);
     }
     const ordered = [...rounds].sort((left, right) => left.index - right.index);
     for (let classIndex = 0; classIndex < 8; classIndex += 1) {
@@ -90,6 +96,34 @@ describe('buildSegmentPlan', () => {
       expect(sequence).toHaveLength(3);
       // Chaque classe ne sert que trois fragments distincts dans l'époque.
       expect(new Set(sequence).size).toBe(3);
+    }
+  });
+
+  it('covers every selected shard with full coverage', () => {
+    const shardsByClass: RoundEntry[][] = [];
+    for (let classIndex = 0; classIndex < 8; classIndex += 1) {
+      shardsByClass.push(regularShards(8, classIndex < 4 ? 3 : 7)[classIndex]);
+    }
+    const plan = buildSegmentPlan({
+      shardsByClass,
+      shardSize: 1000,
+      seed: 3,
+      coverage: 'full',
+    });
+    expect(plan.roundsPerEpoch).toBe(7);
+    expect(plan.epochCount).toBe(plan.totalCount);
+
+    const classOrder = Array.from({ length: 8 }, (_unused, classIndex) => classIndex);
+    const rounds = plan.roundsForEpoch(0);
+    expect(rounds).toHaveLength(7);
+    for (const round of rounds) {
+      expect(round.entries.map((entry) => entry.classIndex)).toEqual(classOrder);
+    }
+    const ordered = [...rounds].sort((left, right) => left.index - right.index);
+    for (let classIndex = 0; classIndex < 8; classIndex += 1) {
+      const sequence = ordered.map((round) => round.entries[classIndex].file);
+      const expectedShards = classIndex < 4 ? 3 : 7;
+      expect(new Set(sequence).size).toBe(expectedShards);
     }
   });
 
@@ -144,6 +178,9 @@ describe('buildSegmentPlan', () => {
     );
     expect(() => buildSegmentPlan({ shardsByClass, shardSize: 10, seed: -1 })).toThrow(/seed/i);
     expect(() => buildSegmentPlan({ shardsByClass, shardSize: 10, seed: 1.5 })).toThrow(/seed/i);
+    expect(() =>
+      buildSegmentPlan({ shardsByClass, shardSize: 10, seed: 1, coverage: 'all' as 'zip' }),
+    ).toThrow(/coverage/i);
 
     const zeroCount = regularShards(2, 2);
     zeroCount[0][0] = { ...zeroCount[0][0], count: 0 };

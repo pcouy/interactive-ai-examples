@@ -3,15 +3,18 @@
  *
  * Un jeu segmenté range les images par classe et par fragment (`shard`). Le
  * planificateur ne lit aucune image : il ordonne les fragments d'une époque en
- * « rounds », chaque round contenant exactement un fragment par classe. Le
- * nombre de rounds d'une époque est le plus petit nombre de fragments d'une
- * classe : les classes sont parcourues en parallèle (`zip`), sans cycle, donc
- * une classe plus longue ne sert que ses premiers fragments mélangés.
+ * « rounds », chaque round contenant exactement un fragment par classe.
+ *
+ * La couverture `zip` (entraînement) prend le plus petit nombre de fragments
+ * d'une classe, sans cycle : une classe plus longue ne sert que ses premiers
+ * fragments mélangés, et une autre époque peut en choisir d'autres. La
+ * couverture `full` (validation) prend le plus grand nombre et répète en cycle
+ * les classes plus courtes, donc chaque fragment sélectionné est évalué à
+ * chaque époque.
  *
  * L'ordre des rounds et l'ordre des fragments de chaque classe sont mélangés
  * séparément à partir d'une graine dérivée de la graine du plan et de l'indice
- * d'époque : deux entraînements de même graine suivent exactement le même
- * ordre, et une autre époque peut choisir d'autres fragments.
+ * d'époque : deux plans de même graine suivent exactement le même ordre.
  */
 
 import type { MnistSample } from './mnist-data.js';
@@ -52,6 +55,12 @@ export interface SegmentPlanInput {
   readonly shardSize: number;
   /** Graine entière non négative. */
   readonly seed: number;
+  /**
+   * Couverture d'une époque. `zip` (défaut) prend le minimum de fragments par
+   * classe pour l'entraînement ; `full` prend le maximum et répète les classes
+   * plus courtes pour évaluer toute la sélection, par exemple en validation.
+   */
+  readonly coverage?: 'zip' | 'full';
 }
 
 /** Plan segmenté immuable, interrogeable époque par époque. */
@@ -62,7 +71,14 @@ export interface SegmentPlan {
   readonly shardSize: number;
   /** Somme des effectifs de tous les fragments du plan. */
   readonly totalCount: number;
-  /** Nombre de rounds d'une époque : minimum de fragments par classe. */
+  /**
+   * Exemples traités par une époque. En couverture `zip`, vaut
+   * `classes * roundsPerEpoch * shardSize` : un dernier fragment plus court
+   * rend cette valeur légèrement majorante. En couverture `full`, vaut
+   * `totalCount`.
+   */
+  readonly epochCount: number;
+  /** Nombre de rounds d'une époque : minimum (`zip`) ou maximum (`full`). */
   readonly roundsPerEpoch: number;
   /** Rounds de l'époque demandée, dans un ordre mélangé déterministe. */
   roundsForEpoch(epoch: number): readonly RoundRef[];
@@ -157,6 +173,12 @@ export function buildSegmentPlan(input: SegmentPlanInput): SegmentPlan {
     throw new TypeError('mnist-cnn-segmented: a segment plan input object is required.');
   }
   const { shardsByClass, shardSize, seed } = input;
+  const coverage = input.coverage ?? 'zip';
+  if (coverage !== 'zip' && coverage !== 'full') {
+    throw new RangeError(
+      `mnist-cnn-segmented: coverage must be "zip" or "full", received ${String(input.coverage)}.`,
+    );
+  }
   if (!Array.isArray(shardsByClass)) {
     throw new TypeError('mnist-cnn-segmented: shardsByClass must be an array of classes.');
   }
@@ -171,7 +193,8 @@ export function buildSegmentPlan(input: SegmentPlanInput): SegmentPlan {
 
   const classShards: RoundEntry[][] = [];
   let totalCount = 0;
-  let roundsPerEpoch = Number.POSITIVE_INFINITY;
+  let minShards = Number.POSITIVE_INFINITY;
+  let maxShards = 0;
   for (let classIndex = 0; classIndex < classes; classIndex += 1) {
     const shards = shardsByClass[classIndex];
     if (!Array.isArray(shards) || shards.length === 0) {
@@ -179,7 +202,8 @@ export function buildSegmentPlan(input: SegmentPlanInput): SegmentPlan {
         `mnist-cnn-segmented: class ${classIndex} must have at least one shard.`,
       );
     }
-    roundsPerEpoch = Math.min(roundsPerEpoch, shards.length);
+    minShards = Math.min(minShards, shards.length);
+    maxShards = Math.max(maxShards, shards.length);
     const copied: RoundEntry[] = [];
     for (const shard of shards) {
       if (shard === null || typeof shard !== 'object') {
@@ -204,10 +228,14 @@ export function buildSegmentPlan(input: SegmentPlanInput): SegmentPlan {
     classShards.push(copied);
   }
 
+  const roundsPerEpoch = coverage === 'full' ? maxShards : minShards;
+  const epochCount = coverage === 'full' ? totalCount : classes * roundsPerEpoch * shardSize;
+
   return {
     classes,
     shardSize,
     totalCount,
+    epochCount,
     roundsPerEpoch,
     roundsForEpoch(epoch: number): readonly RoundRef[] {
       if (!Number.isInteger(epoch) || epoch < 0 || epoch > Number.MAX_SAFE_INTEGER) {
@@ -224,7 +252,9 @@ export function buildSegmentPlan(input: SegmentPlanInput): SegmentPlan {
         for (let classIndex = 0; classIndex < classes; classIndex += 1) {
           const shards = classShards[classIndex];
           const order = shardOrders[classIndex];
-          entries.push(shards[order[roundIndex]]);
+          const shardIndex =
+            coverage === 'full' ? order[roundIndex % shards.length] : order[roundIndex];
+          entries.push(shards[shardIndex]);
         }
         rounds.push({ index: roundIndex, entries });
       }
