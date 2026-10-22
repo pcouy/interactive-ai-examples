@@ -32,6 +32,7 @@ import { createHash } from 'node:crypto';
 import { mkdir, readFile, rename, unlink, writeFile } from 'node:fs/promises';
 import { dirname, join, resolve } from 'node:path';
 import { fileURLToPath, pathToFileURL } from 'node:url';
+import { writeCacheDirTag } from './cachedir-tag.mjs';
 import { DATASET_SOURCE_IDS, DATASET_SOURCES, datasetFileUrl } from './dataset-sources.mjs';
 
 const SCRIPT_DIRECTORY = dirname(fileURLToPath(import.meta.url));
@@ -223,7 +224,9 @@ export async function main(argv = process.argv.slice(2), options = {}) {
   }
 
   for (const id of ids) {
-    await mkdir(join(targetRoot, id), { recursive: true });
+    const datasetDirectory = join(targetRoot, id);
+    await mkdir(datasetDirectory, { recursive: true });
+    await writeCacheDirTag(datasetDirectory);
   }
 
   let failures = 0;

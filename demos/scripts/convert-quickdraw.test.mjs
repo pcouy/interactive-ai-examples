@@ -383,6 +383,7 @@ describe('main with fifteen classes', () => {
 
     const names = await readdir(outputDir);
     expect(names).toContain(missingShard);
+    expect(names).toContain('CACHEDIR.TAG');
 
     const index = JSON.parse(await readFile(join(outputDir, 'index.json'), 'utf8'));
     expect(index.version).toBe(2);

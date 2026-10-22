@@ -203,7 +203,7 @@ describe('main with injected sources', () => {
 
     const written = await readFile(join(targetRoot, 'fake', 'x.bin'));
     expect([...written]).toEqual([...bytes]);
-    expect(await readdir(join(targetRoot, 'fake'))).toEqual(['x.bin']);
+    expect((await readdir(join(targetRoot, 'fake'))).sort()).toEqual(['CACHEDIR.TAG', 'x.bin']);
   });
 
   it('fails on a checksum mismatch and leaves no target or temporary file', async () => {
@@ -215,7 +215,7 @@ describe('main with injected sources', () => {
     expect(await main(['--only', 'fake'], { sources, targetRoot, fetchImpl })).toBe(1);
 
     const entries = await readdir(join(targetRoot, 'fake'));
-    expect(entries).toEqual([]);
+    expect(entries).toEqual(['CACHEDIR.TAG']);
   });
 });
 

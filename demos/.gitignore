@@ -4,6 +4,7 @@ dist/
 # Archives de données téléchargées à l'installation (npm run mnist:data)
 public/datasets/**/*.gz
 public/datasets/**/index.json
+public/datasets/**/CACHEDIR.TAG
 
 # Fichiers .npy bruts de QuickDraw téléchargés par le convertisseur
 .cache/

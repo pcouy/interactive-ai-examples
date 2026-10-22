@@ -23,6 +23,7 @@ import { createHash } from 'node:crypto';
 import { mkdir, readFile, rename, unlink, writeFile } from 'node:fs/promises';
 import { dirname, join, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
+import { writeCacheDirTag } from './cachedir-tag.mjs';
 import { MNIST_BASE_URL, MNIST_FILES } from './mnist-data-manifest.mjs';
 
 const SCRIPT_DIRECTORY = dirname(fileURLToPath(import.meta.url));
@@ -81,6 +82,7 @@ async function download(file) {
 async function main() {
   console.log(`mnist:data target directory: ${TARGET_DIRECTORY}`);
   await mkdir(TARGET_DIRECTORY, { recursive: true });
+  await writeCacheDirTag(TARGET_DIRECTORY);
   let failures = 0;
   for (const file of MNIST_FILES) {
     if (await isAlreadyValid(file)) {

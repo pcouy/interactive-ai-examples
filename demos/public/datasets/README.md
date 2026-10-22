@@ -66,7 +66,10 @@ télécharge rien ; si une sortie manque, elle re-télécharge l'archive.
 
 ## Fichiers générés
 
-Chaque jeu écrit ses fichiers sous `public/datasets/<id>/`.
+Chaque jeu écrit ses fichiers sous `public/datasets/<id>/`, avec un fichier
+`CACHEDIR.TAG`. Ce marqueur signale aux outils de sauvegarde que le répertoire ne
+contient que des données téléchargeables, conformément à
+<https://bford.info/cachedir/>.
 
 Un jeu IDX écrit quatre archives :
 
@@ -82,8 +85,9 @@ Un jeu segmenté écrit :
   d'apprentissage ;
 - `gallery.idx.gz` et `gallery-labels-idx1-ubyte.gz` pour la galerie de validation.
 
-Tous ces fichiers sont générés par les trois commandes ci-dessus. Les fichiers `.gz` et
-chaque `index.json` sont ignorés par Git, tout comme le dossier `.cache/`. Le manifeste
+Tous ces fichiers sont générés par les trois commandes ci-dessus. Les fichiers `.gz`,
+chaque `index.json` et chaque `CACHEDIR.TAG` sont ignorés par Git, tout comme le dossier
+`.cache/`. Le manifeste
 `public/datasets/mnist/model-v1.json` reste versionné. La source de vérité sur un clone
 est la commande, pas les fichiers.
 

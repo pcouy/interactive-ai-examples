@@ -52,6 +52,7 @@ import { mkdir, readFile, rename, stat, unlink, writeFile } from 'node:fs/promis
 import { dirname, join, resolve } from 'node:path';
 import { fileURLToPath, pathToFileURL } from 'node:url';
 import { gzipSync as gzipSyncZlib } from 'node:zlib';
+import { writeCacheDirTag } from './cachedir-tag.mjs';
 import { QUICKDRAW_BASE_URL, QUICKDRAW_FILES } from './dataset-sources.mjs';
 
 const SCRIPT_DIRECTORY = dirname(fileURLToPath(import.meta.url));
@@ -678,6 +679,7 @@ export async function main(argv = process.argv.slice(2), options = {}) {
 
   await mkdir(outputDir, { recursive: true });
   await mkdir(cacheDir, { recursive: true });
+  await writeCacheDirTag(outputDir);
 
   const classNames = QUICKDRAW_CLASS_NAMES;
   if (classNames.length !== files.length) {

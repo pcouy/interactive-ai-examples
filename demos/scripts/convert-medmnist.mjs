@@ -48,6 +48,7 @@ import { mkdir, readFile, rename, stat, unlink, writeFile } from 'node:fs/promis
 import { dirname, join, resolve } from 'node:path';
 import { fileURLToPath, pathToFileURL } from 'node:url';
 import { gzipSync as gzipRaw, inflateRawSync } from 'node:zlib';
+import { writeCacheDirTag } from './cachedir-tag.mjs';
 import { MEDMNIST_BASE_URL, MEDMNIST_FILES } from './dataset-sources.mjs';
 
 const SCRIPT_DIRECTORY = dirname(fileURLToPath(import.meta.url));
@@ -925,6 +926,7 @@ export async function main(argv = process.argv.slice(2), options = {}) {
       const outputDir = join(targetRoot, file.dataset);
       const rawPath = join(cacheRoot, file.name);
       const indexPath = join(outputDir, 'index.json');
+      await writeCacheDirTag(outputDir);
       if (
         !parsed.force &&
         !existsSync(rawPath) &&

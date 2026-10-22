@@ -375,6 +375,7 @@ describe('main', () => {
 
     const datasetDir = join(outputDir, 'pneumoniamnist');
     const names = (await readdir(datasetDir)).sort();
+    expect(names).toContain('CACHEDIR.TAG');
     expect(names).toContain('index.json');
     expect(names).toContain('train-labels-idx1-ubyte.gz');
     expect(names).toContain('test-labels-idx1-ubyte.gz');
