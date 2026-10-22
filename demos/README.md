@@ -10,6 +10,95 @@ cd demos
 npm install
 ```
 
+## Localisation
+
+Les composants rendent leurs textes en français et en anglais. Le français est la langue
+par défaut.
+
+### Catalogues `messages.ts`
+
+Chaque composant qui affiche du texte possède un catalogue `messages.ts` dans son
+dossier, par exemple `src/components/drl-frozen-lake/messages.ts`. Le catalogue exporte
+deux objets, `fr` et `en`, avec les mêmes clés, et il est typé `Catalog<Key>` :
+
+```ts
+import type { Locale } from '../../i18n/locale.js';
+import { type Catalog, type TranslateParams, translate } from '../../i18n/translate.js';
+
+export type DemoMessageKey = 'title' | 'status';
+
+export const DEMO_MESSAGES: Catalog<DemoMessageKey> = {
+  fr: { title: 'Titre', status: 'Épisode {episode}' },
+  en: { title: 'Title', status: 'Episode {episode}' },
+};
+
+export function demoMessage(
+  locale: Locale,
+  key: DemoMessageKey,
+  params?: TranslateParams,
+): string {
+  return translate(locale, DEMO_MESSAGES, key, params);
+}
+```
+
+`Catalog<Key>` vaut `Record<Locale, Record<Key, string>>`. `Locale` vaut `'fr' | 'en'`
+et `DEFAULT_LOCALE` vaut `'fr'` (`src/i18n/locale.ts`). `normalizeLocale` accepte les
+balises BCP 47 telles que `en-US` et `fr-CA`. `translate(locale, catalog, key,
+params)` remplace les espaces réservés `{nom}` par les valeurs de `params`. Il retombe
+sur le français, puis sur la clé brute, si la traduction manque.
+
+Le test `src/i18n/catalog-parity.test.ts` charge chaque fichier `*messages.ts` avec
+`import.meta.glob` et échoue si les clés `fr` et `en` diffèrent. Il compare aussi les
+ensembles d'espaces réservés `{nom}` de chaque message. Il couvre aussi
+`game-messages.ts` et `replay-messages.ts` :
+
+```bash
+cd demos && npx vitest run src/i18n/catalog-parity.test.ts
+```
+
+### `LocalizedElement` et l'attribut `lang`
+
+`src/base/localized-element.ts` fournit `LocalizedElement`. La classe expose une
+propriété réactive `locale` :
+
+- type `Locale`, valeur par défaut `'fr'` ;
+- attribut HTML `lang`, reflété (`reflect: true`) ;
+- convertisseur `localeConverter` : une valeur absente ou inconnue retombe sur `'fr'` ;
+- méthode `onLocaleChange()`, appelée après la mise à jour quand `locale` change.
+
+`DemoElement` hérite de `LocalizedElement`, donc toutes les démos héritent de `locale`.
+Un changement de `locale` relance le rendu Lit.
+
+Un parent transmet la langue à ses enfants en liant l'attribut dans son template Lit :
+
+```ts
+html`<drl-controls lang=${this.locale}></drl-controls>`;
+html`<drl-eval-tree lang=${locale}></drl-eval-tree>`;
+```
+
+La page hôte pose `lang="en"` sur l'élément racine, par exemple
+`<drl-frozen-lake lang="en">`. Chaque parent doit ensuite transmettre `this.locale` à ses
+enfants. Sans attribut, l'élément garde `'fr'`.
+
+### Fonctions pures
+
+Une fonction pure qui formate du texte localisé prend `locale: Locale = 'fr'` en
+**dernier** paramètre :
+
+```ts
+function formatScoreValue(value: number, locale: Locale = 'fr'): string
+function replayHeader(state: FrozenLakeReplayState, locale: Locale = 'fr'): string
+```
+
+La valeur par défaut garde les appels existants en français. L'appelant qui connaît la
+langue passe `this.locale` ou la variable `locale` locale.
+
+### Playground
+
+Le playground `playground/` sert au développement. Il ne passe pas d'attribut `lang`
+aux éléments de démo, donc `locale` garde sa valeur par défaut `'fr'`. Ses textes
+localisés restent en français.
+
 ## Scripts
 
 | Commande | Rôle |
@@ -17,7 +106,7 @@ npm install
 | `npm run new -- <nom> [--3d]` | Génère une nouvelle démo (plop) |
 | `npm run dev` | Vite : galerie playground + pages démo avec HMR (ouvre `/playground/index.html`) |
 | `npm run build` | Vite : `dist/drl-demos.js`, `dist/drl-three.js`, `dist/drl-index.js` et `datasets/**` |
-| `npm run test` / `npm run test:watch` | Vitest : core, tokens, garde de palette et composants |
+| `npm run test` / `npm run test:watch` | Vitest : core, tokens, garde de palette, composants et parité des catalogues |
 | `npm run typecheck` | `tsc --noEmit` (strict) |
 | `npm run lint` / `npm run format` | Biome |
 
@@ -32,6 +121,10 @@ commandes ci-dessous les téléchargent et les convertissent. Toutes écrivent d
 | `npm run datasets:data` | MNIST, Fashion-MNIST |
 | `npm run quickdraw:data` | QuickDraw |
 | `npm run medmnist:data` | Sept jeux MedMNIST |
+
+La démo `drl-mnist-cnn` localise les noms de classes de Fashion-MNIST et de QuickDraw.
+Les descriptions, licences et attributions des jeux de données ne s'affichent pas dans
+la démo.
 
 Voir `public/datasets/README.md` pour la liste des jeux, le format des fichiers, les
 pourcentages de chargement et les licences.
