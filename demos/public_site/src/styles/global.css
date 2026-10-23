@@ -538,6 +538,7 @@ textarea {
 }
 
 .card {
+  position: relative;
   display: flex;
   flex-direction: column;
   gap: var(--space-3);
@@ -587,12 +588,28 @@ textarea {
   text-decoration: none;
 }
 
+.card__link::before {
+  content: '';
+  position: absolute;
+  inset: 0;
+  border-radius: var(--radius-lg);
+}
+
 .card__link::after {
   content: ' →';
 }
 
 .card__link:hover {
   text-decoration: underline;
+}
+
+.card:has(.card__link:focus-visible) {
+  outline: 2px solid var(--site-accent);
+  outline-offset: 2px;
+}
+
+.card__link:focus-visible {
+  outline: none;
 }
 
 /* --------------------------------------------------------------------------
