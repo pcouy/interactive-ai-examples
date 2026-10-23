@@ -59,16 +59,21 @@ const MAPS: Readonly<Record<FrozenLakeSize, readonly string[]>> = {
   // User-editable template: change these rows to build your own 6x6 lake.
   // The template showcases a wall (W) and a candy (C). Every row must have
   // exactly 6 characters and the map needs exactly one 'S'.
-  6: ['SFFFFF', 'FHFWFF', 'FFFHFF', 'HHFFCF', 'FFFHFF', 'FFFFFG'],
+  6: ['FFFSFF',
+      'FWWWHF',
+      'FWGFFF',
+      'FWFFFH',
+      'FWWWFF',
+      'FFFFFF'],
   8: [
-    'SFFFFFFF',
-    'FFFFFFFF',
-    'FFFHFFFF',
-    'FFFFFHFF',
-    'FFFHFFFF',
-    'FHHFFFHF',
-    'FHFFHFHF',
-    'FFFHFFFG',
+    'FFFFFFFS',
+    'FWWWWWWF',
+    'FWFFFFHF',
+    'FWFFFFHF',
+    'FWFHFFHF',
+    'FWFWFFHF',
+    'FWFWFFFF',
+    'FFFWFGFH',
   ],
 };
 
