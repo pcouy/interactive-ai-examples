@@ -3,6 +3,8 @@ import { unified } from '@astrojs/markdown-remark';
 import rehypeKatex from 'rehype-katex';
 import remarkMath from 'remark-math';
 
+import { demoWatchPlugin } from './scripts/vite-plugin-demo-watch.mjs';
+
 // Astro 7 uses Sätteri by default. `unified()` opts the Markdown pipeline back
 // into remark/rehype so the demos can share the KaTeX setup used elsewhere.
 export default defineConfig({
@@ -19,5 +21,8 @@ export default defineConfig({
       remarkPlugins: [remarkMath],
       rehypePlugins: [[rehypeKatex, { strict: false }]],
     }),
+  },
+  vite: {
+    plugins: [demoWatchPlugin()],
   },
 });

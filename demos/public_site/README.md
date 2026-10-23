@@ -43,6 +43,12 @@ Ouvrez l'URL affichée par Astro (par défaut `http://localhost:4321/`).
 `public/demo/`, copie KaTeX vers `public/katex/` et régénère
 `src/styles/palette.generated.css`.
 
+Pendant `npm run dev`, le serveur surveille `demos/src/` et les fichiers de configuration
+du build des démos (`demos/vite.config.ts`, `demos/package.json`, `demos/tsconfig.json`).
+Une modification lance `npm --prefix .. run build`, puis `scripts/sync-demo-assets.mjs`,
+et recharge la page. Le premier build vient toujours de `predev`. Aucun redémarrage du
+serveur de dev n'est nécessaire.
+
 `npm run dev` a besoin de `demos/node_modules`. Lancez `npm install` dans `demos/` avant le
 premier `npm run dev`.
 
@@ -464,9 +470,10 @@ npm --prefix .. run build
 npm run sync
 ```
 
-Redémarrez ensuite `npm run dev`. Le script `sync-demo-assets.mjs` refuse maintenant un
-bundle plus ancien que le fichier le plus récent de `demos/src` ou que les fichiers de
-configuration des démos. Le message demande de lancer `npm --prefix .. run build`.
+Le serveur de dev applique ces changements sans redémarrage. Sinon, relancez `npm run dev`.
+Le script `sync-demo-assets.mjs` refuse maintenant un bundle plus ancien que le fichier le
+plus récent de `demos/src` ou que les fichiers de configuration des démos. Le message
+demande de lancer `npm --prefix .. run build`.
 
 **404 dans un sous-chemin.** Utilisez le dossier `dist/` complet et une URL d'entrée qui
 finit par `/` ou `index.html`. Vérifiez que les fichiers sont copiés avec leur
