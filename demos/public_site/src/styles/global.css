@@ -920,11 +920,12 @@ textarea {
 
 @media (max-width: 900px) {
   .home-hero__inner {
-    grid-template-columns: minmax(0, 1fr);
+    grid-template-columns: minmax(0, 1fr) auto;
+    gap: var(--space-5);
   }
 
   .home-motif {
-    width: min(16rem, 70%);
+    width: clamp(8rem, 18vw, 10rem);
     margin-inline: 0;
   }
 
@@ -965,6 +966,10 @@ textarea {
 
   .home-hero {
     padding-block: var(--space-6);
+  }
+
+  .home-hero__inner {
+    grid-template-columns: minmax(0, 1fr);
   }
 
   .home-actions {
