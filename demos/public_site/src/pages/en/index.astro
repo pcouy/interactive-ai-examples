@@ -52,14 +52,14 @@ const copy = ui.en.home;
         <p class="card__eyebrow">{ui.en.eyebrowDeepBlue}</p>
         <h3 class="card__title">{ui.en.nav.deepBlue}</h3>
         <p class="card__body">{copy.deepBlueBody}</p>
-        <a class="card__link" href={routeFor('en', 'deep-blue')}>{copy.cardLink}</a>
+        <a class="card__link" href={routeFor('en', 'deep-blue')} aria-label={copy.cardLinkDeepBlue}>{copy.cardLink}</a>
       </article>
 
       <article class="card">
         <p class="card__eyebrow">{ui.en.eyebrowFrozenLake}</p>
         <h3 class="card__title">{ui.en.nav.frozenLake}</h3>
         <p class="card__body">{copy.frozenLakeBody}</p>
-        <a class="card__link" href={routeFor('en', 'frozen-lake')}>{copy.cardLink}</a>
+        <a class="card__link" href={routeFor('en', 'frozen-lake')} aria-label={copy.cardLinkFrozenLake}>{copy.cardLink}</a>
       </article>
     </div>
   </section>

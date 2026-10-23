@@ -46,6 +46,8 @@ const fr = {
     frozenLakeBody:
       "Un agent Q-learning apprend à traverser un lac gelé. Suivez la table Q, les récompenses et l'exploration, épisode après épisode.",
     cardLink: 'Voir la démo',
+    cardLinkDeepBlue: 'Voir la démo : Deep Blue',
+    cardLinkFrozenLake: 'Voir la démo : Frozen Lake',
     aboutTitle: 'À propos',
   },
   sliders: {
@@ -99,6 +101,8 @@ const en: typeof fr = {
     frozenLakeBody:
       'A Q-learning agent learns to cross a frozen lake. Follow the Q-table, the rewards, and the exploration, episode after episode.',
     cardLink: 'View the demo',
+    cardLinkDeepBlue: 'View the demo: Deep Blue',
+    cardLinkFrozenLake: 'View the demo: Frozen Lake',
     aboutTitle: 'About',
   },
   sliders: {

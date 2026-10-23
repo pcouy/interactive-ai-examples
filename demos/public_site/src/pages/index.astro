@@ -46,14 +46,14 @@ import Base from '../layouts/Base.astro';
         <p class="card__eyebrow">{ui.fr.eyebrowDeepBlue}</p>
         <h3 class="card__title">{ui.fr.nav.deepBlue}</h3>
         <p class="card__body">{ui.fr.home.deepBlueBody}</p>
-        <a class="card__link" href="/deep-blue">{ui.fr.home.cardLink}</a>
+        <a class="card__link" href="/deep-blue" aria-label={ui.fr.home.cardLinkDeepBlue}>{ui.fr.home.cardLink}</a>
       </article>
 
       <article class="card">
         <p class="card__eyebrow">{ui.fr.eyebrowFrozenLake}</p>
         <h3 class="card__title">{ui.fr.nav.frozenLake}</h3>
         <p class="card__body">{ui.fr.home.frozenLakeBody}</p>
-        <a class="card__link" href="/frozen-lake">{ui.fr.home.cardLink}</a>
+        <a class="card__link" href="/frozen-lake" aria-label={ui.fr.home.cardLinkFrozenLake}>{ui.fr.home.cardLink}</a>
       </article>
     </div>
   </section>
