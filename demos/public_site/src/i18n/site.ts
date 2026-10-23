@@ -35,13 +35,12 @@ const fr = {
   home: {
     eyebrow: 'Apprentissage par renforcement et recherche adversariale',
     title: "Comprendre les bases de l'IA, un pas à la fois.",
+    titleSuffix: 'démos interactives',
     lede: "Deux démonstrations interactives : la recherche adversariale arborescente de Deep Blue et l'apprentissage par renforcement sur l'environnement Frozen Lake. Tout s'exécute dans le navigateur.",
     deepBlueCta: 'Explorer Deep Blue',
     frozenLakeCta: 'Ouvrir Frozen Lake',
     meta: 'Deux démos · Aucune installation',
     demosTitle: 'Les démos',
-    deepBlueEyebrow: 'Recherche adversariale',
-    frozenLakeEyebrow: 'Apprentissage par renforcement',
     deepBlueBody:
       "Un moteur de recherche qui évalue les coups au tic-tac-toe et au Puissance 4. Réglez la profondeur et l'évaluateur, puis jouez contre l'agent.",
     frozenLakeBody:
@@ -89,13 +88,12 @@ const en: typeof fr = {
   home: {
     eyebrow: 'Reinforcement learning and adversarial search',
     title: 'Understand the basics of AI, one step at a time.',
+    titleSuffix: 'interactive demos',
     lede: "Two interactive demonstrations: Deep Blue's adversarial tree search and reinforcement learning on the Frozen Lake environment. Everything runs in your browser.",
     deepBlueCta: 'Explore Deep Blue',
     frozenLakeCta: 'Open Frozen Lake',
     meta: 'Two demos · No installation',
     demosTitle: 'The demos',
-    deepBlueEyebrow: 'Adversarial search',
-    frozenLakeEyebrow: 'Reinforcement learning',
     deepBlueBody:
       'A search engine that evaluates moves in tic-tac-toe and Connect Four. Set the depth and the evaluator, then play against the agent.',
     frozenLakeBody:

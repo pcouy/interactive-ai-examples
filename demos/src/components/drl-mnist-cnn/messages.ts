@@ -7,8 +7,27 @@
  * démonstration.
  */
 
+import { COMMON_MESSAGES } from '../../i18n/common-messages.js';
 import type { Locale } from '../../i18n/locale.js';
 import { type Catalog, type TranslateParams, translate } from '../../i18n/translate.js';
+
+const SHARED_FR = {
+  randomWeights: 'Poids aléatoires',
+  trained: 'Entraîné',
+  pretrained: 'Pré-entraîné',
+  denseLayers: 'Couches denses',
+  featureMaps: 'Cartes de caractéristiques',
+  linkLabel: 'conv{layer} — entrée {input}, sortie {output}',
+} as const;
+
+const SHARED_EN = {
+  randomWeights: 'Random weights',
+  trained: 'Trained',
+  pretrained: 'Pre-trained',
+  denseLayers: 'Dense layers',
+  featureMaps: 'Feature maps',
+  linkLabel: 'conv{layer} — input {input}, output {output}',
+} as const;
 
 const mnistCnnFr = {
   drawing: 'Dessin',
@@ -24,7 +43,7 @@ const mnistCnnFr = {
   browseDigitExamplesAria: 'Parcourir les exemples du chiffre choisi',
   previous: '← Précédent',
   next: 'Suivant →',
-  clear: 'Effacer',
+  clear: COMMON_MESSAGES.fr.clear,
   trainingPanelAria: 'Entraînement du modèle',
   trainingTitle: 'Entraînement',
   trainingParagraph:
@@ -32,9 +51,9 @@ const mnistCnnFr = {
   trainingControlsAria: "Lancer et contrôler l'entraînement",
   trainOneEpoch: 'Entraîner 1 époque',
   trainInLoop: 'Entraîner en boucle',
-  pause: 'Pause',
+  pause: COMMON_MESSAGES.fr.pause,
   resetWeights: 'Réinitialiser les poids',
-  randomWeights: 'Poids aléatoires',
+  randomWeights: SHARED_FR.randomWeights,
   trainingSlidersAria:
     "Fraction des jeux d'entraînement et de validation, taux d'apprentissage et taille des lots",
   trainingData: "Données d'entraînement",
@@ -58,7 +77,7 @@ const mnistCnnFr = {
     "Chaque curseur arrête l'entraînement et reconstruit le modèle : poids pré-entraînés (manifeste) si l'architecture correspond, poids déterministes (graine {seed}) sinon. Les curseurs de profondeur changent le nombre de couches de convolution (0 à 4) et de couches denses (1 à 3) ; le choix de la fonction d'activation arrête aussi la run et reconstruit le modèle ; le manifeste pré-entraîné ne s'applique qu'à la profondeur de référence (quatre convolutions, deux couches denses) et avec la sigmoïde, toute autre configuration repart des poids déterministes. Les curseurs de largeur règlent les unités de chaque couche dense cachée (1 à 128) et arrêtent la run ; le manifeste exige la largeur de référence, soit une couche cachée de 8 unités.",
   networkDepthAria: 'Profondeur du réseau',
   convLayers: 'Couches de convolution',
-  denseLayers: 'Couches denses',
+  denseLayers: SHARED_FR.denseLayers,
   hiddenDenseSizesAria: 'Taille des couches denses cachées',
   activationFunction: "Fonction d'activation",
   activationFunctionAria: "Fonction d'activation des convolutions et de la couche cachée",
@@ -79,16 +98,16 @@ const mnistCnnFr = {
   galleryUnavailable: 'Galerie indisponible : {message}',
   chooseLoadGallery: 'Choisissez « Charger la galerie… » dans la liste pour afficher des exemples.',
   browseGalleryAria: 'Parcourir les exemples de la galerie',
-  featureMapsAria: 'Cartes de caractéristiques',
-  featureMapsTitle: 'Cartes de caractéristiques',
+  featureMapsAria: SHARED_FR.featureMaps,
+  featureMapsTitle: SHARED_FR.featureMaps,
   activationsAfter: 'Activations après {activation} ; rouge = {low}, gris = {mid}, bleu = {high}.',
   featureMapSizes: 'Tailles : {sizes}.',
   noConvMap: 'Aucune carte de convolution.',
   featureMapAria: 'Carte de caractéristiques {name}, canal {channel}',
   channel: 'canal {channel}',
-  apply: 'Appliquer',
+  apply: COMMON_MESSAGES.fr.apply,
   cancel: 'Annuler',
-  denseLayersTitle: 'Couches denses',
+  denseLayersTitle: SHARED_FR.denseLayers,
   activationsOf: 'Activations de {title}',
   probabilitiesMaxAria: 'Probabilités par classe, maximum surligné',
   classesLegend: 'Classes ({count} sur {total})',
@@ -99,7 +118,7 @@ const mnistCnnFr = {
     "Dessinez une entrée à la souris ou au doigt, ou choisissez un exemple de {name} ; l'inférence se met à jour pendant le tracé.",
   galleryInputHintExample:
     'Exemple de la galerie {source} {name} : la classe attendue est « {className} ».',
-  linkLabel: 'conv{layer} — entrée {input}, sortie {output}',
+  linkLabel: SHARED_FR.linkLabel,
   linkWeightCount: '{name} · 1 poids sur {count}',
   filterSubtitleMean:
     "Moyenne des canaux d'entrée pour chaque canal de sortie ; bleu = positif, rouge = négatif.",
@@ -136,7 +155,7 @@ export const MNIST_CNN_MESSAGES: Catalog<MnistCnnMessageKey> = {
     browseDigitExamplesAria: 'Browse the examples of the selected digit',
     previous: '← Previous',
     next: 'Next →',
-    clear: 'Clear',
+    clear: COMMON_MESSAGES.en.clear,
     trainingPanelAria: 'Model training',
     trainingTitle: 'Training',
     trainingParagraph:
@@ -144,9 +163,9 @@ export const MNIST_CNN_MESSAGES: Catalog<MnistCnnMessageKey> = {
     trainingControlsAria: 'Start and control training',
     trainOneEpoch: 'Train 1 epoch',
     trainInLoop: 'Train in a loop',
-    pause: 'Pause',
+    pause: COMMON_MESSAGES.en.pause,
     resetWeights: 'Reset weights',
-    randomWeights: 'Random weights',
+    randomWeights: SHARED_EN.randomWeights,
     trainingSlidersAria: 'Training and validation set fraction, learning rate and batch size',
     trainingData: 'Training data',
     validation: 'Validation',
@@ -169,7 +188,7 @@ export const MNIST_CNN_MESSAGES: Catalog<MnistCnnMessageKey> = {
       'Each slider stops training and rebuilds the model: pre-trained weights (manifest) if the architecture matches, deterministic weights (seed {seed}) otherwise. The depth sliders change the number of convolution layers (0 to 4) and dense layers (1 to 3); the activation function choice also stops the run and rebuilds the model; the pre-trained manifest applies only to the reference depth (four convolutions, two dense layers) with the sigmoid, and every other configuration starts from deterministic weights. The width sliders set the units of each hidden dense layer (1 to 128) and stop the run; the manifest requires the reference width, a hidden layer of 8 units.',
     networkDepthAria: 'Network depth',
     convLayers: 'Convolution layers',
-    denseLayers: 'Dense layers',
+    denseLayers: SHARED_EN.denseLayers,
     hiddenDenseSizesAria: 'Hidden dense layer size',
     activationFunction: 'Activation function',
     activationFunctionAria: 'Activation function of the convolutions and the hidden layer',
@@ -190,16 +209,16 @@ export const MNIST_CNN_MESSAGES: Catalog<MnistCnnMessageKey> = {
     galleryUnavailable: 'Gallery unavailable: {message}',
     chooseLoadGallery: 'Choose "Load the gallery…" in the list to show examples.',
     browseGalleryAria: 'Browse the gallery examples',
-    featureMapsAria: 'Feature maps',
-    featureMapsTitle: 'Feature maps',
+    featureMapsAria: SHARED_EN.featureMaps,
+    featureMapsTitle: SHARED_EN.featureMaps,
     activationsAfter: 'Activations after {activation}; red = {low}, grey = {mid}, blue = {high}.',
     featureMapSizes: 'Sizes: {sizes}.',
     noConvMap: 'No convolution map.',
     featureMapAria: 'Feature map {name}, channel {channel}',
     channel: 'channel {channel}',
-    apply: 'Apply',
+    apply: COMMON_MESSAGES.en.apply,
     cancel: 'Cancel',
-    denseLayersTitle: 'Dense layers',
+    denseLayersTitle: SHARED_EN.denseLayers,
     activationsOf: 'Activations of {title}',
     probabilitiesMaxAria: 'Probabilities per class, maximum highlighted',
     classesLegend: 'Classes ({count} of {total})',
@@ -210,7 +229,7 @@ export const MNIST_CNN_MESSAGES: Catalog<MnistCnnMessageKey> = {
       'Draw an input with the mouse or a finger, or choose an example from {name}. Inference updates while you draw.',
     galleryInputHintExample:
       'Gallery {source} example {name}: the expected class is "{className}".',
-    linkLabel: 'conv{layer} — input {input}, output {output}',
+    linkLabel: SHARED_EN.linkLabel,
     linkWeightCount: '{name} · 1 weight out of {count}',
     filterSubtitleMean:
       'Mean of the input channels for each output channel; blue = positive, red = negative.',
@@ -241,8 +260,8 @@ export function mnistCnnMessage(
 const demoStatusFr = {
   modified: 'Modifié',
   random: 'Aléatoires',
-  trained: 'Entraîné',
-  pretrained: 'Pré-entraîné',
+  trained: SHARED_FR.trained,
+  pretrained: SHARED_FR.pretrained,
   deterministic: 'Déterministes',
   input: 'Entrée : {source}',
   predictedClass: 'classe prédite : {className}',
@@ -267,8 +286,8 @@ export const DEMO_STATUS_MESSAGES: Catalog<DemoStatusMessageKey> = {
   en: {
     modified: 'Modified',
     random: 'Random',
-    trained: 'Trained',
-    pretrained: 'Pre-trained',
+    trained: SHARED_EN.trained,
+    pretrained: SHARED_EN.pretrained,
     deterministic: 'Deterministic',
     input: 'input: {source}',
     predictedClass: 'predicted class: {className}',
@@ -298,9 +317,9 @@ export function demoStatusMessage(
 const trainingStateFr = {
   training: 'Entraînement',
   paused: 'En pause',
-  trained: 'Entraîné',
-  pretrained: 'Pré-entraîné',
-  random: 'Poids aléatoires',
+  trained: SHARED_FR.trained,
+  pretrained: SHARED_FR.pretrained,
+  random: SHARED_FR.randomWeights,
   deterministic: 'Poids déterministes',
 } as const;
 
@@ -311,9 +330,9 @@ export const TRAINING_STATE_MESSAGES: Catalog<TrainingStateMessageKey> = {
   en: {
     training: 'Training',
     paused: 'Paused',
-    trained: 'Trained',
-    pretrained: 'Pre-trained',
-    random: 'Random weights',
+    trained: SHARED_EN.trained,
+    pretrained: SHARED_EN.pretrained,
+    random: SHARED_EN.randomWeights,
     deterministic: 'Deterministic weights',
   },
 };
@@ -437,7 +456,7 @@ export function weightEditorMessage(
 }
 
 const weightSelectionFr = {
-  linkLabel: 'conv{layer} — entrée {input}, sortie {output}',
+  linkLabel: SHARED_FR.linkLabel,
   position: '{link}, position ({ky}, {kx})',
 } as const;
 
@@ -446,7 +465,7 @@ export type WeightSelectionMessageKey = keyof typeof weightSelectionFr;
 export const WEIGHT_SELECTION_MESSAGES: Catalog<WeightSelectionMessageKey> = {
   fr: weightSelectionFr,
   en: {
-    linkLabel: 'conv{layer} — input {input}, output {output}',
+    linkLabel: SHARED_EN.linkLabel,
     position: '{link}, position ({ky}, {kx})',
   },
 };

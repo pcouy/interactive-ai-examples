@@ -1,3 +1,4 @@
+import { COMMON_MESSAGES } from '../../i18n/common-messages.js';
 import type { Locale } from '../../i18n/locale.js';
 import { type Catalog, type TranslateParams, translate } from '../../i18n/translate.js';
 
@@ -5,7 +6,7 @@ export type ReplayMessageKey = 'ariaLabel' | 'header' | 'row' | 'end' | 'lastSte
 
 export const REPLAY_MESSAGES: Catalog<ReplayMessageKey> = {
   fr: {
-    ariaLabel: 'Rejeu',
+    ariaLabel: COMMON_MESSAGES.fr.replay,
     header: 'Rejeu · échantillon {count} · mémoire {used}/{capacity}',
     row: 'case {from} {glyph} case {to} · r {reward}',
     end: '· fin',
@@ -13,7 +14,7 @@ export const REPLAY_MESSAGES: Catalog<ReplayMessageKey> = {
     empty: "Aucun échantillon pour l'instant.",
   },
   en: {
-    ariaLabel: 'Replay',
+    ariaLabel: COMMON_MESSAGES.en.replay,
     header: 'Replay · sample {count} · memory {used}/{capacity}',
     row: 'cell {from} {glyph} cell {to} · r {reward}',
     end: '· end',

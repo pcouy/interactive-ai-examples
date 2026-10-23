@@ -1,4 +1,5 @@
 import type { FineStepPhase, FrozenLakeAction } from '../../core/frozen-lake.js';
+import { COMMON_MESSAGES } from '../../i18n/common-messages.js';
 import type { Locale } from '../../i18n/locale.js';
 import { type Catalog, type TranslateParams, translate } from '../../i18n/translate.js';
 
@@ -58,7 +59,7 @@ export const FROZEN_LAKE_MESSAGES: Catalog<FrozenLakeMessageKey> = {
     size4: '4×4',
     size6: '6×6',
     size8: '8×8',
-    replayToggle: 'Rejeu',
+    replayToggle: COMMON_MESSAGES.fr.replay,
     gridAria: 'Grille Frozen Lake',
     curveAria: 'Courbe des récompenses',
     loopTitle: 'Boucle agent-environnement',
@@ -108,7 +109,7 @@ export const FROZEN_LAKE_MESSAGES: Catalog<FrozenLakeMessageKey> = {
     size4: '4×4',
     size6: '6×6',
     size8: '8×8',
-    replayToggle: 'Replay',
+    replayToggle: COMMON_MESSAGES.en.replay,
     gridAria: 'Frozen Lake grid',
     curveAria: 'Reward curve',
     loopTitle: 'Agent-environment loop',

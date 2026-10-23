@@ -234,6 +234,8 @@ function checkHtmlDocument(label, html, expectedLang) {
 function checkDeepBluePage(html, label) {
   check(html.includes('drl-deep-blue-page'), `${label}: contains drl-deep-blue-page`);
   check(html.includes('data-demo-log'), `${label}: contains data-demo-log`);
+  check(html.includes('data-labels='), `${label}: embeds data-labels`);
+  check(html.includes('logMove'), `${label}: embeds the logMove label`);
   check(html.includes('demo/drl-demos.js'), `${label}: loads demo/drl-demos.js`);
   check(html.includes('class="katex"'), `${label}: contains rendered KaTeX markup`);
 }

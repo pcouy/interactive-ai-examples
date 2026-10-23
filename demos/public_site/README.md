@@ -278,9 +278,12 @@ Chaque catalogue expose deux objets, `fr` et `en`, avec les mêmes clés. Les ca
 sont :
 
 - `../src/ui/messages.ts`
+- `../src/i18n/common-messages.ts`
 - `../src/components/shared/game-messages.ts`
+- `../src/components/shared/descent-messages.ts`
 - `../src/components/drl-game-board/messages.ts`
 - `../src/components/drl-deep-blue-page/messages.ts`
+- `../src/components/drl-deep-blue-page/demo-log-messages.ts`
 - `../src/components/drl-eval-tree/messages.ts`
 - `../src/components/drl-frozen-lake/messages.ts`
 - `../src/components/drl-frozen-lake/replay-messages.ts`
@@ -296,9 +299,13 @@ sont :
 
 Chaque catalogue est typé `Catalog<Key>`. Une clé présente dans `fr` doit exister dans
 `en`, et inversement. Le test `../src/i18n/catalog-parity.test.ts` utilise le motif
-`../**/*messages.ts` avec `import.meta.glob` et compare les clés. Il couvre les 11
-modules de catalogues et 18 catalogues, y compris `game-messages.ts` et
+`../**/*messages.ts` avec `import.meta.glob` et compare les clés. Il couvre les 14
+modules de catalogues et 21 catalogues, y compris `game-messages.ts` et
 `replay-messages.ts`.
+
+Les libellés du journal Deep Blue vivent dans `demo-log-messages.ts`. Les pages les
+embarquent dans l'attribut `data-labels` de `[data-demo-log]`, et le script de collage
+`src/scripts/deep-blue-demo.js` les lit au chargement.
 
 ### Prévisualiser et forcer une langue
 

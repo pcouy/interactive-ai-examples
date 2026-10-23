@@ -1,5 +1,7 @@
+import { COMMON_MESSAGES } from '../../i18n/common-messages.js';
 import type { Locale } from '../../i18n/locale.js';
 import { type Catalog, type TranslateParams, translate } from '../../i18n/translate.js';
+import { GAME_MESSAGES } from '../shared/game-messages.js';
 
 export type DeepBlueMessageKey =
   | 'title'
@@ -40,8 +42,8 @@ export const DEEP_BLUE_MESSAGES: Catalog<DeepBlueMessageKey> = {
     title: 'Deep Blue · recherche adversariale',
     game: 'Jeu',
     gameAriaLabel: 'Choix du jeu',
-    ticTacToe: 'Morpion',
-    connect4: 'Puissance 4',
+    ticTacToe: GAME_MESSAGES.fr.ticTacToeTitle,
+    connect4: GAME_MESSAGES.fr.connect4Title,
     treeHint: "Arbre d'évaluation · la recherche de l'agent se rejoue pas à pas",
     replayTitle: 'Applique dans la partie le premier coup du chemin menant au nœud sélectionné',
     replay: 'Rejouer ce coup ({move})',
@@ -64,20 +66,19 @@ export const DEEP_BLUE_MESSAGES: Catalog<DeepBlueMessageKey> = {
     customHelpConnect4: ' (puissance 4).',
     customWarning:
       'Code exécuté dans la page, sans isolation. À utiliser uniquement en local avec du code de confiance.',
-    apply: 'Appliquer',
-    reset: 'Réinitialiser',
-    rolloutSamples: 'Échantillons de rollout',
-    discount: 'Actualisation (γ)',
-    strictPruning: 'Élagage strict',
-    strictPruningTitle:
-      "Ne coupe que sur un dépassement strict de la borne (max : > β, min : < α) et départage au hasard les coups à valeur égale. Décochez pour l'alpha-bêta classique (>= / <=, premier coup retenu à égalité).",
+    apply: COMMON_MESSAGES.fr.apply,
+    reset: COMMON_MESSAGES.fr.reset,
+    rolloutSamples: GAME_MESSAGES.fr.rolloutSamples,
+    discount: GAME_MESSAGES.fr.discount,
+    strictPruning: GAME_MESSAGES.fr.strictPruning,
+    strictPruningTitle: GAME_MESSAGES.fr.strictPruningTitle,
   },
   en: {
     title: 'Deep Blue · adversarial search',
     game: 'Game',
     gameAriaLabel: 'Game choice',
-    ticTacToe: 'Tic-tac-toe',
-    connect4: 'Connect Four',
+    ticTacToe: GAME_MESSAGES.en.ticTacToeTitle,
+    connect4: GAME_MESSAGES.en.connect4Title,
     treeHint: "Evaluation tree · the agent's search replays step by step",
     replayTitle: 'Applies to the game the first move of the path to the selected node',
     replay: 'Replay this move ({move})',
@@ -100,13 +101,12 @@ export const DEEP_BLUE_MESSAGES: Catalog<DeepBlueMessageKey> = {
     customHelpConnect4: ' (Connect Four).',
     customWarning:
       'Code runs in the page without isolation. Use it only locally with trusted code.',
-    apply: 'Apply',
-    reset: 'Reset',
-    rolloutSamples: 'Rollout samples',
-    discount: 'Discount (γ)',
-    strictPruning: 'Strict pruning',
-    strictPruningTitle:
-      'Cuts only on a strict bound overrun (max: > β, min: < α) and breaks ties between equal-valued moves at random. Clear the box for classic alpha-beta (>= / <=, first move kept on a tie).',
+    apply: COMMON_MESSAGES.en.apply,
+    reset: COMMON_MESSAGES.en.reset,
+    rolloutSamples: GAME_MESSAGES.en.rolloutSamples,
+    discount: GAME_MESSAGES.en.discount,
+    strictPruning: GAME_MESSAGES.en.strictPruning,
+    strictPruningTitle: GAME_MESSAGES.en.strictPruningTitle,
   },
 };
 

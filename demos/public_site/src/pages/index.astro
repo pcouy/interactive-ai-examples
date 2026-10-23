@@ -4,7 +4,7 @@ import { ui } from '../i18n/site';
 import Base from '../layouts/Base.astro';
 ---
 
-<Base title="Jouer pour comprendre l'IA — démos interactives">
+<Base title={`${ui.fr.siteName} — ${ui.fr.home.titleSuffix}`}>
   <section class="home-hero">
     <div class="home-hero__inner">
       <div>
@@ -43,15 +43,15 @@ import Base from '../layouts/Base.astro';
     <h2 class="section-title" id="demos-title">{ui.fr.home.demosTitle}</h2>
     <div class="card-grid">
       <article class="card">
-        <p class="card__eyebrow">{ui.fr.home.deepBlueEyebrow}</p>
-        <h3 class="card__title">Deep Blue</h3>
+        <p class="card__eyebrow">{ui.fr.eyebrowDeepBlue}</p>
+        <h3 class="card__title">{ui.fr.nav.deepBlue}</h3>
         <p class="card__body">{ui.fr.home.deepBlueBody}</p>
         <a class="card__link" href="/deep-blue">{ui.fr.home.cardLink}</a>
       </article>
 
       <article class="card">
-        <p class="card__eyebrow">{ui.fr.home.frozenLakeEyebrow}</p>
-        <h3 class="card__title">Frozen Lake</h3>
+        <p class="card__eyebrow">{ui.fr.eyebrowFrozenLake}</p>
+        <h3 class="card__title">{ui.fr.nav.frozenLake}</h3>
         <p class="card__body">{ui.fr.home.frozenLakeBody}</p>
         <a class="card__link" href="/frozen-lake">{ui.fr.home.cardLink}</a>
       </article>

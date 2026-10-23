@@ -47,10 +47,16 @@ balises BCP 47 telles que `en-US` et `fr-CA`. `translate(locale, catalog, key,
 params)` remplace les espaces réservés `{nom}` par les valeurs de `params`. Il retombe
 sur le français, puis sur la clé brute, si la traduction manque.
 
+Les catalogues partagés vivent dans `src/i18n/common-messages.ts` et
+`src/components/shared/descent-messages.ts`. Les libellés du journal Deep Blue vivent
+dans `src/components/drl-deep-blue-page/demo-log-messages.ts`.
+
 Le test `src/i18n/catalog-parity.test.ts` charge chaque fichier `*messages.ts` avec
 `import.meta.glob` et échoue si les clés `fr` et `en` diffèrent. Il compare aussi les
-ensembles d'espaces réservés `{nom}` de chaque message. Il couvre aussi
-`game-messages.ts` et `replay-messages.ts` :
+ensembles d'espaces réservés `{nom}` de chaque message. Il couvre aussi les catalogues
+partagés `src/i18n/common-messages.ts` et `src/components/shared/descent-messages.ts`,
+ainsi que `game-messages.ts`, `replay-messages.ts` et
+`src/components/drl-deep-blue-page/demo-log-messages.ts` :
 
 ```bash
 cd demos && npx vitest run src/i18n/catalog-parity.test.ts

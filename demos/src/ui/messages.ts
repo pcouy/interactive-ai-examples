@@ -1,3 +1,4 @@
+import { COMMON_MESSAGES } from '../i18n/common-messages.js';
 import type { Locale } from '../i18n/locale.js';
 import { type Catalog, translate } from '../i18n/translate.js';
 
@@ -6,17 +7,17 @@ export type UiMessageKey = 'play' | 'pause' | 'step' | 'reset' | 'speed' | 'slid
 export const UI_MESSAGES: Catalog<UiMessageKey> = {
   fr: {
     play: 'Lecture',
-    pause: 'Pause',
+    pause: COMMON_MESSAGES.fr.pause,
     step: 'Pas',
-    reset: 'Réinitialiser',
+    reset: COMMON_MESSAGES.fr.reset,
     speed: 'Vitesse',
     sliderValueFallback: 'valeur',
   },
   en: {
     play: 'Play',
-    pause: 'Pause',
+    pause: COMMON_MESSAGES.en.pause,
     step: 'Step',
-    reset: 'Reset',
+    reset: COMMON_MESSAGES.en.reset,
     speed: 'Speed',
     sliderValueFallback: 'value',
   },

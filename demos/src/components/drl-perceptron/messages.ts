@@ -1,3 +1,4 @@
+import { COMMON_MESSAGES } from '../../i18n/common-messages.js';
 import type { Locale } from '../../i18n/locale.js';
 import { type Catalog, type TranslateParams, translate } from '../../i18n/translate.js';
 
@@ -55,7 +56,7 @@ export const PERCEPTRON_MESSAGES: Catalog<PerceptronMessageKey> = {
     presetNonSeparable: 'Non séparables',
     classBlueButton: 'Classe bleue',
     classRedButton: 'Classe rouge',
-    clear: 'Effacer',
+    clear: COMMON_MESSAGES.fr.clear,
     svgAria: 'Plan de points et frontière de décision du perceptron',
     labelX1: 'x₁',
     labelX2: 'x₂',
@@ -87,7 +88,7 @@ export const PERCEPTRON_MESSAGES: Catalog<PerceptronMessageKey> = {
     presetNonSeparable: 'Non-separable',
     classBlueButton: 'Blue class',
     classRedButton: 'Red class',
-    clear: 'Clear',
+    clear: COMMON_MESSAGES.en.clear,
     svgAria: 'Point plane and perceptron decision boundary',
     labelX1: 'x₁',
     labelX2: 'x₂',

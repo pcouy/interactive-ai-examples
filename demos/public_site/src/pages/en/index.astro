@@ -6,7 +6,7 @@ import Base from '../../layouts/Base.astro';
 const copy = ui.en.home;
 ---
 
-<Base title="Play to understand AI — interactive demos" lang="en">
+<Base title={`${ui.en.siteName} — ${ui.en.home.titleSuffix}`} lang="en">
   <section class="home-hero">
     <div class="home-hero__inner">
       <div>
@@ -49,15 +49,15 @@ const copy = ui.en.home;
     <h2 class="section-title" id="demos-title">{copy.demosTitle}</h2>
     <div class="card-grid">
       <article class="card">
-        <p class="card__eyebrow">{copy.deepBlueEyebrow}</p>
-        <h3 class="card__title">Deep Blue</h3>
+        <p class="card__eyebrow">{ui.en.eyebrowDeepBlue}</p>
+        <h3 class="card__title">{ui.en.nav.deepBlue}</h3>
         <p class="card__body">{copy.deepBlueBody}</p>
         <a class="card__link" href={routeFor('en', 'deep-blue')}>{copy.cardLink}</a>
       </article>
 
       <article class="card">
-        <p class="card__eyebrow">{copy.frozenLakeEyebrow}</p>
-        <h3 class="card__title">Frozen Lake</h3>
+        <p class="card__eyebrow">{ui.en.eyebrowFrozenLake}</p>
+        <h3 class="card__title">{ui.en.nav.frozenLake}</h3>
         <p class="card__body">{copy.frozenLakeBody}</p>
         <a class="card__link" href={routeFor('en', 'frozen-lake')}>{copy.cardLink}</a>
       </article>

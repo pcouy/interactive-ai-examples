@@ -1,4 +1,5 @@
 ---
+import { DEMO_LOG_MESSAGES } from '../../../../src/components/drl-deep-blue-page/demo-log-messages.js';
 import { Content, frontmatter } from '../../content/en/deep-blue.md';
 import { ui } from '../../i18n/site';
 import DemoPage from '../../layouts/DemoPage.astro';
@@ -19,7 +20,11 @@ import deepBlueGlue from '../../scripts/deep-blue-demo.js?raw';
           id="deep-blue-demo"
           game="tic-tac-toe"
           lang="en"></drl-deep-blue-page>
-        <p class="demo-log" data-demo-log aria-live="polite"></p>
+        <p
+          class="demo-log"
+          data-demo-log
+          data-labels={JSON.stringify(DEMO_LOG_MESSAGES.en)}
+          aria-live="polite"></p>
       </div>
     </section>
   </Fragment>

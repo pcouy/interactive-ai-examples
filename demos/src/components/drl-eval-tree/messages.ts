@@ -1,5 +1,6 @@
 import type { Locale } from '../../i18n/locale.js';
 import { type Catalog, type TranslateParams, translate } from '../../i18n/translate.js';
+import { GAME_MESSAGES } from '../shared/game-messages.js';
 
 export type EvalTreeMessageKey =
   | 'root'
@@ -63,8 +64,8 @@ export const EVAL_TREE_MESSAGES: Catalog<EvalTreeMessageKey> = {
     nodes: 'Nœuds : {count}',
     hidden: 'Masqués : {count}',
     cursor: 'Curseur : {cursor}',
-    searchDone: 'Recherche terminée',
-    searchRunning: 'Recherche en cours',
+    searchDone: GAME_MESSAGES.fr.searchDone,
+    searchRunning: GAME_MESSAGES.fr.searchRunning,
     noSearch: 'Aucune recherche liée',
     toolbarAria: "Débogueur d'arbre de recherche",
     stepInTitle: "Pas à pas entrant : descendre d'un nœud visité",
@@ -92,7 +93,7 @@ export const EVAL_TREE_MESSAGES: Catalog<EvalTreeMessageKey> = {
     breadcrumbsAria: "Fil d'Ariane",
     alpha: 'α',
     beta: 'β',
-    score: 'Score',
+    score: GAME_MESSAGES.fr.score,
     exact: '(exact)',
     provisional: '(provisoire)',
     noCut: 'Développement du nœud',
@@ -113,8 +114,8 @@ export const EVAL_TREE_MESSAGES: Catalog<EvalTreeMessageKey> = {
     nodes: 'Nodes: {count}',
     hidden: 'Hidden: {count}',
     cursor: 'Cursor: {cursor}',
-    searchDone: 'Search complete',
-    searchRunning: 'Search in progress',
+    searchDone: GAME_MESSAGES.en.searchDone,
+    searchRunning: GAME_MESSAGES.en.searchRunning,
     noSearch: 'No search attached',
     toolbarAria: 'Search tree debugger',
     stepInTitle: 'Step in: go down to a visited node',
@@ -141,7 +142,7 @@ export const EVAL_TREE_MESSAGES: Catalog<EvalTreeMessageKey> = {
     breadcrumbsAria: 'Breadcrumb',
     alpha: 'α',
     beta: 'β',
-    score: 'Score',
+    score: GAME_MESSAGES.en.score,
     exact: '(exact)',
     provisional: '(provisional)',
     noCut: 'Node expansion',

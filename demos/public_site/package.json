@@ -15,7 +15,7 @@
     "preview": "astro preview",
     "precheck": "npm --prefix .. run build && node scripts/sync-demo-assets.mjs",
     "check": "astro check",
-    "test": "node --experimental-strip-types --test scripts/url-rewrite.test.mjs scripts/site.test.mjs scripts/lang-init.test.mjs",
+    "test": "node --experimental-strip-types --test scripts/url-rewrite.test.mjs scripts/site.test.mjs scripts/lang-init.test.mjs scripts/demo-log.test.mjs",
     "verify": "npm run check && npm run test && npm run build",
     "smoke": "node scripts/smoke.mjs",
     "verify:full": "npm run verify && npm run smoke"
