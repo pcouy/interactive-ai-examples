@@ -6,9 +6,9 @@ export type UiMessageKey = 'play' | 'pause' | 'step' | 'reset' | 'speed' | 'slid
 
 export const UI_MESSAGES: Catalog<UiMessageKey> = {
   fr: {
-    play: 'Lecture',
+    play: 'Play',
     pause: COMMON_MESSAGES.fr.pause,
-    step: 'Pas',
+    step: 'Un Pas',
     reset: COMMON_MESSAGES.fr.reset,
     speed: 'Vitesse',
     sliderValueFallback: 'valeur',
